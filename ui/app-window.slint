@@ -32,6 +32,15 @@ export struct HistoryItem {
     duration: string,
     date: string,
 }
+export struct ResponseHeaderItem {
+    name: string,
+    value: string,
+}
+export struct ResponseCookieItem {
+    name: string,
+    value: string,
+    attributes: string,
+}
 export component AppWindow inherits Window {
     title: "Resonance";
     width: 1200px;
@@ -107,6 +116,8 @@ export component AppWindow inherits Window {
     in-out property <string> response-format: "Text";
     in-out property <string> response-headers: "";
     in-out property <string> response-cookies: "";
+    in-out property <[ResponseHeaderItem]> response-header-items: [];
+    in-out property <[ResponseCookieItem]> response-cookie-items: [];
     in-out property <string> response-tab: "Body";
     in-out property <bool> is-loading: false;
 
@@ -181,6 +192,10 @@ export component AppWindow inherits Window {
         root.response-state = "idle";
         root.response-format = "Text";
         root.response-body = "Send a request to inspect its response.";
+        root.response-headers = "";
+        root.response-cookies = "";
+        root.response-header-items = [];
+        root.response-cookie-items = [];
         root.response-time = "---";
         root.active-method = "GET";
         root.request-url = "";
@@ -228,7 +243,12 @@ export component AppWindow inherits Window {
             root.response-state = "loading";
             root.response-format = "Text";
             root.response-body = "Waiting for response...";
+            root.response-headers = "";
+            root.response-cookies = "";
+            root.response-header-items = [];
+            root.response-cookie-items = [];
             root.response-time = "---";
+            root.response-tab = "Body";
             root.send-request(
                 root.active-method,
                 root.request-url,
@@ -1640,7 +1660,7 @@ export component AppWindow inherits Window {
                         spacing: 0px;
 
                         HorizontalLayout {
-                            height: 34px;
+                            height: 38px;
                             padding-left: 12px;
                             padding-right: 12px;
                             Text {
@@ -1652,27 +1672,23 @@ export component AppWindow inherits Window {
                             }
                             Rectangle { horizontal-stretch: 1; background: transparent; }
                             for tab in ["Body", "Headers", "Cookies"] : Rectangle {
-                                width: tab == "Headers" ? 62px : tab == "Cookies" ? 58px : 48px;
-                                height: 26px;
+                                width: tab == "Headers" ? 84px : tab == "Cookies" ? 82px : 54px;
+                                height: 28px;
                                 border-radius: 7px;
                                 background: root.response-tab == tab ? selected-bg : transparent;
                                 response-tab-touch := TouchArea {
                                     clicked => { root.response-tab = tab; }
                                 }
                                 Text {
-                                    text: tab;
+                                    text: tab == "Headers" ? "Headers  " + root.response-header-items.length
+                                        : tab == "Cookies" ? "Cookies  " + root.response-cookie-items.length
+                                        : tab;
                                     color: root.response-tab == tab ? text-primary : text-secondary;
                                     font-size: 10px;
                                     font-weight: root.response-tab == tab ? 600 : 400;
                                     horizontal-alignment: center;
                                     vertical-alignment: center;
                                 }
-                            }
-                            Text {
-                                text: root.response-state == "success" || root.response-state == "http-error" ? "Received" : "";
-                                color: text-secondary;
-                                font-size: 10px;
-                                vertical-alignment: center;
                             }
                         }
 
@@ -1706,26 +1722,207 @@ export component AppWindow inherits Window {
                                 }
                             }
 
-                            if root.response-state != "idle" && root.response-state != "loading" : ScrollView {
+                            if root.response-state != "idle" && root.response-state != "loading" && root.response-tab == "Body" : ScrollView {
                                 mouse-drag-pan-enabled: true;
                                 vertical-scrollbar-policy: always-on;
                                 content-width: self.width;
-                                    content-height: response-text.height + 20px;
+                                content-height: response-body-text.height + 24px;
 
-                                response-text := Text {
+                                response-body-text := Text {
                                     x: 12px;
-                                    y: 10px;
+                                    y: 12px;
                                     width: parent.width - 24px;
-                                    text: root.response-tab == "Body"
-                                        ? (root.response-body == "" ? "The server returned an empty response body." : root.response-body)
-                                        : root.response-tab == "Headers"
-                                            ? (root.response-headers == "" ? "No response headers were returned." : root.response-headers)
-                                            : (root.response-cookies == "" ? "No cookies were returned." : root.response-cookies);
+                                    text: root.response-body == "" ? "The server returned an empty response body." : root.response-body;
                                     color: text-primary;
                                     font-family: "monospace";
                                     font-size: 12px;
-                                    line-height-factor: 1.3;
+                                    line-height-factor: 1.45;
                                     wrap: word-wrap;
+                                }
+                            }
+
+                            if root.response-state != "idle" && root.response-state != "loading" && root.response-tab == "Headers" && root.response-header-items.length == 0 : VerticalLayout {
+                                alignment: center;
+                                spacing: 6px;
+                                Text {
+                                    text: "No response headers";
+                                    color: text-primary;
+                                    font-size: 13px;
+                                    font-weight: 600;
+                                    horizontal-alignment: center;
+                                }
+                                Text {
+                                    text: "The server did not return any headers.";
+                                    color: text-secondary;
+                                    font-size: 11px;
+                                    horizontal-alignment: center;
+                                }
+                            }
+
+                            if root.response-state != "idle" && root.response-state != "loading" && root.response-tab == "Headers" && root.response-header-items.length > 0 : ScrollView {
+                                mouse-drag-pan-enabled: true;
+                                vertical-scrollbar-policy: always-on;
+                                content-width: self.width;
+                                content-height: root.response-header-items.length * 46px + 20px;
+
+                                response-headers-list := VerticalLayout {
+                                    x: 12px;
+                                    y: 10px;
+                                    width: parent.width - 24px;
+                                    height: root.response-header-items.length * 46px;
+                                    spacing: 2px;
+
+                                    for item in root.response-header-items : Rectangle {
+                                        width: parent.width;
+                                        height: 44px;
+                                        border-radius: 6px;
+                                        background: transparent;
+
+                                        HorizontalLayout {
+                                            padding-left: 8px;
+                                            padding-right: 8px;
+                                            spacing: 12px;
+
+                                            Rectangle {
+                                                width: 180px;
+                                                height: 24px;
+                                                border-radius: 5px;
+                                                background: selected-bg;
+                                                Text {
+                                                    x: 8px;
+                                                    width: parent.width - 16px;
+                                                    height: parent.height;
+                                                    text: item.name;
+                                                    color: text-primary;
+                                                    font-size: 10px;
+                                                    font-weight: 600;
+                                                    vertical-alignment: center;
+                                                    overflow: elide;
+                                                }
+                                            }
+
+                                            response-header-value := Text {
+                                                horizontal-stretch: 1;
+                                                height: parent.height - 12px;
+                                                text: item.value;
+                                                color: text-primary;
+                                                font-family: "monospace";
+                                                font-size: 11px;
+                                                vertical-alignment: center;
+                                                wrap: word-wrap;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
+                            if root.response-state != "idle" && root.response-state != "loading" && root.response-tab == "Cookies" && root.response-cookie-items.length == 0 : VerticalLayout {
+                                alignment: center;
+                                spacing: 6px;
+                                Text {
+                                    text: "No cookies returned";
+                                    color: text-primary;
+                                    font-size: 13px;
+                                    font-weight: 600;
+                                    horizontal-alignment: center;
+                                }
+                                Text {
+                                    text: "This response did not include any Set-Cookie values.";
+                                    color: text-secondary;
+                                    font-size: 11px;
+                                    horizontal-alignment: center;
+                                }
+                            }
+
+                            if root.response-state != "idle" && root.response-state != "loading" && root.response-tab == "Cookies" && root.response-cookie-items.length > 0 : ScrollView {
+                                mouse-drag-pan-enabled: true;
+                                vertical-scrollbar-policy: always-on;
+                                content-width: self.width;
+                                content-height: root.response-cookie-items.length * 116px + 20px;
+
+                                response-cookies-list := VerticalLayout {
+                                    width: parent.width;
+                                    height: root.response-cookie-items.length * 116px;
+                                    padding: 10px;
+                                    spacing: 8px;
+
+                                    for item in root.response-cookie-items : Rectangle {
+                                        width: parent.width - 20px;
+                                        height: 100px;
+                                        border-radius: 8px;
+                                        border-width: 1px;
+                                        border-color: border-color;
+                                        background: panel-bg;
+
+                                        VerticalLayout {
+                                            padding: 10px;
+                                            spacing: 5px;
+
+                                            HorizontalLayout {
+                                                spacing: 8px;
+                                                Rectangle {
+                                                    width: 48px;
+                                                    height: 20px;
+                                                    border-radius: 5px;
+                                                    background: selected-bg;
+                                                    Text {
+                                                        text: "COOKIE";
+                                                        color: text-secondary;
+                                                        font-size: 8px;
+                                                        font-weight: 700;
+                                                        horizontal-alignment: center;
+                                                        vertical-alignment: center;
+                                                    }
+                                                }
+                                                Text {
+                                                    text: item.name;
+                                                    color: text-primary;
+                                                    font-size: 12px;
+                                                    font-weight: 600;
+                                                    vertical-alignment: center;
+                                                }
+                                            }
+
+                                            HorizontalLayout {
+                                                spacing: 8px;
+                                                Text {
+                                                    width: 50px;
+                                                    text: "Value";
+                                                    color: text-secondary;
+                                                    font-size: 10px;
+                                                    vertical-alignment: center;
+                                                }
+                                                Text {
+                                                    horizontal-stretch: 1;
+                                                    text: item.value == "" ? "(empty)" : item.value;
+                                                    color: text-primary;
+                                                    font-family: "monospace";
+                                                    font-size: 11px;
+                                                    vertical-alignment: center;
+                                                    wrap: word-wrap;
+                                                }
+                                            }
+
+                                            if item.attributes != "" : HorizontalLayout {
+                                                spacing: 8px;
+                                                Text {
+                                                    width: 50px;
+                                                    text: "Flags";
+                                                    color: text-secondary;
+                                                    font-size: 10px;
+                                                    vertical-alignment: center;
+                                                }
+                                                Text {
+                                                    horizontal-stretch: 1;
+                                                    text: item.attributes;
+                                                    color: text-secondary;
+                                                    font-size: 10px;
+                                                    vertical-alignment: center;
+                                                    wrap: word-wrap;
+                                                }
+                                            }
+                                        }
+                                    }
                                 }
                             }
                         }

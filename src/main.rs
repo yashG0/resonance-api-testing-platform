@@ -247,6 +247,49 @@ fn serialize_key_value_rows(rows: ModelRc<KeyValueRow>, separator: &str) -> Stri
         .join("\n")
 }
 
+fn to_response_header_model(headers: &str) -> ModelRc<ResponseHeaderItem> {
+    let items = headers
+        .lines()
+        .filter_map(|line| {
+            let (name, value) = line.split_once(':')?;
+            Some(ResponseHeaderItem {
+                name: name.trim().into(),
+                value: value.trim().into(),
+            })
+        })
+        .collect::<Vec<_>>();
+    ModelRc::new(VecModel::from(items))
+}
+
+fn to_response_cookie_model(cookies: &str) -> ModelRc<ResponseCookieItem> {
+    let items = cookies
+        .split("\n\n")
+        .filter_map(|cookie| {
+            let mut lines = cookie.lines();
+            let heading = lines.next()?.trim();
+            let (_, name) = heading.strip_prefix("Cookie ")?.split_once(" · ")?;
+            let value = lines
+                .next()
+                .unwrap_or_default()
+                .trim()
+                .strip_prefix("Value:")
+                .unwrap_or_default()
+                .trim();
+            let attributes = lines
+                .map(str::trim)
+                .filter(|line| !line.is_empty())
+                .collect::<Vec<_>>()
+                .join("  ·  ");
+            Some(ResponseCookieItem {
+                name: name.trim().into(),
+                value: value.into(),
+                attributes: attributes.into(),
+            })
+        })
+        .collect::<Vec<_>>();
+    ModelRc::new(VecModel::from(items))
+}
+
 fn to_environment_model(items: Vec<(i32, String, CollectionVariable)>) -> ModelRc<EnvironmentItem> {
     let items = items
         .into_iter()
@@ -508,6 +551,8 @@ async fn main() -> Result<(), slint::PlatformError> {
                             ui.set_response_status(result.status.into());
                             ui.set_response_state(response_state.into());
                             ui.set_response_format(result.format.into());
+                            ui.set_response_header_items(to_response_header_model(&result.headers));
+                            ui.set_response_cookie_items(to_response_cookie_model(&result.cookies));
                             ui.set_response_body(result.body.into());
                             ui.set_response_headers(result.headers.into());
                             ui.set_response_cookies(result.cookies.into());
@@ -527,6 +572,13 @@ async fn main() -> Result<(), slint::PlatformError> {
         let client = Arc::clone(&client);
         let store = Arc::clone(&store);
         move |collection_id| {
+            if let Some(ui) = app_weak.upgrade() {
+                ui.set_response_tab("Body".into());
+                ui.set_response_headers("".into());
+                ui.set_response_cookies("".into());
+                ui.set_response_header_items(to_response_header_model(""));
+                ui.set_response_cookie_items(to_response_cookie_model(""));
+            }
             let app_handle = app_weak.clone();
             let client = Arc::clone(&client);
             let store = Arc::clone(&store);
@@ -1068,6 +1120,11 @@ async fn main() -> Result<(), slint::PlatformError> {
                                     ui.set_response_time("---".into());
                                     ui.set_response_state("idle".into());
                                     ui.set_response_format("Text".into());
+                                    ui.set_response_headers("".into());
+                                    ui.set_response_cookies("".into());
+                                    ui.set_response_header_items(to_response_header_model(""));
+                                    ui.set_response_cookie_items(to_response_cookie_model(""));
+                                    ui.set_response_tab("Body".into());
                                     ui.invoke_load_requests(selected_id);
                                     ui.invoke_load_collection_variables(selected_id);
                                 }
