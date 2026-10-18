@@ -29,13 +29,13 @@ callback load-requests();
 callback select-request(int);
 callback delete-request(int);
     in-out property <string> theme-mode: "System";
-    in-out property <string> active-request: "Get Users";
+    in-out property <string> active-request: "New Request";
     in-out property <string> active-method: "GET";
-    in-out property <string> request-url: "https://httpbin.org/get";
+    in-out property <string> request-url: "";
     in-out property <string> active-tab: "Body";
 
     in-out property <string> request-params: "";
-    in-out property <string> request-body: "{\n  \"name\": \"Yash\"\n}";
+    in-out property <string> request-body: "";
     in-out property <string> request-headers: "Accept: application/json";
     in-out property <string> response-status: "No response yet";
     in-out property <string> response-body: "Send a request to inspect its response.";
