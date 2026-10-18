@@ -1,0 +1,34 @@
+
+export component ThemedButton inherits Rectangle {
+    in property <string> text: "";
+    in property <bool> dark-mode: true;
+    in property <bool> accent-button: false;
+    in property <bool> enabled: true;
+
+    callback clicked();
+
+    height: 36px;
+    background: !root.enabled ? (root.dark-mode ? #383838 : #e5e5e5)
+        : root.accent-button ? #e879f9
+        : root.dark-mode ? #3a3a3a : #e9e7e5;
+
+    border-radius: 6px;
+    clip: true;
+
+    Text {
+        text: root.text;
+        color: !root.enabled ? (root.dark-mode ? #999999 : #777777)
+            : root.accent-button ? #241329
+            : root.dark-mode ? #ffffff : #241f31;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+        font-size: 13px;
+    }
+
+    TouchArea {
+        enabled: root.enabled;
+        clicked => {
+            root.clicked();
+        }
+    }
+}

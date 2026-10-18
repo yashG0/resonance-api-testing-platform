@@ -1,4 +1,4 @@
-
+import { ThemedButton } from "components/themed-button.slint";
 import {
     Button,
     LineEdit,
@@ -73,17 +73,19 @@ in-out property <string> active-tab: "Body";
                     }
                 }
 
-                Button {
-                    text: "+ New Request";
-                    primary: true;
+                ThemedButton {
+    text: "+ New Request";
+    dark-mode: root.dark-mode;
+    accent-button: true;
+    width: 100%;
 
-                    clicked => {
-                        root.active-request = "New Request";
-                        root.active-method = "GET";
-                        root.request-url = "";
-                        root.active-tab = "Body";
-                    }
-                }
+    clicked => {
+        root.active-request = "New Request";
+        root.active-method = "GET";
+        root.request-url = "";
+        root.active-tab = "Body";
+    }
+}
 
                 Rectangle {
                     height: 1px;
