@@ -39,7 +39,12 @@ export component ThemedButton inherits Rectangle {
     border-color: root.dark-mode ? #4b4b4b : #d5d3d0;
 
     Text {
+        x: 5px;
+        y: 0px;
+        width: parent.width - 10px;
+        height: parent.height;
         text: root.text;
+        overflow: elide;
         color: {
             if (!root.enabled) {
                 return root.dark-mode ? #999999 : #777777;

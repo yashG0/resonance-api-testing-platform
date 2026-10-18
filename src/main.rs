@@ -116,7 +116,7 @@ async fn main() -> Result<(), slint::PlatformError> {
         let client = Arc::clone(&client);
         let store = Arc::clone(&store);
 
-        move |method, url, body, headers, params, collection_id| {
+        move |method, url, body, headers, params, collection_id, request_id, name| {
             let app_handle = app_weak.clone();
             let client = Arc::clone(&client);
             let store = Arc::clone(&store);
@@ -125,58 +125,114 @@ async fn main() -> Result<(), slint::PlatformError> {
             let body = body.to_string();
             let headers = headers.to_string();
             let params = params.to_string();
+            let name = name.to_string();
+            let collection_id = collection_id as i64;
 
             tokio::spawn(async move {
-                let variables_result =
-                    tokio::task::spawn_blocking(move || store.variables_map(collection_id as i64))
-                        .await;
-
-                let (status, response_body, elapsed, response_state) = match variables_result {
-                    Ok(Ok(variables)) => {
-                        let result = client
-                            .send(&method, &url, &body, &headers, &params, &variables)
-                            .await;
-                        let response_state = result
-                            .status
-                            .split_whitespace()
-                            .next()
-                            .and_then(|code| code.parse::<u16>().ok())
-                            .map(|code| {
-                                if (200..400).contains(&code) {
-                                    "success"
-                                } else {
-                                    "http-error"
-                                }
-                            })
-                            .unwrap_or("error");
-                        (
-                            result.status,
-                            result.body,
-                            format!("{:.2} ms", result.elapsed.as_secs_f64() * 1000.0),
-                            response_state.to_owned(),
-                        )
-                    }
-                    Ok(Err(error)) => (
-                        "Error".into(),
-                        format!("Could not load collection variables: {error}"),
-                        "---".into(),
-                        "error".into(),
-                    ),
-                    Err(error) => (
-                        "Error".into(),
-                        format!("Could not load collection variables: {error}"),
-                        "---".into(),
-                        "error".into(),
-                    ),
+                // Save first so each request is available in its collection as soon
+                // as the response arrives. Existing requests are updated in place.
+                let request = NewRequest {
+                    collection_id,
+                    name: name.clone(),
+                    method: method.clone(),
+                    url: url.clone(),
+                    headers: headers.clone(),
+                    query_params: params.clone(),
+                    body: body.clone(),
                 };
+                let save_store = Arc::clone(&store);
+                let save_result = tokio::task::spawn_blocking(move || {
+                    let saved_id =
+                        if request_id > 0 && save_store.update(request_id as i64, &request)? {
+                            request_id as i64
+                        } else {
+                            save_store.create(&request)?.id
+                        };
+                    let requests = save_store.list_for_collection(collection_id)?;
+                    let variables = save_store.variables_map(collection_id)?;
+                    Ok::<_, crate::storage::StoreError>((saved_id, requests, variables))
+                })
+                .await;
+
+                let (saved_id, requests, variables) = match save_result {
+                    Ok(Ok(saved)) => saved,
+                    Ok(Err(error)) => {
+                        let message = format!("Auto-save failed; request was not sent: {error}");
+                        let _ = slint::invoke_from_event_loop(move || {
+                            if let Some(ui) = app_handle.upgrade() {
+                                ui.set_response_status("Auto-save failed".into());
+                                ui.set_response_state("error".into());
+                                ui.set_response_format("Text".into());
+                                ui.set_response_body(message.into());
+                                ui.set_response_time("---".into());
+                                ui.set_is_loading(false);
+                            }
+                        });
+                        return;
+                    }
+                    Err(error) => {
+                        let message = format!("Auto-save failed; request was not sent: {error}");
+                        let _ = slint::invoke_from_event_loop(move || {
+                            if let Some(ui) = app_handle.upgrade() {
+                                ui.set_response_status("Auto-save failed".into());
+                                ui.set_response_state("error".into());
+                                ui.set_response_format("Text".into());
+                                ui.set_response_body(message.into());
+                                ui.set_response_time("---".into());
+                                ui.set_is_loading(false);
+                            }
+                        });
+                        return;
+                    }
+                };
+
+                let list_handle = app_handle.clone();
+                let visible_url = url.clone();
+                let visible_name = name.clone();
+                let _ = slint::invoke_from_event_loop(move || {
+                    if let Some(ui) = list_handle.upgrade() {
+                        if ui.get_selected_collection_id() as i64 == collection_id {
+                            ui.set_saved_requests(to_request_model(requests));
+                            if ui.get_request_url().as_str() == visible_url
+                                && ui.get_active_request().as_str() == visible_name
+                            {
+                                ui.set_active_request_id(saved_id as i32);
+                            }
+                        }
+                    }
+                });
+
+                let result = client
+                    .send(&method, &url, &body, &headers, &params, &variables)
+                    .await;
+                let response_state = result
+                    .status
+                    .split_whitespace()
+                    .next()
+                    .and_then(|code| code.parse::<u16>().ok())
+                    .map(|code| {
+                        if (200..400).contains(&code) {
+                            "success"
+                        } else {
+                            "http-error"
+                        }
+                    })
+                    .unwrap_or("error");
 
                 let _ = slint::invoke_from_event_loop(move || {
                     if let Some(ui) = app_handle.upgrade() {
-                        ui.set_response_status(status.into());
-                        ui.set_response_state(response_state.into());
-                        ui.set_response_body(response_body.into());
-                        ui.set_response_time(elapsed.into());
-                        ui.set_is_loading(false);
+                        if ui.get_selected_collection_id() as i64 == collection_id
+                            && ui.get_active_request_id() as i64 == saved_id
+                        {
+                            ui.set_response_status(result.status.into());
+                            ui.set_response_state(response_state.into());
+                            ui.set_response_format(result.format.into());
+                            ui.set_response_body(result.body.into());
+                            ui.set_response_time(
+                                format!("{:.2} ms", result.elapsed.as_secs_f64() * 1000.0).into(),
+                            );
+                            ui.set_is_loading(false);
+                        }
                     }
                 });
             });
@@ -458,6 +514,7 @@ async fn main() -> Result<(), slint::PlatformError> {
                                 );
                                 ui.set_response_time("---".into());
                                 ui.set_response_state("idle".into());
+                                ui.set_response_format("Text".into());
                                 ui.invoke_load_requests(id);
                                 ui.invoke_load_collection_variables(id);
                                 ui.set_variables_message(
@@ -558,6 +615,8 @@ async fn main() -> Result<(), slint::PlatformError> {
                         if let Some(ui) = app_handle.upgrade() {
                             match result {
                                 Ok(Ok(Some(request))) => {
+                                    ui.set_active_view("Request".into());
+                                    ui.set_is_loading(false);
                                     ui.set_active_request_id(request.id as i32);
                                     ui.set_active_request(request.name.into());
                                     ui.set_active_method(request.method.into());
@@ -570,6 +629,8 @@ async fn main() -> Result<(), slint::PlatformError> {
                                         "Send a request to inspect its response.".into(),
                                     );
                                     ui.set_response_time("---".into());
+                                    ui.set_response_state("idle".into());
+                                    ui.set_response_format("Text".into());
                                 }
                                 Ok(Ok(None)) => {
                                     ui.set_response_status(

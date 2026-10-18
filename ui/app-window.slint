@@ -18,9 +18,10 @@ export component AppWindow inherits Window {
     title: "Resonance";
     width: 1200px;
     height: 760px;
+    default-font-family: "Cantarell";
     background: window-bg;
 
-    callback send-request(string, string, string, string, string, int);
+    callback send-request(string, string, string, string, string, int, int, string);
     callback save-request(int, int, string, string, string, string, string, string);
     callback load-collections();
     callback load-requests(int);
@@ -64,6 +65,7 @@ export component AppWindow inherits Window {
     in-out property <string> response-body: "Send a request to inspect its response.";
     in-out property <string> response-time: "---";
     in-out property <string> response-state: "idle";
+    in-out property <string> response-format: "Text";
     in-out property <bool> is-loading: false;
 
     // Keep the system appearance before applying an explicit per-app override.
@@ -145,6 +147,12 @@ export component AppWindow inherits Window {
                     clicked => {
                         root.active-request-id = -1;
                         root.active-request = "New Request";
+                        root.is-loading = false;
+                        root.response-status = "No response yet";
+                        root.response-state = "idle";
+                        root.response-format = "Text";
+                        root.response-body = "Send a request to inspect its response.";
+                        root.response-time = "---";
                         root.active-method = "GET";
                         root.request-url = "";
                         root.request-params = "";
@@ -266,6 +274,7 @@ export component AppWindow inherits Window {
                                 root.active-view = "Request";
                                 root.active-request-id = -1;
                                 root.active-request = "New Request";
+                                root.is-loading = false;
                                 root.active-method = "GET";
                                 root.request-url = "";
                                 root.request-params = "";
@@ -275,6 +284,7 @@ export component AppWindow inherits Window {
                                 root.response-body = "Send a request to inspect its response.";
                                 root.response-time = "---";
                                 root.response-state = "idle";
+                                root.response-format = "Text";
                                 root.load-requests(collection.id);
                                 root.load-collection-variables(collection.id);
                             }
@@ -451,6 +461,7 @@ export component AppWindow inherits Window {
                     spacing: 6px;
 
                     Text {
+                        horizontal-stretch: 1;
                         text: "Saved requests";
                         color: text-secondary;
                         font-size: 11px;
@@ -462,6 +473,13 @@ export component AppWindow inherits Window {
                         color: text-secondary;
                         font-size: 11px;
                     }
+                }
+
+                Text {
+                    text: "Select a request to edit · × to delete";
+                    color: text-secondary;
+                    font-size: 9px;
+                    overflow: elide;
                 }
 
                 if root.saved-requests.length == 0 : Text {
@@ -556,17 +574,19 @@ export component AppWindow inherits Window {
                     VerticalLayout {
                         spacing: 3px;
 
-                        Text {
+                        LineEdit {
+                            width: 300px;
+                            height: 36px;
                             text: root.active-request;
-                            color: text-primary;
-                            font-size: 22px;
-                            font-weight: 700;
+                            placeholder-text: "Request name";
+                            font-size: 20px;
+                            edited(value) => { root.active-request = value; }
                         }
 
                         Text {
                             text: root.active-request-id < 0
-                                ? "New request · " + root.selected-collection-name
-                                : "Saved request · " + root.selected-collection-name;
+                                ? "New · " + root.selected-collection-name + " · Send saves automatically"
+                                : "Saved · " + root.selected-collection-name + " · Send updates automatically";
                             color: text-secondary;
                             font-size: 11px;
                         }
@@ -581,7 +601,7 @@ export component AppWindow inherits Window {
     text: "Save";
     dark-mode: root.dark-mode;
     accent-button: false;
-    enabled: root.selected-collection-id > 0 && root.request-url != "";
+    enabled: root.selected-collection-id > 0 && root.request-url != "" && root.active-request != "";
 
     clicked => {
     root.save-request(
@@ -645,12 +665,13 @@ export component AppWindow inherits Window {
                             text: root.is-loading ? "Sending..." : "Send";
                             dark-mode: root.dark-mode;
                             accent-button: true;
-                            enabled: !root.is-loading && root.selected-collection-id > 0 && root.request-url != "";
+                            enabled: !root.is-loading && root.selected-collection-id > 0 && root.request-url != "" && root.active-request != "";
 
                             clicked => {
                                 root.is-loading = true;
                                 root.response-status = "Sending...";
                                 root.response-state = "loading";
+                                root.response-format = "Text";
                                 root.response-body = "Waiting for response...";
                                 root.response-time = "---";
                                 root.send-request(
@@ -659,7 +680,9 @@ export component AppWindow inherits Window {
                                     root.request-body,
                                     root.request-headers,
                                     root.request-params,
-                                    root.selected-collection-id
+                                    root.selected-collection-id,
+                                    root.active-request-id,
+                                    root.active-request
                                 );
                             }
                         }
@@ -833,7 +856,7 @@ export component AppWindow inherits Window {
                             padding-left: 12px;
                             padding-right: 12px;
                             Text {
-                                text: "Response body";
+                                text: "Response body · " + root.response-format;
                                 color: text-secondary;
                                 font-size: 10px;
                                 font-weight: 700;
@@ -879,7 +902,12 @@ export component AppWindow inherits Window {
                             }
 
                             if root.response-state != "idle" && root.response-state != "loading" : ScrollView {
-                                Text {
+                                mouse-drag-pan-enabled: true;
+                                vertical-scrollbar-policy: always-on;
+                                content-width: self.width;
+                                content-height: response-text.height + 20px;
+
+                                response-text := Text {
                                     x: 12px;
                                     y: 10px;
                                     width: parent.width - 24px;
@@ -1022,7 +1050,7 @@ export component AppWindow inherits Window {
                             font-weight: 600;
                         }
                         Text {
-                            text: "Use {{variable_name}} in a request URL, headers, query parameters, or body.";
+                            text: "Use {variable_name} in a request or {{variable_name}} for compatibility.";
                             color: text-secondary;
                             font-size: 11px;
                         }
