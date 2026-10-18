@@ -1,3 +1,4 @@
+
 export component ThemedButton inherits Rectangle {
     in property <string> text: "";
     in property <image> icon;
@@ -6,8 +7,8 @@ export component ThemedButton inherits Rectangle {
     in property <bool> destructive-button: false;
     in property <bool> enabled: true;
     in property <color> accent-color: #3584e4;
-    in property <color> hover-accent-color: #4d92ec;
-    in property <color> pressed-accent-color: #2e72c6;
+    in property <color> hover-accent-color: root.accent-color.brighter(0.08);
+    in property <color> pressed-accent-color: root.accent-color.darker(0.12);
 
     callback clicked();
 

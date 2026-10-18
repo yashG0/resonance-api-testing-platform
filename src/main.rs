@@ -1,15 +1,13 @@
 mod http;
 mod storage;
 
-#[cfg(target_os = "linux")]
-use std::process::Command;
-use std::{future::Future, sync::Arc};
+use std::{future::Future, process::Command, sync::Arc, time::Duration};
 
 use crate::http::HttpClient;
 use crate::storage::{
     Collection, CollectionVariable, NewRequest, RequestHistory, RequestStore, SavedRequest,
 };
-use slint::{ComponentHandle, ModelRc, VecModel};
+use slint::{Color, ComponentHandle, Model, ModelRc, VecModel};
 
 slint::include_modules!();
 
@@ -47,6 +45,127 @@ fn detect_system_dark_mode(fallback: bool) -> bool {
                 }
                 if preference.contains("prefer-light") {
                     return false;
+                }
+            }
+        }
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        if let Ok(output) = Command::new("reg")
+            .args([
+                "query",
+                "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize",
+                "/v",
+                "AppsUseLightTheme",
+            ])
+            .output()
+        {
+            if output.status.success() {
+                let value = String::from_utf8_lossy(&output.stdout);
+                if let Some(hex) = value.split_whitespace().last()
+                    && let Ok(light) = u32::from_str_radix(hex.trim_start_matches("0x"), 16)
+                {
+                    return light == 0;
+                }
+            }
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        if let Ok(output) = Command::new("defaults")
+            .args(["read", "-g", "AppleInterfaceStyle"])
+            .output()
+        {
+            if output.status.success() {
+                return String::from_utf8_lossy(&output.stdout)
+                    .trim()
+                    .eq_ignore_ascii_case("dark");
+            }
+            // macOS omits this preference when using the default light appearance.
+            return false;
+        }
+    }
+
+    fallback
+}
+
+fn detect_system_accent_color(fallback: Color) -> Color {
+    #[cfg(target_os = "linux")]
+    {
+        if let Ok(output) = Command::new("gsettings")
+            .args(["get", "org.gnome.desktop.interface", "accent-color"])
+            .output()
+        {
+            if output.status.success() {
+                let accent = String::from_utf8_lossy(&output.stdout);
+                let rgb = match accent.trim().trim_matches('\'') {
+                    "blue" => Some((0x35, 0x84, 0xe4)),
+                    "teal" => Some((0x21, 0x90, 0xa4)),
+                    "green" => Some((0x3a, 0x94, 0x4a)),
+                    "yellow" => Some((0xc8, 0x88, 0x00)),
+                    "orange" => Some((0xed, 0x5b, 0x00)),
+                    "red" => Some((0xe6, 0x2d, 0x42)),
+                    "pink" => Some((0xd5, 0x61, 0x99)),
+                    "purple" => Some((0x91, 0x41, 0xac)),
+                    "slate" => Some((0x6f, 0x83, 0x96)),
+                    _ => None,
+                };
+                if let Some((red, green, blue)) = rgb {
+                    return Color::from_rgb_u8(red, green, blue);
+                }
+            }
+        }
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        if let Ok(output) = Command::new("reg")
+            .args([
+                "query",
+                "HKCU\\Software\\Microsoft\\Windows\\DWM",
+                "/v",
+                "AccentColor",
+            ])
+            .output()
+        {
+            if output.status.success() {
+                let value = String::from_utf8_lossy(&output.stdout);
+                if let Some(hex) = value.split_whitespace().last()
+                    && let Ok(abgr) = u32::from_str_radix(hex.trim_start_matches("0x"), 16)
+                {
+                    return Color::from_rgb_u8(
+                        (abgr & 0xff) as u8,
+                        ((abgr >> 8) & 0xff) as u8,
+                        ((abgr >> 16) & 0xff) as u8,
+                    );
+                }
+            }
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        if let Ok(output) = Command::new("defaults")
+            .args(["read", "-g", "AppleAccentColor"])
+            .output()
+        {
+            if output.status.success()
+                && let Ok(index) = String::from_utf8_lossy(&output.stdout).trim().parse::<i32>()
+            {
+                let rgb = match index {
+                    0 => Some((0xd7, 0x00, 0x15)),
+                    1 => Some((0xf5, 0x63, 0x00)),
+                    2 => Some((0xf2, 0xaa, 0x00)),
+                    3 => Some((0x00, 0x8f, 0x5a)),
+                    4 => Some((0x00, 0x7a, 0xcc)),
+                    5 => Some((0x8e, 0x24, 0xaa)),
+                    6 => Some((0xd4, 0x50, 0x87)),
+                    _ => None,
+                };
+                if let Some((red, green, blue)) = rgb {
+                    return Color::from_rgb_u8(red, green, blue);
                 }
             }
         }
@@ -97,6 +216,37 @@ fn to_variable_model(variables: Vec<CollectionVariable>) -> ModelRc<VariableItem
     ModelRc::new(VecModel::from(items))
 }
 
+fn to_key_value_model(value: &str, separator: char) -> ModelRc<KeyValueRow> {
+    let rows = value
+        .lines()
+        .filter_map(|line| {
+            let line = line.trim();
+            if line.is_empty() {
+                return None;
+            }
+            let (key, value) = line.split_once(separator).unwrap_or((line, ""));
+            let key = key.trim();
+            if key.is_empty() {
+                return None;
+            }
+            Some(KeyValueRow {
+                key: key.into(),
+                value: value.trim().into(),
+                enabled: true,
+            })
+        })
+        .collect::<Vec<_>>();
+    ModelRc::new(VecModel::from(rows))
+}
+
+fn serialize_key_value_rows(rows: ModelRc<KeyValueRow>, separator: &str) -> String {
+    rows.iter()
+        .filter(|row| row.enabled && !row.key.trim().is_empty())
+        .map(|row| format!("{}{}{}", row.key.trim(), separator, row.value.trim()))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 fn to_environment_model(items: Vec<(i32, String, CollectionVariable)>) -> ModelRc<EnvironmentItem> {
     let items = items
         .into_iter()
@@ -138,6 +288,7 @@ async fn main() -> Result<(), slint::PlatformError> {
 
     let app = AppWindow::new()?;
     app.set_system_dark_mode(detect_system_dark_mode(app.get_system_dark_mode()));
+    app.set_system_accent_color(detect_system_accent_color(app.get_system_accent_color()));
     let app_weak = app.as_weak();
 
     app.on_refresh_system_theme({
@@ -146,9 +297,14 @@ async fn main() -> Result<(), slint::PlatformError> {
             if let Some(ui) = app_weak.upgrade() {
                 let fallback = ui.get_system_dark_mode();
                 ui.set_system_dark_mode(detect_system_dark_mode(fallback));
+                let accent_fallback = ui.get_system_accent_color();
+                ui.set_system_accent_color(detect_system_accent_color(accent_fallback));
             }
         }
     });
+
+    app.on_serialize_param_rows(|rows| serialize_key_value_rows(rows, "=").into());
+    app.on_serialize_header_rows(|rows| serialize_key_value_rows(rows, ": ").into());
 
     // Load the selected collection's variables off the UI thread, then send the
     // fully resolved request without blocking Slint's event loop.
@@ -768,7 +924,12 @@ async fn main() -> Result<(), slint::PlatformError> {
                                 ui.set_active_method("GET".into());
                                 ui.set_request_url("".into());
                                 ui.set_request_headers("Accept: application/json".into());
+                                ui.set_request_header_rows(to_key_value_model(
+                                    "Accept: application/json",
+                                    ':',
+                                ));
                                 ui.set_request_params("".into());
+                                ui.set_request_param_rows(to_key_value_model("", '='));
                                 ui.set_request_body("".into());
                                 ui.set_body_format("JSON".into());
                                 ui.set_auth_type("None".into());
@@ -889,12 +1050,17 @@ async fn main() -> Result<(), slint::PlatformError> {
                                     ui.set_active_method("GET".into());
                                     ui.set_request_url("".into());
                                     ui.set_request_params("".into());
+                                    ui.set_request_param_rows(to_key_value_model("", '='));
                                     ui.set_request_body("".into());
                                     ui.set_body_format("JSON".into());
                                     ui.set_auth_type("None".into());
                                     ui.set_auth_value("".into());
                                     ui.set_auth_secret("".into());
                                     ui.set_request_headers("Accept: application/json".into());
+                                    ui.set_request_header_rows(to_key_value_model(
+                                        "Accept: application/json",
+                                        ':',
+                                    ));
                                     ui.set_response_status("No response yet".into());
                                     ui.set_response_body(
                                         "Send a request to inspect its response.".into(),
@@ -1018,6 +1184,14 @@ async fn main() -> Result<(), slint::PlatformError> {
                                     ui.set_editing_request_name(false);
                                     ui.set_active_method(request.method.into());
                                     ui.set_request_url(request.url.into());
+                                    ui.set_request_header_rows(to_key_value_model(
+                                        &request.headers,
+                                        ':',
+                                    ));
+                                    ui.set_request_param_rows(to_key_value_model(
+                                        &request.query_params,
+                                        '=',
+                                    ));
                                     ui.set_request_headers(request.headers.into());
                                     ui.set_request_params(request.query_params.into());
                                     ui.set_request_body(request.body.into());
@@ -1079,7 +1253,12 @@ async fn main() -> Result<(), slint::PlatformError> {
                                     ui.set_active_method("GET".into());
                                     ui.set_request_url("".into());
                                     ui.set_request_headers("Accept: application/json".into());
+                                    ui.set_request_header_rows(to_key_value_model(
+                                        "Accept: application/json",
+                                        ':',
+                                    ));
                                     ui.set_request_params("".into());
+                                    ui.set_request_param_rows(to_key_value_model("", '='));
                                     ui.set_request_body("".into());
                                     ui.set_body_format("JSON".into());
                                     ui.set_auth_type("None".into());
@@ -1113,6 +1292,34 @@ async fn main() -> Result<(), slint::PlatformError> {
                     }
                 });
             });
+        }
+    });
+
+    let theme_weak = app.as_weak();
+    let theme_fallback = app.get_system_dark_mode();
+    let accent_fallback = app.get_system_accent_color();
+    std::thread::spawn(move || {
+        loop {
+            std::thread::sleep(Duration::from_secs(2));
+            let system_dark = detect_system_dark_mode(theme_fallback);
+            let system_accent = detect_system_accent_color(accent_fallback);
+            let app_handle = theme_weak.clone();
+            if slint::invoke_from_event_loop(move || {
+                if let Some(ui) = app_handle.upgrade() {
+                    if ui.get_theme_mode() == "System"
+                        && ui.get_system_dark_mode() != system_dark
+                    {
+                        ui.set_system_dark_mode(system_dark);
+                    }
+                    if ui.get_system_accent_color() != system_accent {
+                        ui.set_system_accent_color(system_accent);
+                    }
+                }
+            })
+            .is_err()
+            {
+                break;
+            }
         }
     });
 

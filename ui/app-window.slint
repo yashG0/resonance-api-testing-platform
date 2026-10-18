@@ -1,5 +1,6 @@
 import { ThemedButton } from "components/themed-button.slint";
 import { ChoiceDropdown } from "components/choice-dropdown.slint";
+import { KeyValueEditor, KeyValueRow } from "components/key-value-editor.slint";
 import { LineEdit, TextEdit, ScrollView, Palette } from "std-widgets.slint";
 export struct RequestItem {
     id: int,
@@ -41,6 +42,8 @@ export component AppWindow inherits Window {
 
     callback send-request(string, string, string, string, string, string, string, string, string, int, int, string);
     callback save-request(int, int, string, string, string, string, string, string, string, string, string, string);
+    callback serialize-param-rows([KeyValueRow]) -> string;
+    callback serialize-header-rows([KeyValueRow]) -> string;
     callback load-collections();
     callback load-requests(int);
     callback search-requests(string);
@@ -88,9 +91,12 @@ export component AppWindow inherits Window {
     in-out property <string> active-tab: "Body";
 
     in-out property <string> request-params: "";
+    in-out property <[KeyValueRow]> request-param-rows: [];
     in-out property <string> request-body: "";
     in-out property <string> body-format: "JSON";
     in-out property <string> request-headers: "Accept: application/json";
+    in-out property <[KeyValueRow]> request-header-rows: [{ key: "Accept", value: "application/json", enabled: true }];
+    in-out property <string> header-preset: "Add a preset…";
     in-out property <string> auth-type: "None";
     in-out property <string> auth-value: "";
     in-out property <string> auth-secret: "";
@@ -113,8 +119,7 @@ export component AppWindow inherits Window {
         root.theme-mode == "Light" ? false :
         root.system-dark-mode;
 
-    // Restore the system palette when returning to System mode. Preserve the
-    // detected system appearance separately because `unknown` does not mean light.
+    // Keep explicit appearance overrides separate from the detected system preference.
     changed theme-mode => {
         if (root.previous-theme-mode == "System" && root.theme-mode != "System") {
             root.system-dark-mode = Palette.color-scheme == ColorScheme.dark;
@@ -127,8 +132,14 @@ export component AppWindow inherits Window {
         Palette.color-scheme =
             root.theme-mode == "Dark" ? ColorScheme.dark :
             root.theme-mode == "Light" ? ColorScheme.light :
-            ColorScheme.unknown;
+            root.system-dark-mode ? ColorScheme.dark : ColorScheme.light;
         root.previous-theme-mode = root.theme-mode;
+    }
+
+    changed system-dark-mode => {
+        if (root.theme-mode == "System") {
+            Palette.color-scheme = root.system-dark-mode ? ColorScheme.dark : ColorScheme.light;
+        }
     }
 
     property <color> window-bg: dark-mode ? #222226 : #f6f5f4;
@@ -138,9 +149,24 @@ export component AppWindow inherits Window {
     property <color> border-color: dark-mode ? #3d3d42 : #deddda;
     property <color> text-primary: dark-mode ? #f6f5f4 : #241f31;
     property <color> text-secondary: dark-mode ? #b8b7b2 : #5e5c64;
-    property <color> accent: #3584e4;
+    in-out property <color> system-accent-color: #3584e4;
+    property <color> accent: root.system-accent-color;
     property <color> selected-bg: dark-mode ? #45454a : #e3e2e0;
     property <color> hover-bg: dark-mode ? #38383c : #e8e7e5;
+
+    function add-header-preset(name: string) {
+        if name != "Add a preset…" {
+            let value = name == "Accept" ? "application/json" :
+                name == "Content-Type" ? "application/json" :
+                name == "Cache-Control" ? "no-cache" :
+                name == "User-Agent" ? "Resonance" : "";
+            let updated = root.request-header-rows;
+            updated.push({ key: name, value: value, enabled: true });
+            root.request-header-rows = updated;
+            root.request-headers = root.serialize-header-rows(root.request-header-rows);
+            root.header-preset = "Add a preset…";
+        }
+    }
 
     function start-new-request(collection-id: int, collection-name: string) {
         root.selected-collection-id = collection-id;
@@ -159,9 +185,11 @@ export component AppWindow inherits Window {
         root.active-method = "GET";
         root.request-url = "";
         root.request-params = "";
+        root.request-param-rows = [];
         root.request-body = "";
         root.body-format = "JSON";
         root.request-headers = "Accept: application/json";
+        root.request-header-rows = [{ key: "Accept", value: "application/json", enabled: true }];
         root.auth-type = "None";
         root.auth-value = "";
         root.auth-secret = "";
@@ -242,16 +270,24 @@ export component AppWindow inherits Window {
                     spacing: 9px;
                     height: 42px;
 
-                    Text {
-                        text: "◉";
-                        color: accent;
-                        font-size: 23px;
-                        vertical-alignment: center;
+                    Rectangle {
+                        width: 28px;
+                        height: 42px;
+                        background: transparent;
+                        Image {
+                            x: 0px;
+                            y: 7px;
+                            width: 28px;
+                            height: 28px;
+                            source: @image-url("../assets/logo/resonance-logo.svg");
+                            image-fit: contain;
+                        }
                     }
 
                     Text {
                         text: "Resonance";
                         color: text-primary;
+                        height: 42px;
                         font-size: 18px;
                         font-weight: 700;
                         vertical-alignment: center;
@@ -259,6 +295,7 @@ export component AppWindow inherits Window {
                 }
 
                 ThemedButton {
+                    accent-color: root.accent;
                     text: "New Request";
                     icon: @image-url("../assets/icons/new.png");
                     dark-mode: root.dark-mode;
@@ -333,6 +370,7 @@ export component AppWindow inherits Window {
                     }
 
                     ThemedButton {
+                        accent-color: root.accent;
                         width: 28px;
                         height: 28px;
                         icon: @image-url("../assets/icons/new.png");
@@ -374,6 +412,7 @@ export component AppWindow inherits Window {
                         HorizontalLayout {
                             spacing: 6px;
                             ThemedButton {
+                                accent-color: root.accent;
                                 horizontal-stretch: 1;
                                 text: "Create";
                                 icon: @image-url("../assets/icons/new.png");
@@ -383,6 +422,7 @@ export component AppWindow inherits Window {
                                 clicked => root.create-collection(root.new-collection-name);
                             }
                             ThemedButton {
+                                accent-color: root.accent;
                                 width: 68px;
                                 text: "Cancel";
                                 icon: @image-url("../assets/icons/close.png");
@@ -453,6 +493,7 @@ export component AppWindow inherits Window {
                             }
 
                             if root.editing-collection-id == collection.id : ThemedButton {
+                                accent-color: root.accent;
                                 width: 28px;
                                 height: 28px;
                                 icon: @image-url("../assets/icons/save(right).png");
@@ -463,6 +504,7 @@ export component AppWindow inherits Window {
                             }
 
                             if root.editing-collection-id == collection.id : ThemedButton {
+                                accent-color: root.accent;
                                 width: 28px;
                                 height: 28px;
                                 icon: @image-url("../assets/icons/close.png");
@@ -472,6 +514,7 @@ export component AppWindow inherits Window {
                             }
 
                             if root.editing-collection-id != collection.id : ThemedButton {
+                                accent-color: root.accent;
                                 width: 28px;
                                 height: 28px;
                                 text: "⋯";
@@ -732,6 +775,7 @@ export component AppWindow inherits Window {
                             HorizontalLayout {
                                 spacing: 5px;
                                 ThemedButton {
+                                    accent-color: root.accent;
                                     horizontal-stretch: 1;
                                     height: 27px;
                                     text: "Cancel";
@@ -740,6 +784,7 @@ export component AppWindow inherits Window {
                                     clicked => { root.confirm-delete-collection-id = -1; }
                                 }
                                 ThemedButton {
+                                    accent-color: root.accent;
                                     horizontal-stretch: 1;
                                     height: 27px;
                                     text: "Delete";
@@ -817,6 +862,7 @@ export component AppWindow inherits Window {
                     spacing: 6px;
 
                     ThemedButton {
+                        accent-color: root.accent;
                         width: 30px;
                         height: 30px;
                         icon: @image-url("../assets/icons/menu.png");
@@ -841,6 +887,7 @@ export component AppWindow inherits Window {
                     }
 
                     ThemedButton {
+                        accent-color: root.accent;
                         width: 92px;
                         height: 30px;
                         text: "Env vars";
@@ -952,6 +999,7 @@ export component AppWindow inherits Window {
                         }
 
                         ThemedButton {
+                            accent-color: root.accent;
                             icon: @image-url("../assets/icons/close.png");
                             width: 30px;
                             height: 30px;
@@ -990,6 +1038,7 @@ export component AppWindow inherits Window {
                     }
                     Rectangle { horizontal-stretch: 1; background: transparent; }
                     ThemedButton {
+                        accent-color: root.accent;
                         text: "+ New collection";
                         dark-mode: root.dark-mode;
                         accent-button: true;
@@ -1030,6 +1079,7 @@ export component AppWindow inherits Window {
                                     Text { text: collection.id == root.selected-collection-id ? "Currently selected" : "Collection"; color: text-secondary; font-size: 11px; }
                                 }
                                 ThemedButton {
+                                    accent-color: root.accent;
                                     text: "Open requests →";
                                     dark-mode: root.dark-mode;
                                     accent-button: collection.id == root.selected-collection-id;
@@ -1059,6 +1109,7 @@ export component AppWindow inherits Window {
                     }
                     Rectangle { horizontal-stretch: 1; background: transparent; }
                     ThemedButton {
+                        accent-color: root.accent;
                         text: root.show-variable-values ? "Hide values" : "Show values";
                         dark-mode: root.dark-mode;
                         accent-button: false;
@@ -1107,6 +1158,7 @@ export component AppWindow inherits Window {
                                     overflow: elide;
                                 }
                                 ThemedButton {
+                                    accent-color: root.accent;
                                     text: "Manage";
                                     dark-mode: root.dark-mode;
                                     accent-button: false;
@@ -1138,6 +1190,7 @@ export component AppWindow inherits Window {
                     }
                     Rectangle { horizontal-stretch: 1; background: transparent; }
                     ChoiceDropdown {
+                        accent-color: root.accent;
                         width: 150px;
                         options: ["Newest first", "Oldest first"];
                         current-value: root.history-sort;
@@ -1223,6 +1276,7 @@ export component AppWindow inherits Window {
                                 edited(value) => { root.request-name-draft = value; }
                             }
                             ThemedButton {
+                                accent-color: root.accent;
                                 text: "Save name";
                                 icon: @image-url("../assets/icons/save(right).png");
                                 dark-mode: root.dark-mode;
@@ -1250,6 +1304,7 @@ export component AppWindow inherits Window {
                                 }
                             }
                             ThemedButton {
+                                accent-color: root.accent;
                                 text: "Cancel";
                                 icon: @image-url("../assets/icons/close.png");
                                 dark-mode: root.dark-mode;
@@ -1269,6 +1324,7 @@ export component AppWindow inherits Window {
                                 overflow: elide;
                             }
                             ThemedButton {
+                                accent-color: root.accent;
                                 text: "Edit name";
                                 icon: @image-url("../assets/icons/edit.png");
                                 dark-mode: root.dark-mode;
@@ -1295,16 +1351,15 @@ export component AppWindow inherits Window {
                     }
 
                     ThemedButton {
-    text: "Save request";
-    icon: @image-url("../assets/icons/save(right).png");
-    dark-mode: root.dark-mode;
-    accent-button: false;
-    enabled: root.selected-collection-id > 0 && root.request-url != "" && root.active-request != "";
+                        accent-color: root.accent;
+                        text: "Save request";
+                        icon: @image-url("../assets/icons/save(right).png");
+                        dark-mode: root.dark-mode;
+                        accent-button: false;
+                        enabled: root.selected-collection-id > 0 && root.request-url != "" && root.active-request != "";
 
-    clicked => {
-    root.save-current-request();
-}
-}
+                        clicked => root.save-current-request();
+                    }
                 }
 
                 // URL and method controls
@@ -1340,6 +1395,8 @@ export component AppWindow inherits Window {
                         }
 
                         ThemedButton {
+                            accent-color: root.accent;
+                            width: 144px;
                             text: root.is-loading ? "Sending..." : "Send";
                             icon: @image-url("../assets/icons/send.png");
                             dark-mode: root.dark-mode;
@@ -1396,12 +1453,22 @@ export component AppWindow inherits Window {
                     }
                     Rectangle { horizontal-stretch: 1; background: transparent; }
                     if root.active-tab == "Body" : ChoiceDropdown {
+                        accent-color: root.accent;
                         width: 104px;
                         height: 30px;
                         options: ["JSON", "Text", "HTML", "XML"];
                         current-value: root.body-format;
                         dark-mode: root.dark-mode;
                         selected(value) => { root.body-format = value; }
+                    }
+                    if root.active-tab == "Headers" : ChoiceDropdown {
+                        accent-color: root.accent;
+                        width: 172px;
+                        height: 30px;
+                        options: ["Add a preset…", "Accept", "Content-Type", "Cache-Control", "User-Agent", "X-Request-ID"];
+                        current-value: root.header-preset;
+                        dark-mode: root.dark-mode;
+                        selected(value) => { root.add-header-preset(value); }
                     }
                 }
 
@@ -1423,23 +1490,37 @@ export component AppWindow inherits Window {
                         }
                     }
 
-                    if root.active-tab == "Headers" : TextEdit {
-                        text: root.request-headers;
-                        font-family: "monospace";
-                        font-size: 12px;
-                        wrap: word-wrap;
-                        edited(value) => {
-                            root.request-headers = value;
+                    if root.active-tab == "Headers" : KeyValueEditor {
+                        accent-color: root.accent;
+                        x: 0px;
+                        y: 0px;
+                        width: parent.width;
+                        height: parent.height;
+                        rows: root.request-header-rows;
+                        key-placeholder: "Header name";
+                        value-placeholder: "Header value";
+                        add-label: "Add header";
+                        dark-mode: root.dark-mode;
+                        changed(rows) => {
+                            root.request-header-rows = rows;
+                            root.request-headers = root.serialize-header-rows(root.request-header-rows);
                         }
                     }
 
-                    if root.active-tab == "Params" : TextEdit {
-                        text: root.request-params;
-                        font-family: "monospace";
-                        font-size: 12px;
-                        wrap: word-wrap;
-                        edited(value) => {
-                            root.request-params = value;
+                    if root.active-tab == "Params" : KeyValueEditor {
+                        accent-color: root.accent;
+                        x: 0px;
+                        y: 0px;
+                        width: parent.width;
+                        height: parent.height;
+                        rows: root.request-param-rows;
+                        key-placeholder: "Parameter name";
+                        value-placeholder: "Parameter value";
+                        add-label: "Add parameter";
+                        dark-mode: root.dark-mode;
+                        changed(rows) => {
+                            root.request-param-rows = rows;
+                            root.request-params = root.serialize-param-rows(root.request-param-rows);
                         }
                     }
 
@@ -1452,6 +1533,7 @@ export component AppWindow inherits Window {
                             font-size: 11px;
                         }
                         ChoiceDropdown {
+                            accent-color: root.accent;
                             width: 180px;
                             options: ["None", "Bearer", "Basic"];
                             current-value: root.auth-type;
@@ -1496,13 +1578,6 @@ export component AppWindow inherits Window {
                         font-size: 12px;
                     }
 
-                    if root.active-tab == "Params" && root.request-params == "" : Text {
-                        x: 16px;
-                        y: 14px;
-                        text: "Add query parameters, one per line…";
-                        color: text-secondary;
-                        font-size: 12px;
-                    }
                 }
 
                 Rectangle {
@@ -1687,6 +1762,7 @@ export component AppWindow inherits Window {
                     }
 
                     ThemedButton {
+                        accent-color: root.accent;
                         text: "← Requests";
                         dark-mode: root.dark-mode;
                         accent-button: false;
@@ -1733,6 +1809,7 @@ export component AppWindow inherits Window {
                                 edited(value) => { root.variable-value = value; }
                             }
                             ThemedButton {
+                                accent-color: root.accent;
                                 width: 112px;
                                 text: "Save variable";
                                 icon: @image-url("../assets/icons/save(right).png");
@@ -1769,6 +1846,7 @@ export component AppWindow inherits Window {
                     }
                     Rectangle { horizontal-stretch: 1; background: transparent; }
                     ThemedButton {
+                        accent-color: root.accent;
                         width: 116px;
                         height: 30px;
                         text: root.show-variable-values ? "Hide values" : "Show values";
@@ -1849,6 +1927,7 @@ export component AppWindow inherits Window {
                                         vertical-alignment: center;
                                     }
                                     ThemedButton {
+                                        accent-color: root.accent;
                                         width: 52px;
                                         text: "Edit";
                                         icon: @image-url("../assets/icons/edit.png");
@@ -1861,6 +1940,7 @@ export component AppWindow inherits Window {
                                         }
                                     }
                                     ThemedButton {
+                                        accent-color: root.accent;
                                         width: 36px;
                                         icon: @image-url("../assets/icons/close.png");
                                         dark-mode: root.dark-mode;

@@ -45,7 +45,7 @@ export component ChoiceDropdown inherits Rectangle {
                     height: 32px;
                     border-radius: 7px;
                     background: option == root.current-value
-                        ? (root.dark-mode ? #414149 : #e9f1fc)
+                        ? (root.dark-mode ? root.accent-color.with-alpha(0.24) : root.accent-color.with-alpha(0.14))
                         : option-touch.has-hover
                             ? (root.dark-mode ? #3b3b40 : #f3f2f0)
                             : transparent;

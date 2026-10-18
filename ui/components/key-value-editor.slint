@@ -1,0 +1,120 @@
+import { ThemedButton } from "themed-button.slint";
+import { LineEdit } from "std-widgets.slint";
+
+export struct KeyValueRow {
+    key: string,
+    value: string,
+    enabled: bool,
+}
+
+export component KeyValueEditor inherits Rectangle {
+    in-out property <[KeyValueRow]> rows: [];
+    in property <string> key-placeholder: "Key";
+    in property <string> value-placeholder: "Value";
+    in property <string> add-label: "Add row";
+    in property <bool> dark-mode: true;
+    in property <color> accent-color: #3584e4;
+    callback changed([KeyValueRow]);
+
+    background: transparent;
+
+    VerticalLayout {
+        padding: 12px;
+        spacing: 8px;
+
+        HorizontalLayout {
+            height: 24px;
+            spacing: 8px;
+            Text { text: "Key"; color: root.dark-mode ? #b0b0b0 : #5e5c64; font-size: 10px; font-weight: 600; horizontal-stretch: 1; vertical-alignment: center; }
+            Text { text: "Value"; color: root.dark-mode ? #b0b0b0 : #5e5c64; font-size: 10px; font-weight: 600; horizontal-stretch: 2; vertical-alignment: center; }
+            Rectangle { width: 34px; background: transparent; }
+        }
+
+        if root.rows.length == 0 : Text {
+            text: "No rows yet. Add a key and value to get started.";
+            color: root.dark-mode ? #b0b0b0 : #5e5c64;
+            font-size: 11px;
+            height: 32px;
+            vertical-alignment: center;
+        }
+
+        for row[index] in root.rows : HorizontalLayout {
+            height: 36px;
+            spacing: 8px;
+
+            Rectangle {
+                width: 22px;
+                height: 30px;
+                background: transparent;
+                TouchArea {
+                    clicked => {
+                        let updated = root.rows;
+                        updated.remove(index);
+                        updated.insert(index, { key: row.key, value: row.value, enabled: !row.enabled });
+                        root.rows = updated;
+                        root.changed(root.rows);
+                    }
+                }
+                Text {
+                    text: row.enabled ? "☑" : "□";
+                    color: row.enabled ? root.accent-color : (root.dark-mode ? #b0b0b0 : #5e5c64);
+                    font-size: 16px;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
+            }
+
+            LineEdit {
+                horizontal-stretch: 1;
+                text: row.key;
+                placeholder-text: root.key-placeholder;
+                edited(value) => {
+                    let updated = root.rows;
+                    updated.remove(index);
+                    updated.insert(index, { key: value, value: row.value, enabled: row.enabled });
+                    root.rows = updated;
+                    root.changed(root.rows);
+                }
+            }
+            LineEdit {
+                horizontal-stretch: 2;
+                text: row.value;
+                placeholder-text: root.value-placeholder;
+                edited(value) => {
+                    let updated = root.rows;
+                    updated.remove(index);
+                    updated.insert(index, { key: row.key, value: value, enabled: row.enabled });
+                    root.rows = updated;
+                    root.changed(root.rows);
+                }
+            }
+            ThemedButton {
+                width: 34px;
+                text: "×";
+                dark-mode: root.dark-mode;
+                accent-button: false;
+                destructive-button: true;
+                clicked => {
+                    let updated = root.rows;
+                    updated.remove(index);
+                    root.rows = updated;
+                    root.changed(root.rows);
+                }
+            }
+        }
+
+        ThemedButton {
+            width: 112px;
+            height: 32px;
+            text: "+ " + root.add-label;
+            dark-mode: root.dark-mode;
+            accent-button: false;
+            clicked => {
+                let updated = root.rows;
+                updated.push({ key: "", value: "", enabled: true });
+                root.rows = updated;
+                root.changed(root.rows);
+            }
+        }
+    }
+}
