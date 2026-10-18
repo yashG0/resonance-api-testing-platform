@@ -65,6 +65,38 @@ For me, this project is about building a useful tool while learning through prac
 
 Resonance is still in early development, so the current feature set is intentionally limited.
 
+## Install on Linux
+
+Resonance does not have packaged Linux releases yet. Build it from source on the Linux machine where you plan to run it.
+
+### Requirements
+
+- Rust and Cargo 1.92 or newer.
+- A C/C++ build toolchain and the Linux libraries used by Slint's desktop backend.
+
+On Debian or Ubuntu, install the system packages with:
+
+```bash
+sudo apt update
+sudo apt install -y build-essential pkg-config libx11-xcb1 libx11-dev libxcb1-dev libxkbcommon0 libinput10 libinput-dev libgbm1 libgbm-dev
+```
+
+Install Rust with [rustup](https://rustup.rs/) if it is not already available. Then clone this repository and build the optimized release binary:
+
+```bash
+git clone https://github.com/yashG0/resonance-api-testing-platform.git
+cd resonance-api-testing-platform
+cargo build --release
+```
+
+Run the application with:
+
+```bash
+./target/release/resonance
+```
+
+The release profile enables thin LTO, one code generation unit, and symbol stripping. Building on the target machine selects its architecture automatically. Slint's Linux package requirements are documented in its [manual setup guide](https://docs.slint.dev/latest/docs/slint/guide/tooling/manual-setup/).
+
 ## Local-First, Not Offline HTTP
 
 Resonance stores saved requests locally, helping keep request collections on your machine.
