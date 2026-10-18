@@ -1,0 +1,10 @@
+
+[package]
+name = "resonance"
+version = "0.1.0"
+edition = "2024"
+description = "A Linux-first, offline-friendly API testing tool"
+license = "MIT"
+
+[dependencies]
+slint = "1.18"
