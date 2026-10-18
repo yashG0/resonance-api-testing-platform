@@ -205,6 +205,70 @@ impl RequestStore {
         })
     }
 
+    pub fn rename_collection(
+        &self,
+        collection_id: i64,
+        name: &str,
+    ) -> Result<Collection, StoreError> {
+        let name = name.trim();
+        if name.is_empty() {
+            return Err(StoreError::Validation(
+                "collection name cannot be empty".into(),
+            ));
+        }
+
+        let connection = self.connect()?;
+        let exists = connection.query_row(
+            "SELECT EXISTS(SELECT 1 FROM collections WHERE id = ?1)",
+            [collection_id],
+            |row| row.get::<_, bool>(0),
+        )?;
+        if !exists {
+            return Err(StoreError::Validation("collection no longer exists".into()));
+        }
+
+        let duplicate = connection.query_row(
+            "SELECT EXISTS(SELECT 1 FROM collections WHERE name = ?1 AND id != ?2)",
+            params![name, collection_id],
+            |row| row.get::<_, bool>(0),
+        )?;
+        if duplicate {
+            return Err(StoreError::Validation(format!(
+                "collection '{name}' already exists"
+            )));
+        }
+
+        connection.execute(
+            "UPDATE collections SET name = ?1 WHERE id = ?2",
+            params![name, collection_id],
+        )?;
+        Ok(Collection {
+            id: collection_id,
+            name: name.to_owned(),
+        })
+    }
+
+    /// Deletes a collection and its requests and variables. At least one
+    /// collection is always kept so the app has a valid destination for new requests.
+    pub fn delete_collection(&self, collection_id: i64) -> Result<bool, StoreError> {
+        let connection = self.connect()?;
+        let count = connection.query_row("SELECT COUNT(*) FROM collections", [], |row| {
+            row.get::<_, i64>(0)
+        })?;
+        if count <= 1 {
+            return Err(StoreError::Validation(
+                "the last collection cannot be deleted".into(),
+            ));
+        }
+
+        let deleted =
+            connection.execute("DELETE FROM collections WHERE id = ?1", [collection_id])?;
+        if deleted == 0 {
+            return Err(StoreError::Validation("collection no longer exists".into()));
+        }
+        Ok(true)
+    }
+
     pub fn list_variables(
         &self,
         collection_id: i64,
@@ -496,6 +560,62 @@ mod tests {
                 .expect("list after delete")
                 .is_empty()
         );
+    }
+
+    #[test]
+    fn collection_rename_and_delete_preserve_collection_invariants() {
+        let temp = tempfile::tempdir().expect("temporary directory");
+        let store = RequestStore::open(temp.path().join("test.sqlite3")).expect("open store");
+        let initial_collections = store.list_collections().expect("collections");
+        let default = initial_collections[0].clone();
+        let last_seeded = initial_collections[1].clone();
+        let second = store
+            .create_collection("Staging")
+            .expect("create collection");
+
+        let renamed = store
+            .rename_collection(second.id, "  Preview  ")
+            .expect("rename collection");
+        assert_eq!(renamed.name, "Preview");
+        assert!(matches!(
+            store.rename_collection(second.id, &default.name),
+            Err(StoreError::Validation(_))
+        ));
+        assert!(matches!(
+            store.rename_collection(second.id, "   "),
+            Err(StoreError::Validation(_))
+        ));
+
+        store
+            .upsert_variable(second.id, "token", "secret")
+            .expect("add collection variable");
+        store.create(&sample(second.id)).expect("create request");
+        assert!(
+            store
+                .delete_collection(second.id)
+                .expect("delete collection")
+        );
+        assert!(
+            store
+                .list_variables(second.id)
+                .expect("list variables")
+                .is_empty()
+        );
+        assert!(
+            store
+                .list_for_collection(second.id)
+                .expect("list requests")
+                .is_empty()
+        );
+        assert_eq!(
+            store.list_collections().expect("seeded collections").len(),
+            initial_collections.len()
+        );
+        assert!(store.delete_collection(default.id).expect("delete default"));
+        assert!(matches!(
+            store.delete_collection(last_seeded.id),
+            Err(StoreError::Validation(_))
+        ));
     }
 
     #[test]

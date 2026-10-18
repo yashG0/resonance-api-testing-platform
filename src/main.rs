@@ -131,32 +131,49 @@ async fn main() -> Result<(), slint::PlatformError> {
                     tokio::task::spawn_blocking(move || store.variables_map(collection_id as i64))
                         .await;
 
-                let (status, response_body, elapsed) = match variables_result {
+                let (status, response_body, elapsed, response_state) = match variables_result {
                     Ok(Ok(variables)) => {
                         let result = client
                             .send(&method, &url, &body, &headers, &params, &variables)
                             .await;
+                        let response_state = result
+                            .status
+                            .split_whitespace()
+                            .next()
+                            .and_then(|code| code.parse::<u16>().ok())
+                            .map(|code| {
+                                if (200..400).contains(&code) {
+                                    "success"
+                                } else {
+                                    "http-error"
+                                }
+                            })
+                            .unwrap_or("error");
                         (
                             result.status,
                             result.body,
                             format!("{:.2} ms", result.elapsed.as_secs_f64() * 1000.0),
+                            response_state.to_owned(),
                         )
                     }
                     Ok(Err(error)) => (
                         "Error".into(),
                         format!("Could not load collection variables: {error}"),
                         "---".into(),
+                        "error".into(),
                     ),
                     Err(error) => (
                         "Error".into(),
                         format!("Could not load collection variables: {error}"),
                         "---".into(),
+                        "error".into(),
                     ),
                 };
 
                 let _ = slint::invoke_from_event_loop(move || {
                     if let Some(ui) = app_handle.upgrade() {
                         ui.set_response_status(status.into());
+                        ui.set_response_state(response_state.into());
                         ui.set_response_body(response_body.into());
                         ui.set_response_time(elapsed.into());
                         ui.set_is_loading(false);
@@ -357,6 +374,101 @@ async fn main() -> Result<(), slint::PlatformError> {
                             ),
                             Err(error) => ui.set_variables_message(
                                 format!("Could not create collection: {error}").into(),
+                            ),
+                        }
+                    }
+                });
+            });
+        }
+    });
+
+    app.on_rename_collection({
+        let app_weak = app_weak.clone();
+        let store = Arc::clone(&store);
+        move |collection_id, name| {
+            let app_handle = app_weak.clone();
+            let store = Arc::clone(&store);
+            let name = name.to_string();
+            tokio::task::spawn_blocking(move || {
+                let renamed = store.rename_collection(collection_id as i64, &name)?;
+                let collections = store.list_collections()?;
+                Ok::<_, crate::storage::StoreError>((renamed, collections))
+            })
+            .then(move |result| async move {
+                let _ = slint::invoke_from_event_loop(move || {
+                    if let Some(ui) = app_handle.upgrade() {
+                        match result {
+                            Ok(Ok((renamed, collections))) => {
+                                ui.set_collections(to_collection_model(collections));
+                                ui.set_selected_collection_name(renamed.name.into());
+                                ui.set_rename_collection_name(ui.get_selected_collection_name());
+                                ui.set_show_rename_collection(false);
+                                ui.set_variables_message("Collection renamed.".into());
+                            }
+                            Ok(Err(error)) => ui.set_variables_message(
+                                format!("Could not rename collection: {error}").into(),
+                            ),
+                            Err(error) => ui.set_variables_message(
+                                format!("Could not rename collection: {error}").into(),
+                            ),
+                        }
+                    }
+                });
+            });
+        }
+    });
+
+    app.on_delete_collection({
+        let app_weak = app_weak.clone();
+        let store = Arc::clone(&store);
+        move |collection_id| {
+            let app_handle = app_weak.clone();
+            let store = Arc::clone(&store);
+            tokio::task::spawn_blocking(move || {
+                store.delete_collection(collection_id as i64)?;
+                store.list_collections()
+            })
+            .then(move |result| async move {
+                let _ = slint::invoke_from_event_loop(move || {
+                    if let Some(ui) = app_handle.upgrade() {
+                        match result {
+                            Ok(Ok(collections)) => {
+                                let Some(selected) = collections.first().cloned() else {
+                                    ui.set_variables_message(
+                                        "Could not delete collection: no collections remain."
+                                            .into(),
+                                    );
+                                    return;
+                                };
+                                let id = selected.id as i32;
+                                ui.set_collections(to_collection_model(collections));
+                                ui.set_selected_collection_id(id);
+                                ui.set_selected_collection_name(selected.name.into());
+                                ui.set_confirm_delete_collection(false);
+                                ui.set_active_request_id(-1);
+                                ui.set_active_request("New Request".into());
+                                ui.set_active_method("GET".into());
+                                ui.set_request_url("".into());
+                                ui.set_request_params("".into());
+                                ui.set_request_body("".into());
+                                ui.set_request_headers("Accept: application/json".into());
+                                ui.set_response_status("No response yet".into());
+                                ui.set_response_body(
+                                    "Send a request to inspect its response.".into(),
+                                );
+                                ui.set_response_time("---".into());
+                                ui.set_response_state("idle".into());
+                                ui.invoke_load_requests(id);
+                                ui.invoke_load_collection_variables(id);
+                                ui.set_variables_message(
+                                    "Collection and its saved data deleted.".into(),
+                                );
+                            }
+                            Ok(Err(error)) => ui.set_variables_message(
+                                format!("Could not delete collection: {error}").into(),
+                            ),
+                            Err(error) => ui.set_variables_message(
+                                format!("Could not delete collection: {error}").into(),
                             ),
                         }
                     }

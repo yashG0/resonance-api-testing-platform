@@ -26,6 +26,8 @@ export component AppWindow inherits Window {
     callback load-requests(int);
     callback load-collection-variables(int);
     callback create-collection(string);
+    callback rename-collection(int, string);
+    callback delete-collection(int);
     callback save-collection-variable(int, string, string);
     callback delete-collection-variable(int, string);
     callback select-request(int);
@@ -37,10 +39,14 @@ export component AppWindow inherits Window {
     in-out property <[VariableItem]> collection-variables: [];
     in-out property <int> active-request-id: -1;
     in-out property <int> selected-collection-id: -1;
+    in-out property <int> collection-menu-id: -1;
     in-out property <string> selected-collection-name: "";
     in-out property <string> active-view: "Request";
     in-out property <string> new-collection-name: "";
     in-out property <bool> show-new-collection: false;
+    in-out property <bool> show-rename-collection: false;
+    in-out property <string> rename-collection-name: "";
+    in-out property <bool> confirm-delete-collection: false;
     in-out property <string> variable-key: "";
     in-out property <string> variable-value: "";
     in-out property <string> variables-message: "";
@@ -57,6 +63,7 @@ export component AppWindow inherits Window {
     in-out property <string> response-status: "No response yet";
     in-out property <string> response-body: "Send a request to inspect its response.";
     in-out property <string> response-time: "---";
+    in-out property <string> response-state: "idle";
     in-out property <bool> is-loading: false;
 
     // Keep the system appearance before applying an explicit per-app override.
@@ -242,39 +249,109 @@ export component AppWindow inherits Window {
                     font-size: 10px;
                 }
 
-                for collection in root.collections : Rectangle {
-                    height: 36px;
-                    border-radius: 8px;
-                    background: root.selected-collection-id == collection.id ? selected-bg
-                        : collection-touch.has-hover ? hover-bg : transparent;
+                for collection in root.collections : VerticalLayout {
+                    spacing: 2px;
 
-                    collection-touch := TouchArea {
-                        clicked => {
-                            root.selected-collection-id = collection.id;
-                            root.selected-collection-name = collection.name;
-                            root.active-view = "Request";
-                            root.active-request-id = -1;
-                            root.active-request = "New Request";
-                            root.active-method = "GET";
-                            root.request-url = "";
-                            root.request-params = "";
-                            root.request-body = "";
-                            root.request-headers = "Accept: application/json";
-                            root.response-status = "No response yet";
-                            root.response-body = "Send a request to inspect its response.";
-                            root.response-time = "---";
-                            root.load-requests(collection.id);
-                            root.load-collection-variables(collection.id);
+                    Rectangle {
+                        height: 36px;
+                        border-radius: 8px;
+                        background: root.selected-collection-id == collection.id ? selected-bg
+                            : collection-touch.has-hover ? hover-bg : transparent;
+
+                        collection-touch := TouchArea {
+                            clicked => {
+                                root.collection-menu-id = -1;
+                                root.selected-collection-id = collection.id;
+                                root.selected-collection-name = collection.name;
+                                root.active-view = "Request";
+                                root.active-request-id = -1;
+                                root.active-request = "New Request";
+                                root.active-method = "GET";
+                                root.request-url = "";
+                                root.request-params = "";
+                                root.request-body = "";
+                                root.request-headers = "Accept: application/json";
+                                root.response-status = "No response yet";
+                                root.response-body = "Send a request to inspect its response.";
+                                root.response-time = "---";
+                                root.response-state = "idle";
+                                root.load-requests(collection.id);
+                                root.load-collection-variables(collection.id);
+                            }
+                        }
+
+                        HorizontalLayout {
+                            x: 10px;
+                            y: 3px;
+                            width: parent.width - 16px;
+                            height: 30px;
+                            spacing: 4px;
+
+                            Text {
+                                horizontal-stretch: 1;
+                                text: collection.name;
+                                color: root.selected-collection-id == collection.id ? text-primary : text-secondary;
+                                font-size: 13px;
+                                font-weight: root.selected-collection-id == collection.id ? 600 : 400;
+                                vertical-alignment: center;
+                                overflow: elide;
+                            }
+
+                            ThemedButton {
+                                width: 28px;
+                                height: 28px;
+                                text: "⋯";
+                                dark-mode: root.dark-mode;
+                                accent-button: false;
+                                clicked => {
+                                    root.collection-menu-id = root.collection-menu-id == collection.id ? -1 : collection.id;
+                                }
+                            }
                         }
                     }
 
-                    Text {
-                        x: 11px;
-                        text: collection.name;
-                        color: root.selected-collection-id == collection.id ? text-primary : text-secondary;
-                        font-size: 13px;
-                        font-weight: root.selected-collection-id == collection.id ? 600 : 400;
-                        vertical-alignment: center;
+                    if root.collection-menu-id == collection.id : HorizontalLayout {
+                        height: 32px;
+                        spacing: 5px;
+                        ThemedButton {
+                            horizontal-stretch: 1;
+                            height: 29px;
+                            text: "Rename";
+                            dark-mode: root.dark-mode;
+                            accent-button: false;
+                            clicked => {
+                                root.selected-collection-id = collection.id;
+                                root.selected-collection-name = collection.name;
+                                root.active-view = "Variables";
+                                root.rename-collection-name = collection.name;
+                                root.load-requests(collection.id);
+                                root.load-collection-variables(collection.id);
+                                root.show-rename-collection = true;
+                                root.confirm-delete-collection = false;
+                                root.collection-menu-id = -1;
+                                root.variables-message = "";
+                            }
+                        }
+                        ThemedButton {
+                            horizontal-stretch: 1;
+                            height: 29px;
+                            text: "Delete";
+                            dark-mode: root.dark-mode;
+                            accent-button: false;
+                            destructive-button: true;
+                            enabled: root.collections.length > 1;
+                            clicked => {
+                                root.selected-collection-id = collection.id;
+                                root.selected-collection-name = collection.name;
+                                root.active-view = "Variables";
+                                root.saved-requests = [];
+                                root.collection-variables = [];
+                                root.confirm-delete-collection = true;
+                                root.show-rename-collection = false;
+                                root.collection-menu-id = -1;
+                                root.variables-message = "";
+                            }
+                        }
                     }
                 }
 
@@ -573,6 +650,7 @@ export component AppWindow inherits Window {
                             clicked => {
                                 root.is-loading = true;
                                 root.response-status = "Sending...";
+                                root.response-state = "loading";
                                 root.response-body = "Waiting for response...";
                                 root.response-time = "---";
                                 root.send-request(
@@ -697,74 +775,121 @@ export component AppWindow inherits Window {
                 }
 
                 HorizontalLayout {
-                    spacing: 12px;
+                    height: 34px;
+                    spacing: 10px;
 
                     Text {
                         text: "Response";
                         color: text-primary;
                         font-size: 16px;
                         font-weight: 700;
-                    }
-
-                    Text {
-                        text: root.response-status;
-                        color: text-secondary;
-                        font-size: 12px;
+                        vertical-alignment: center;
                     }
 
                     Rectangle {
-                        horizontal-stretch: 1;
-                        background: transparent;
+                        height: 24px;
+                        width: 124px;
+                        border-radius: 7px;
+                        background: root.response-state == "success" ? (root.dark-mode ? #183c2d : #d8f3e4)
+                            : root.response-state == "http-error" || root.response-state == "error" ? (root.dark-mode ? #48292a : #fce3e1)
+                            : root.response-state == "loading" ? (root.dark-mode ? #25384c : #e2efff)
+                            : transparent;
+                        Text {
+                            text: root.response-status;
+                            overflow: elide;
+                            color: root.response-state == "success" ? (root.dark-mode ? #8ff0b4 : #176b3a)
+                                : root.response-state == "http-error" || root.response-state == "error" ? (root.dark-mode ? #ffaaa0 : #a51d2d)
+                                : root.response-state == "loading" ? accent : text-secondary;
+                            font-size: 11px;
+                            font-weight: 600;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                        }
                     }
 
+                    Rectangle { horizontal-stretch: 1; background: transparent; }
+
                     Text {
-                        text: root.response-time;
+                        text: root.response-time == "---" ? "" : "◷  " + root.response-time;
                         color: text-secondary;
                         font-size: 11px;
+                        vertical-alignment: center;
                     }
                 }
 
                 Rectangle {
-                    height: 175px;
-                    background: editor-bg;
+                    height: 218px;
+                    background: panel-bg;
                     border-width: 1px;
                     border-color: border-color;
                     border-radius: 12px;
+                    clip: true;
 
-                    if root.response-status == "No response yet" : VerticalLayout {
-                        alignment: center;
-                        spacing: 8px;
+                    VerticalLayout {
+                        spacing: 0px;
 
-                        Text {
-                            text: "↗";
-                            color: accent;
-                            font-size: 24px;
-                            horizontal-alignment: center;
+                        HorizontalLayout {
+                            height: 34px;
+                            padding-left: 12px;
+                            padding-right: 12px;
+                            Text {
+                                text: "Response body";
+                                color: text-secondary;
+                                font-size: 10px;
+                                font-weight: 700;
+                                vertical-alignment: center;
+                            }
+                            Rectangle { horizontal-stretch: 1; background: transparent; }
+                            Text {
+                                text: root.response-state == "success" || root.response-state == "http-error" ? "Received" : "";
+                                color: text-secondary;
+                                font-size: 10px;
+                                vertical-alignment: center;
+                            }
                         }
 
-                        Text {
-                            text: "Your response will appear here";
-                            color: text-primary;
-                            font-size: 13px;
-                            font-weight: 600;
-                            horizontal-alignment: center;
-                        }
+                        Rectangle { height: 1px; background: border-color; }
 
-                        Text {
-                            text: "Send a request to inspect status, timing, and body.";
-                            color: text-secondary;
-                            font-size: 11px;
-                            horizontal-alignment: center;
-                        }
-                    }
+                        Rectangle {
+                            vertical-stretch: 1;
+                            background: editor-bg;
 
-                    if root.response-status != "No response yet" : ScrollView {
-                        Text {
-                            text: root.response-body;
-                            color: text-primary;
-                            font-family: "monospace";
-                            font-size: 12px;
-                            wrap: word-wrap;
+                            if root.response-state == "idle" || root.response-state == "loading" : VerticalLayout {
+                                alignment: center;
+                                spacing: 7px;
+                                Text {
+                                    text: root.response-state == "loading" ? "•••" : "↗";
+                                    color: accent;
+                                    font-size: 22px;
+                                    horizontal-alignment: center;
+                                }
+                                Text {
+                                    text: root.response-state == "loading" ? "Waiting for response" : "Your response will appear here";
+                                    color: text-primary;
+                                    font-size: 13px;
+                                    font-weight: 600;
+                                    horizontal-alignment: center;
+                                }
+                                Text {
+                                    text: root.response-state == "loading" ? "The request is in progress." : "Send a request to inspect status, timing, and body.";
+                                    color: text-secondary;
+                                    font-size: 11px;
+                                    horizontal-alignment: center;
+                                }
+                            }
+
+                            if root.response-state != "idle" && root.response-state != "loading" : ScrollView {
+                                Text {
+                                    x: 12px;
+                                    y: 10px;
+                                    width: parent.width - 24px;
+                                    text: root.response-body;
+                                    color: text-primary;
+                                    font-family: "monospace";
+                                    font-size: 12px;
+                                    wrap: word-wrap;
+                                }
+                            }
                         }
                     }
                 }
@@ -803,6 +928,80 @@ export component AppWindow inherits Window {
                         dark-mode: root.dark-mode;
                         accent-button: false;
                         clicked => { root.active-view = "Request"; }
+                    }
+                }
+
+                if root.show-rename-collection : Rectangle {
+                    background: panel-bg;
+                    border-width: 1px;
+                    border-color: border-color;
+                    border-radius: 10px;
+                    HorizontalLayout {
+                        padding: 12px;
+                        spacing: 8px;
+                        LineEdit {
+                            horizontal-stretch: 1;
+                            text: root.rename-collection-name;
+                            placeholder-text: "Collection name";
+                            edited(value) => { root.rename-collection-name = value; }
+                        }
+                        ThemedButton {
+                            text: "Save name";
+                            dark-mode: root.dark-mode;
+                            accent-button: true;
+                            enabled: root.rename-collection-name != "";
+                            clicked => root.rename-collection(root.selected-collection-id, root.rename-collection-name);
+                        }
+                        ThemedButton {
+                            text: "Cancel";
+                            dark-mode: root.dark-mode;
+                            accent-button: false;
+                            clicked => { root.show-rename-collection = false; }
+                        }
+                    }
+                }
+
+                if root.confirm-delete-collection : Rectangle {
+                    background: panel-bg;
+                    border-width: 1px;
+                    border-color: root.dark-mode ? #70443f : #e5b7b2;
+                    border-radius: 10px;
+                    HorizontalLayout {
+                        padding: 12px;
+                        spacing: 10px;
+                        VerticalLayout {
+                            horizontal-stretch: 1;
+                            spacing: 3px;
+                            Text {
+                                text: "Delete “" + root.selected-collection-name + "”?";
+                                color: text-primary;
+                                font-size: 13px;
+                                font-weight: 600;
+                            }
+                            Text {
+                                text: "Its saved requests and variables will also be deleted.";
+                                color: text-secondary;
+                                font-size: 11px;
+                            }
+                        }
+                        ThemedButton {
+                            text: "Cancel";
+                            dark-mode: root.dark-mode;
+                            accent-button: false;
+                            clicked => {
+                                root.confirm-delete-collection = false;
+                                root.load-requests(root.selected-collection-id);
+                                root.load-collection-variables(root.selected-collection-id);
+                            }
+                        }
+                        ThemedButton {
+                            text: "Delete collection";
+                            dark-mode: root.dark-mode;
+                            accent-button: false;
+                            destructive-button: true;
+                            enabled: root.collections.length > 1;
+                            clicked => root.delete-collection(root.selected-collection-id);
+                        }
                     }
                 }
 
