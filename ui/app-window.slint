@@ -103,7 +103,9 @@ callback delete-request(int);
                     dark-mode: root.dark-mode;
                     accent-button: true;
                     width: 100%;
+
                     clicked => {
+                        root.active-request-id = -1;
                         root.active-request = "New Request";
                         root.active-method = "GET";
                         root.request-url = "";
@@ -241,250 +243,68 @@ callback delete-request(int);
                     placeholder-text: "Search requests...";
                 }
 
-                Text {
-                    text: "PUBLIC API";
-                    color: text-secondary;
-                    font-size: 10px;
-                    font-weight: 700;
-                }
-
-                // GET request
-                Rectangle {
-                    height: 56px;
-                    background: root.active-request == "Get Users" ? selected-bg : transparent;
-                    border-radius: 7px;
-
-                    TouchArea {
-                        clicked => {
-                            root.active-request = "Get Users";
-                            root.active-method = "GET";
-                            root.request-url = "https://httpbin.org/get";
-                            root.request-params = "";
-                            root.active-tab = "Body";
-                        }
-                    }
-
-                    VerticalLayout {
-                        padding: 8px;
-                        spacing: 3px;
-
-                        HorizontalLayout {
-                            spacing: 8px;
-                            Text {
-                                text: "GET";
-                                color: #2ec27e;
-                                font-size: 10px;
-                                font-weight: 700;
-                            }
-                            Text {
-                                text: "Get Users";
-                                color: text-primary;
-                                font-size: 12px;
-                                font-weight: 600;
-                            }
-                        }
-
-                        Text {
-                            text: "https://httpbin.org/get";
-                            color: text-secondary;
-                            font-size: 10px;
-                        }
-                    }
-                }
-
-                // POST request
-                Rectangle {
-                    height: 56px;
-                    background: root.active-request == "Create User" ? selected-bg : transparent;
-                    border-radius: 7px;
-
-                    TouchArea {
-                        clicked => {
-                            root.active-request = "Create User";
-                            root.active-method = "POST";
-                            root.request-url = "https://httpbin.org/post";
-                            root.request-body = "{\n  \"name\": \"Yash\"\n}";
-                            root.active-tab = "Body";
-                        }
-                    }
-
-                    VerticalLayout {
-                        padding: 8px;
-                        spacing: 3px;
-
-                        HorizontalLayout {
-                            spacing: 8px;
-                            Text {
-                                text: "POST";
-                                color: #3584e4;
-                                font-size: 10px;
-                                font-weight: 700;
-                            }
-                            Text {
-                                text: "Create User";
-                                color: text-primary;
-                                font-size: 12px;
-                                font-weight: 600;
-                            }
-                        }
-
-                        Text {
-                            text: "https://httpbin.org/post";
-                            color: text-secondary;
-                            font-size: 10px;
-                        }
-                    }
-                }
-
-                // PUT request
-                Rectangle {
-                    height: 56px;
-                    background: root.active-request == "Update User" ? selected-bg : transparent;
-                    border-radius: 7px;
-
-                    TouchArea {
-                        clicked => {
-                            root.active-request = "Update User";
-                            root.active-method = "PUT";
-                            root.request-url = "https://httpbin.org/put";
-                            root.request-body = "{\n  \"name\": \"Yash\"\n}";
-                            root.active-tab = "Body";
-                        }
-                    }
-
-                    VerticalLayout {
-                        padding: 8px;
-                        spacing: 3px;
-
-                        HorizontalLayout {
-                            spacing: 8px;
-                            Text {
-                                text: "PUT";
-                                color: #e5a50a;
-                                font-size: 10px;
-                                font-weight: 700;
-                            }
-                            Text {
-                                text: "Update User";
-                                color: text-primary;
-                                font-size: 12px;
-                                font-weight: 600;
-                            }
-                        }
-
-                        Text {
-                            text: "https://httpbin.org/put";
-                            color: text-secondary;
-                            font-size: 10px;
-                        }
-                    }
-                }
-
-                // DELETE request
-                Rectangle {
-                    height: 56px;
-                    background: root.active-request == "Delete User" ? selected-bg : transparent;
-                    border-radius: 7px;
-
-                    TouchArea {
-                        clicked => {
-                            root.active-request = "Delete User";
-                            root.active-method = "DELETE";
-                            root.request-url = "https://httpbin.org/delete";
-                            root.active-tab = "Body";
-                        }
-                    }
-
-                    VerticalLayout {
-                        padding: 8px;
-                        spacing: 3px;
-
-                        HorizontalLayout {
-                            spacing: 8px;
-                            Text {
-                                text: "DEL";
-                                color: #e01b24;
-                                font-size: 10px;
-                                font-weight: 700;
-                            }
-                            Text {
-                                text: "Delete User";
-                                color: text-primary;
-                                font-size: 12px;
-                                font-weight: 600;
-                            }
-                        }
-
-                        Text {
-                            text: "https://httpbin.org/delete";
-                            color: text-secondary;
-                            font-size: 10px;
-                        }
-                    }
-                }
-
                 Rectangle {
                     vertical-stretch: 1;
                     background: transparent;
                 }
 
                 Text {
-                    text: "4 example requests";
+                    text: "Saved requests (" + root.saved-requests.length + ")";
                     color: text-secondary;
                     font-size: 10px;
                 }
 
-for request in root.saved-requests: Rectangle {
-    height: 56px;
-    background: transparent;
+                for request in root.saved-requests: Rectangle {
+                    height: 56px;
+                    background: transparent;
 
-    HorizontalLayout {
-        spacing: 4px;
+                    HorizontalLayout {
+                        spacing: 4px;
 
-        Rectangle {
-            horizontal-stretch: 1;
-            border-radius: 7px;
-            background: root.active-request-id == request.id
-                ? selected-bg
-                : transparent;
+                        Rectangle {
+                            horizontal-stretch: 1;
+                            border-radius: 7px;
+                            background: root.active-request-id == request.id
+                                ? selected-bg
+                                : transparent;
 
-            TouchArea {
-                clicked => {
-                    root.select-request(request.id);
+                            TouchArea {
+                                clicked => {
+                                    root.select-request(request.id);
+                                }
+                            }
+
+                            VerticalLayout {
+                                padding: 8px;
+                                spacing: 3px;
+
+                                Text {
+                                    text: request.method + "  " + request.name;
+                                    color: text-primary;
+                                    font-size: 12px;
+                                    font-weight: 600;
+                                }
+
+                                Text {
+                                    text: request.url;
+                                    color: text-secondary;
+                                    font-size: 10px;
+                                }
+                            }
+                        }
+
+                        ThemedButton {
+                            text: "×";
+                            width: 28px;
+                            dark-mode: root.dark-mode;
+                            accent-button: false;
+
+                            clicked => {
+                                root.delete-request(request.id);
+                            }
+                        }
+                    }
                 }
-            }
-
-            VerticalLayout {
-                padding: 8px;
-                spacing: 3px;
-
-                Text {
-                    text: request.method + "  " + request.name;
-                    color: text-primary;
-                    font-size: 12px;
-                    font-weight: 600;
-                }
-
-                Text {
-                    text: request.url;
-                    color: text-secondary;
-                    font-size: 10px;
-                }
-            }
-        }
-
-        ThemedButton {
-            text: "×";
-            width: 28px;
-            dark-mode: root.dark-mode;
-            accent-button: false;
-
-            clicked => {
-                root.delete-request(request.id);
-            }
-        }
-    }
-}
 
         }
     }
