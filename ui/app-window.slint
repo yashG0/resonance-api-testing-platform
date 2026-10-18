@@ -1,22 +1,33 @@
 
-import { Button, LineEdit } from "std-widgets.slint";
+import {
+    Button,
+    LineEdit,
+    TextEdit,
+    ScrollView
+} from "std-widgets.slint";
 
 export component AppWindow inherits Window {
     title: "Resonance";
     width: 1200px;
     height: 760px;
 
-    in-out property <string> response-status: "No response yet";
-    in-out property <string> response-body: "Send a request to inspect its response.";
-    in-out property <string> response-time: "---";
-    in-out property <bool> is-loading: false;
-    in-out property <bool> dark-mode: true;
-    in-out property <string> active-request: "Get Users";
-    in-out property <string> active-method: "GET";
-    in-out property <string> request-url: "https://httpbin.org/get";
-    in-out property <string> active-tab: "Body";
+    
+callback send-request(string, string, string, string);
 
-    callback send-request(string, string);
+in-out property <string> request-body: "{\n  \"name\": \"Yash\"\n}";
+in-out property <string> request-headers: "Accept: application/json";
+in-out property <string> response-status: "No response yet";
+in-out property <string> response-body: "Send a request to inspect its response.";
+in-out property <string> response-time: "---";
+in-out property <bool> is-loading: false;
+
+in-out property <bool> dark-mode: true;
+in-out property <string> active-request: "Get Users";
+in-out property <string> active-method: "GET";
+in-out property <string> request-url: "https://httpbin.org/get";
+in-out property <string> active-tab: "Body";
+
+
 
     property <color> window-bg: dark-mode ? #242424 : #f6f5f4;
     property <color> sidebar-bg: dark-mode ? #303030 : #ebebeb;
@@ -439,13 +450,15 @@ export component AppWindow inherits Window {
 
     clicked => {
         root.is-loading = true;
-        root.response-status = "Request in progress...";
+        root.response-status = "Sending...";
         root.response-body = "Waiting for response...";
         root.response-time = "---";
 
         root.send-request(
             root.active-method,
-            root.request-url
+            root.request-url,
+            root.request-body,
+            root.request-headers
         );
     }
 }
@@ -493,29 +506,52 @@ export component AppWindow inherits Window {
                     font-weight: 600;
                 }
 
-                Rectangle {
-                    height: 80px;
-                    background: panel-bg;
-                    border-width: 1px;
-                    border-color: border-color;
-                    border-radius: 8px;
+                
+Rectangle {
+    vertical-stretch: 1;
+    min-height: 100px;
+    background: panel-bg;
+    border-width: 1px;
+    border-color: border-color;
+    border-radius: 8px;
 
-                    Text {
-                        text: root.active-tab == "Body"
-                            ? "Request body editor will be added in the next milestone."
-                            : root.active-tab == "Headers"
-                                ? "Configure request headers in the next milestone."
-                                : root.active-tab == "Params"
-                                    ? "Query parameter editor is coming next."
-                                    : "Authentication configuration is coming next.";
+    if root.active-tab == "Body" : TextEdit {
+        text: root.request-body;
+        font-family: "monospace";
+        font-size: 12px;
+        wrap: word-wrap;
 
-                        color: text-secondary;
-                        font-size: 12px;
-                        wrap: word-wrap;
-                        horizontal-alignment: center;
-                        vertical-alignment: center;
-                    }
-                }
+        edited(value) => {
+            root.request-body = value;
+        }
+    }
+
+    if root.active-tab == "Headers" : TextEdit {
+        text: root.request-headers;
+        font-family: "monospace";
+        font-size: 12px;
+        wrap: word-wrap;
+
+        edited(value) => {
+            root.request-headers = value;
+        }
+    }
+
+    if root.active-tab == "Params" : Text {
+        text: "Query parameters will be added in the next milestone.";
+        color: text-secondary;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+
+    if root.active-tab == "Auth" : Text {
+        text: "Authentication support will be added later.";
+        color: text-secondary;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+}
+
 
                 Rectangle {
                     vertical-stretch: 1;
@@ -562,15 +598,17 @@ export component AppWindow inherits Window {
                     border-color: border-color;
                     border-radius: 8px;
 
-                    Text {
-    text: root.response-body;
-    color: text-primary;
-    font-family: "monospace";
-    font-size: 12px;
-    wrap: word-wrap;
-    vertical-alignment: center;
-    horizontal-alignment: center;
+                    
+ScrollView {
+    Text {
+        text: root.response-body;
+        color: text-primary;
+        font-family: "monospace";
+        font-size: 12px;
+        wrap: word-wrap;
+    }
 }
+
                 }
             }
         }

@@ -1,6 +1,9 @@
 use std::time::{Duration, Instant};
 
-use reqwest::{Client, Method};
+use reqwest::{
+    Client, Method,
+    header::{CONTENT_TYPE, HeaderMap, HeaderName, HeaderValue},
+};
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
@@ -28,7 +31,13 @@ impl HttpClient {
         Ok(Self { client })
     }
 
-    pub async fn send(&self, method: &str, url: &str) -> HttpResult {
+    pub async fn send(
+        &self,
+        method: &str,
+        url: &str,
+        body: &str,
+        headers_text: &str,
+    ) -> HttpResult {
         let start = Instant::now();
 
         let method = match method {
@@ -37,70 +46,130 @@ impl HttpClient {
             "PUT" => Method::PUT,
             "DELETE" => Method::DELETE,
             _ => {
-                return HttpResult {
-                    status: "Error".into(),
-                    body: "Unsupported HTTP method.".into(),
-                    elapsed: start.elapsed(),
-                };
+                return failure("Unsupported HTTP method.", start);
             }
         };
 
-        let response = match self.client.request(method, url).send().await {
+        let mut headers = HeaderMap::new();
+
+        for (index, line) in headers_text.lines().enumerate() {
+            let line = line.trim();
+
+            if line.is_empty() {
+                continue;
+            }
+
+            let Some((name, value)) = line.split_once(':') else {
+                return failure(
+                    &format!(
+                        "Invalid header on line {}. Expected Name: Value.",
+                        index + 1
+                    ),
+                    start,
+                );
+            };
+
+            let name = match HeaderName::from_bytes(name.trim().as_bytes()) {
+                Ok(name) => name,
+                Err(_) => {
+                    return failure(
+                        &format!("Invalid header name on line {}.", index + 1),
+                        start,
+                    );
+                }
+            };
+
+            let value = match HeaderValue::from_str(value.trim()) {
+                Ok(value) => value,
+                Err(_) => {
+                    return failure(
+                        &format!("Invalid header value on line {}.", index + 1),
+                        start,
+                    );
+                }
+            };
+
+            headers.append(name, value);
+        }
+
+        let has_body = matches!(method, Method::POST | Method::PUT) && !body.is_empty();
+
+        if has_body && !headers.contains_key(CONTENT_TYPE) {
+            headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
+        }
+
+        let mut request = self.client.request(method, url).headers(headers);
+
+        if has_body {
+            // Validate JSON before sending because the default
+            // content type is application/json.
+            if let Err(error) = serde_json::from_str::<serde_json::Value>(body) {
+                return failure(&format!("Invalid JSON request body: {error}"), start);
+            }
+
+            request = request.body(body.to_owned());
+        }
+
+        let response = match request.send().await {
             Ok(response) => response,
             Err(error) => {
                 let message = if error.is_timeout() {
                     "Request timed out.".to_owned()
-                } else if error.is_connect() {
-                    format!("Connection failed: {error}")
                 } else {
                     format!("Request failed: {error}")
                 };
 
-                return HttpResult {
-                    status: "Error".into(),
-                    body: message,
-                    elapsed: start.elapsed(),
-                };
+                return failure(&message, start);
             }
         };
 
-        // HTTP 4xx and 5xx responses are still valid responses.
         let status = response.status().to_string();
         let mut response = response;
-        let mut body = Vec::new();
+        let mut bytes = Vec::new();
 
         loop {
             match response.chunk().await {
                 Ok(Some(chunk)) => {
-                    if chunk.len() > MAX_RESPONSE_BYTES - body.len() {
-                        body.clear();
-                        body.extend_from_slice(b"Response body exceeds the 5 MiB display limit.");
-                        break;
+                    if chunk.len() > MAX_RESPONSE_BYTES - bytes.len() {
+                        return HttpResult {
+                            status,
+                            body: "Response exceeds the 5 MiB display limit.".into(),
+                            elapsed: start.elapsed(),
+                        };
                     }
 
-                    body.extend_from_slice(&chunk);
+                    bytes.extend_from_slice(&chunk);
                 }
                 Ok(None) => break,
                 Err(error) => {
-                    body = format!("Failed to read response body: {error}").into_bytes();
-                    break;
+                    return HttpResult {
+                        status,
+                        body: format!("Failed to read response body: {error}"),
+                        elapsed: start.elapsed(),
+                    };
                 }
             }
         }
 
-        let raw_body = String::from_utf8_lossy(&body);
+        let raw = String::from_utf8_lossy(&bytes);
 
-        let formatted_body = match serde_json::from_str::<serde_json::Value>(&raw_body) {
-            Ok(json) => {
-                serde_json::to_string_pretty(&json).unwrap_or_else(|_| raw_body.into_owned())
-            }
-            Err(_) => raw_body.into_owned(),
+        let body = match serde_json::from_str::<serde_json::Value>(&raw) {
+            Ok(json) => serde_json::to_string_pretty(&json).unwrap_or_else(|_| raw.into_owned()),
+            Err(_) => raw.into_owned(),
         };
 
         HttpResult {
             status,
-            body: formatted_body,
+            body,
             elapsed: start.elapsed(),
         }
+    }
+}
+
+fn failure(message: &str, start: Instant) -> HttpResult {
+    HttpResult {
+        status: "Error".into(),
+        body: message.into(),
+        elapsed: start.elapsed(),
     }
 }
