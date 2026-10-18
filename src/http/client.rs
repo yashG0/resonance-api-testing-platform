@@ -16,6 +16,8 @@ const MAX_RESPONSE_BYTES: usize = 5 * 1024 * 1024;
 pub struct HttpResult {
     pub status: String,
     pub body: String,
+    pub headers: String,
+    pub cookies: String,
     pub format: String,
     pub elapsed: Duration,
 }
@@ -42,6 +44,10 @@ impl HttpClient {
         body: &str,
         headers_text: &str,
         params_text: &str,
+        body_format: &str,
+        auth_type: &str,
+        auth_value: &str,
+        auth_secret: &str,
         variables: &HashMap<String, String>,
     ) -> HttpResult {
         let start = Instant::now();
@@ -62,12 +68,23 @@ impl HttpClient {
             Ok(value) => value,
             Err(error) => return failure(&error, start),
         };
+        let auth_value = match interpolate_variables(auth_value, variables) {
+            Ok(value) => value,
+            Err(error) => return failure(&error, start),
+        };
+        let auth_secret = match interpolate_variables(auth_secret, variables) {
+            Ok(value) => value,
+            Err(error) => return failure(&error, start),
+        };
 
         let method = match method {
             "GET" => Method::GET,
             "POST" => Method::POST,
             "PUT" => Method::PUT,
+            "PATCH" => Method::PATCH,
             "DELETE" => Method::DELETE,
+            "HEAD" => Method::HEAD,
+            "OPTIONS" => Method::OPTIONS,
             _ => return failure("Unsupported HTTP method.", start),
         };
 
@@ -149,19 +166,34 @@ impl HttpClient {
             headers.append(name, value);
         }
 
-        let has_body = matches!(method, Method::POST | Method::PUT) && !body.is_empty();
+        let has_body = !body.is_empty();
 
         if has_body {
-            if let Err(error) = serde_json::from_str::<serde_json::Value>(&body) {
+            if body_format == "JSON"
+                && let Err(error) = serde_json::from_str::<serde_json::Value>(&body)
+            {
                 return failure(&format!("Invalid JSON request body: {error}"), start);
             }
 
             if !headers.contains_key(CONTENT_TYPE) {
-                headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
+                let content_type = match body_format {
+                    "Text" => "text/plain; charset=utf-8",
+                    "HTML" => "text/html; charset=utf-8",
+                    "XML" => "application/xml; charset=utf-8",
+                    _ => "application/json",
+                };
+                headers.insert(CONTENT_TYPE, HeaderValue::from_static(content_type));
             }
         }
 
         let mut request = self.client.request(method, parsed_url).headers(headers);
+        match auth_type {
+            "Bearer" if !auth_value.is_empty() => request = request.bearer_auth(auth_value),
+            "Basic" if !auth_value.is_empty() => {
+                request = request.basic_auth(auth_value, Some(auth_secret));
+            }
+            _ => {}
+        }
 
         if has_body {
             request = request.body(body);
@@ -181,6 +213,21 @@ impl HttpClient {
         };
 
         let status = response.status().to_string();
+        let response_headers = response
+            .headers()
+            .iter()
+            .map(|(name, value)| {
+                format!("{}: {}", name, value.to_str().unwrap_or("<binary value>"))
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        let response_cookies = response
+            .headers()
+            .get_all(reqwest::header::SET_COOKIE)
+            .iter()
+            .map(|value| value.to_str().unwrap_or("<binary value>").to_owned())
+            .collect::<Vec<_>>()
+            .join("\n");
         let content_type = response
             .headers()
             .get(CONTENT_TYPE)
@@ -201,6 +248,8 @@ impl HttpClient {
                         return HttpResult {
                             status,
                             body: "Response exceeds the 5 MiB display limit.".into(),
+                            headers: response_headers,
+                            cookies: response_cookies,
                             format: "Text".into(),
                             elapsed: start.elapsed(),
                         };
@@ -213,6 +262,8 @@ impl HttpClient {
                     return HttpResult {
                         status,
                         body: format!("Failed to read response body: {error}"),
+                        headers: response_headers,
+                        cookies: response_cookies,
                         format: "Text".into(),
                         elapsed: start.elapsed(),
                     };
@@ -226,6 +277,8 @@ impl HttpClient {
         HttpResult {
             status,
             body,
+            headers: response_headers,
+            cookies: response_cookies,
             format,
             elapsed: start.elapsed(),
         }
@@ -508,6 +561,8 @@ fn failure(message: &str, start: Instant) -> HttpResult {
     HttpResult {
         status: "Error".into(),
         body: message.into(),
+        headers: String::new(),
+        cookies: String::new(),
         format: "Text".into(),
         elapsed: start.elapsed(),
     }

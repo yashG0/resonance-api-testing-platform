@@ -14,17 +14,31 @@ export struct VariableItem {
     key: string,
     value: string,
 }
+export struct HistoryItem {
+    request-id: int,
+    request-name: string,
+    collection-name: string,
+    method: string,
+    url: string,
+    status: string,
+    duration: string,
+    date: string,
+}
 export component AppWindow inherits Window {
     title: "Resonance";
     width: 1200px;
     height: 760px;
     default-font-family: "Cantarell";
     background: window-bg;
+    forward-focus: shortcut-scope;
 
-    callback send-request(string, string, string, string, string, int, int, string);
-    callback save-request(int, int, string, string, string, string, string, string);
+    callback send-request(string, string, string, string, string, string, string, string, string, int, int, string);
+    callback save-request(int, int, string, string, string, string, string, string, string, string, string, string);
     callback load-collections();
     callback load-requests(int);
+    callback search-requests(string);
+    callback load-history();
+    callback run-collection(int);
     callback load-collection-variables(int);
     callback create-collection(string);
     callback rename-collection(int, string);
@@ -38,34 +52,46 @@ export component AppWindow inherits Window {
     in-out property <[RequestItem]> saved-requests: [];
     in-out property <[CollectionItem]> collections: [];
     in-out property <[VariableItem]> collection-variables: [];
+    in-out property <[HistoryItem]> history-items: [];
     in-out property <int> active-request-id: -1;
     in-out property <int> selected-collection-id: -1;
     in-out property <int> collection-menu-id: -1;
+    in-out property <int> editing-collection-id: -1;
+    in-out property <string> collection-name-draft: "";
     in-out property <string> selected-collection-name: "";
+    in-out property <string> request-search: "";
     in-out property <string> active-view: "Request";
     in-out property <string> new-collection-name: "";
     in-out property <bool> show-new-collection: false;
-    in-out property <bool> show-rename-collection: false;
-    in-out property <string> rename-collection-name: "";
-    in-out property <bool> confirm-delete-collection: false;
+    in-out property <int> confirm-delete-collection-id: -1;
     in-out property <string> variable-key: "";
     in-out property <string> variable-value: "";
     in-out property <string> variables-message: "";
     in-out property <bool> show-variable-values: false;
     in-out property <string> theme-mode: "System";
+    in-out property <bool> show-navigation-sidebar: true;
     in-out property <string> active-request: "New Request";
+    in-out property <bool> editing-request-name: false;
+    in-out property <string> request-name-draft: "";
     in-out property <string> active-method: "GET";
     in-out property <string> request-url: "";
     in-out property <string> active-tab: "Body";
 
     in-out property <string> request-params: "";
     in-out property <string> request-body: "";
+    in-out property <string> body-format: "JSON";
     in-out property <string> request-headers: "Accept: application/json";
+    in-out property <string> auth-type: "None";
+    in-out property <string> auth-value: "";
+    in-out property <string> auth-secret: "";
     in-out property <string> response-status: "No response yet";
     in-out property <string> response-body: "Send a request to inspect its response.";
     in-out property <string> response-time: "---";
     in-out property <string> response-state: "idle";
     in-out property <string> response-format: "Text";
+    in-out property <string> response-headers: "";
+    in-out property <string> response-cookies: "";
+    in-out property <string> response-tab: "Body";
     in-out property <bool> is-loading: false;
 
     // Keep the system appearance before applying an explicit per-app override.
@@ -106,13 +132,96 @@ export component AppWindow inherits Window {
     property <color> selected-bg: dark-mode ? #45454a : #e3e2e0;
     property <color> hover-bg: dark-mode ? #38383c : #e8e7e5;
 
+    function start-new-request(collection-id: int, collection-name: string) {
+        root.selected-collection-id = collection-id;
+        root.selected-collection-name = collection-name;
+        root.active-view = "Request";
+        root.active-request-id = -1;
+        root.active-request = "New Request";
+        root.request-name-draft = "New Request";
+        root.editing-request-name = false;
+        root.is-loading = false;
+        root.response-status = "No response yet";
+        root.response-state = "idle";
+        root.response-format = "Text";
+        root.response-body = "Send a request to inspect its response.";
+        root.response-time = "---";
+        root.active-method = "GET";
+        root.request-url = "";
+        root.request-params = "";
+        root.request-body = "";
+        root.body-format = "JSON";
+        root.request-headers = "Accept: application/json";
+        root.auth-type = "None";
+        root.auth-value = "";
+        root.auth-secret = "";
+        root.active-tab = "Body";
+        root.collection-menu-id = -1;
+        root.confirm-delete-collection-id = -1;
+        if collection-id > 0 {
+            root.load-requests(collection-id);
+            root.load-collection-variables(collection-id);
+        }
+    }
+
+    function save-current-request() {
+        if root.active-view == "Request" && root.selected-collection-id > 0 && root.request-url != "" && root.active-request != "" {
+            root.save-request(
+                root.active-request-id,
+                root.selected-collection-id,
+                root.active-request,
+                root.active-method,
+                root.request-url,
+                root.request-headers,
+                root.request-params,
+                root.request-body,
+                root.body-format,
+                root.auth-type,
+                root.auth-value,
+                root.auth-secret
+            );
+        }
+    }
+
+    function send-current-request() {
+        if root.active-view == "Request" && !root.is-loading && root.selected-collection-id > 0 && root.request-url != "" && root.active-request != "" {
+            root.is-loading = true;
+            root.response-status = "Sending...";
+            root.response-state = "loading";
+            root.response-format = "Text";
+            root.response-body = "Waiting for response...";
+            root.response-time = "---";
+            root.send-request(
+                root.active-method,
+                root.request-url,
+                root.request-body,
+                root.request-headers,
+                root.request-params,
+                root.body-format,
+                root.auth-type,
+                root.auth-value,
+                root.auth-secret,
+                root.selected-collection-id,
+                root.active-request-id,
+                root.active-request
+            );
+        }
+    }
+
+    shortcut-scope := FocusScope {
+        width: 100%;
+        height: 100%;
+
     HorizontalLayout {
         spacing: 0;
 
         // LEFT PANE — Navigation
         Rectangle {
-            width: 220px;
+            width: root.show-navigation-sidebar ? 220px : 0px;
+            opacity: root.show-navigation-sidebar ? 1 : 0;
+            clip: true;
             background: sidebar-bg;
+            animate width, opacity { duration: 220ms; easing: ease-in-out; }
 
             VerticalLayout {
                 padding: 14px;
@@ -139,26 +248,14 @@ export component AppWindow inherits Window {
                 }
 
                 ThemedButton {
-                    text: "+ New Request";
+                    text: "New Request";
+                    icon: @image-url("../assets/icons/new.png");
                     dark-mode: root.dark-mode;
                     accent-button: true;
                     width: 100%;
 
                     clicked => {
-                        root.active-request-id = -1;
-                        root.active-request = "New Request";
-                        root.is-loading = false;
-                        root.response-status = "No response yet";
-                        root.response-state = "idle";
-                        root.response-format = "Text";
-                        root.response-body = "Send a request to inspect its response.";
-                        root.response-time = "---";
-                        root.active-method = "GET";
-                        root.request-url = "";
-                        root.request-params = "";
-                        root.request-body = "";
-                        root.request-headers = "Accept: application/json";
-                        root.active-tab = "Body";
+                        root.start-new-request(root.selected-collection-id, root.selected-collection-name);
                     }
                 }
 
@@ -181,7 +278,15 @@ export component AppWindow inherits Window {
 
                     nav-touch := TouchArea {
                         clicked => {
-                            // Navigation destinations are placeholders for now.
+                            if item == "History" {
+                                root.active-view = "History";
+                                root.load-history();
+                            } else if item == "Collections" {
+                                root.active-view = "Request";
+                            } else {
+                                root.active-view = "Variables";
+                                root.load-collection-variables(root.selected-collection-id);
+                            }
                         }
                     }
 
@@ -219,42 +324,74 @@ export component AppWindow inherits Window {
                     ThemedButton {
                         width: 28px;
                         height: 28px;
-                        text: "+";
+                        icon: @image-url("../assets/icons/new.png");
                         dark-mode: root.dark-mode;
                         accent-button: false;
                         clicked => {
                             root.show-new-collection = !root.show-new-collection;
                             root.variables-message = "";
+                            if root.show-new-collection {
+                                root.new-collection-name = "";
+                            }
                         }
                     }
                 }
 
-                if root.show-new-collection : HorizontalLayout {
-                    spacing: 5px;
+                if root.show-new-collection : Rectangle {
+                    background: panel-bg;
+                    border-width: 1px;
+                    border-color: border-color;
+                    border-radius: 9px;
 
-                    LineEdit {
-                        horizontal-stretch: 1;
-                        text: root.new-collection-name;
-                        placeholder-text: "Collection name";
-                        edited(value) => { root.new-collection-name = value; }
-                    }
+                    VerticalLayout {
+                        padding: 9px;
+                        spacing: 7px;
 
-                    ThemedButton {
-                        width: 30px;
-                        text: "✓";
-                        dark-mode: root.dark-mode;
-                        accent-button: true;
-                        enabled: root.new-collection-name != "";
-                        clicked => {
-                            root.create-collection(root.new-collection-name);
+                        Text {
+                            text: "Create a collection";
+                            color: text-primary;
+                            font-size: 12px;
+                            font-weight: 600;
+                        }
+
+                        LineEdit {
+                            text: root.new-collection-name;
+                            placeholder-text: "Collection name";
+                            edited(value) => { root.new-collection-name = value; }
+                        }
+
+                        HorizontalLayout {
+                            spacing: 6px;
+                            ThemedButton {
+                                horizontal-stretch: 1;
+                                text: "Create";
+                                icon: @image-url("../assets/icons/new.png");
+                                dark-mode: root.dark-mode;
+                                accent-button: true;
+                                enabled: root.new-collection-name != "";
+                                clicked => root.create-collection(root.new-collection-name);
+                            }
+                            ThemedButton {
+                                width: 68px;
+                                text: "Cancel";
+                                icon: @image-url("../assets/icons/close.png");
+                                dark-mode: root.dark-mode;
+                                accent-button: false;
+                                clicked => {
+                                    root.show-new-collection = false;
+                                    root.new-collection-name = "";
+                                    root.variables-message = "";
+                                }
+                            }
+                        }
+
+                        if root.variables-message != "" : Text {
+                            text: root.variables-message;
+                            color: root.dark-mode ? #ff7b63 : #c01c28;
+                            font-size: 10px;
+                            wrap: word-wrap;
                         }
                     }
-                }
-
-                if root.show-new-collection && root.variables-message != "" : Text {
-                    text: root.variables-message;
-                    color: root.dark-mode ? #ff7b63 : #c01c28;
-                    font-size: 10px;
                 }
 
                 for collection in root.collections : VerticalLayout {
@@ -268,25 +405,14 @@ export component AppWindow inherits Window {
 
                         collection-touch := TouchArea {
                             clicked => {
-                                root.collection-menu-id = -1;
-                                root.selected-collection-id = collection.id;
-                                root.selected-collection-name = collection.name;
-                                root.active-view = "Request";
-                                root.active-request-id = -1;
-                                root.active-request = "New Request";
-                                root.is-loading = false;
-                                root.active-method = "GET";
-                                root.request-url = "";
-                                root.request-params = "";
-                                root.request-body = "";
-                                root.request-headers = "Accept: application/json";
-                                root.response-status = "No response yet";
-                                root.response-body = "Send a request to inspect its response.";
-                                root.response-time = "---";
-                                root.response-state = "idle";
-                                root.response-format = "Text";
-                                root.load-requests(collection.id);
-                                root.load-collection-variables(collection.id);
+                                root.start-new-request(collection.id, collection.name);
+                            }
+                            pointer-event(event) => {
+                                if event.button == PointerEventButton.right && event.kind == PointerEventKind.down {
+                                    root.confirm-delete-collection-id = -1;
+                                    root.editing-collection-id = -1;
+                                    root.collection-menu-id = collection.id;
+                                }
                             }
                         }
 
@@ -297,7 +423,14 @@ export component AppWindow inherits Window {
                             height: 30px;
                             spacing: 4px;
 
-                            Text {
+                            if root.editing-collection-id == collection.id : LineEdit {
+                                horizontal-stretch: 1;
+                                height: 28px;
+                                text: root.collection-name-draft;
+                                placeholder-text: "Collection name";
+                                edited(value) => { root.collection-name-draft = value; }
+                            }
+                            if root.editing-collection-id != collection.id : Text {
                                 horizontal-stretch: 1;
                                 text: collection.name;
                                 color: root.selected-collection-id == collection.id ? text-primary : text-secondary;
@@ -307,7 +440,26 @@ export component AppWindow inherits Window {
                                 overflow: elide;
                             }
 
-                            ThemedButton {
+                            if root.editing-collection-id == collection.id : ThemedButton {
+                                width: 28px;
+                                height: 28px;
+                                icon: @image-url("../assets/icons/save(right).png");
+                                dark-mode: root.dark-mode;
+                                accent-button: true;
+                                enabled: root.collection-name-draft != "";
+                                clicked => root.rename-collection(collection.id, root.collection-name-draft);
+                            }
+
+                            if root.editing-collection-id == collection.id : ThemedButton {
+                                width: 28px;
+                                height: 28px;
+                                icon: @image-url("../assets/icons/close.png");
+                                dark-mode: root.dark-mode;
+                                accent-button: false;
+                                clicked => { root.editing-collection-id = -1; }
+                            }
+
+                            if root.editing-collection-id != collection.id : ThemedButton {
                                 width: 28px;
                                 height: 28px;
                                 text: "⋯";
@@ -320,46 +472,123 @@ export component AppWindow inherits Window {
                         }
                     }
 
-                    if root.collection-menu-id == collection.id : HorizontalLayout {
-                        height: 32px;
-                        spacing: 5px;
-                        ThemedButton {
-                            horizontal-stretch: 1;
-                            height: 29px;
-                            text: "Rename";
-                            dark-mode: root.dark-mode;
-                            accent-button: false;
-                            clicked => {
-                                root.selected-collection-id = collection.id;
-                                root.selected-collection-name = collection.name;
-                                root.active-view = "Variables";
-                                root.rename-collection-name = collection.name;
-                                root.load-requests(collection.id);
-                                root.load-collection-variables(collection.id);
-                                root.show-rename-collection = true;
-                                root.confirm-delete-collection = false;
-                                root.collection-menu-id = -1;
-                                root.variables-message = "";
+                    if root.collection-menu-id == collection.id : Rectangle {
+                        background: panel-bg;
+                        border-width: 1px;
+                        border-color: border-color;
+                        border-radius: 8px;
+                        VerticalLayout {
+                            padding: 7px;
+                            spacing: 6px;
+                            Text {
+                                text: "COLLECTION ACTIONS";
+                                color: text-secondary;
+                                font-size: 9px;
+                                font-weight: 700;
+                                horizontal-alignment: left;
+                            }
+                            ThemedButton {
+                                horizontal-stretch: 1;
+                                height: 29px;
+                                text: "New request";
+                                icon: @image-url("../assets/icons/new.png");
+                                dark-mode: root.dark-mode;
+                                accent-button: true;
+                                clicked => root.start-new-request(collection.id, collection.name);
+                            }
+                            ThemedButton {
+                                horizontal-stretch: 1;
+                                height: 29px;
+                                text: "Run all requests";
+                                dark-mode: root.dark-mode;
+                                accent-button: false;
+                                clicked => {
+                                    root.collection-menu-id = -1;
+                                    root.run-collection(collection.id);
+                                }
+                            }
+                            ThemedButton {
+                                horizontal-stretch: 1;
+                                height: 29px;
+                                text: "Collection variables";
+                                dark-mode: root.dark-mode;
+                                accent-button: false;
+                                clicked => {
+                                    root.selected-collection-id = collection.id;
+                                    root.selected-collection-name = collection.name;
+                                    root.active-view = "Variables";
+                                    root.variables-message = "";
+                                    root.collection-menu-id = -1;
+                                    root.load-collection-variables(collection.id);
+                                }
+                            }
+                            Rectangle {
+                                height: 1px;
+                                background: border-color;
+                            }
+                            ThemedButton {
+                                horizontal-stretch: 1;
+                                height: 29px;
+                                text: "Rename collection";
+                                icon: @image-url("../assets/icons/edit.png");
+                                dark-mode: root.dark-mode;
+                                accent-button: false;
+                                clicked => {
+                                    root.editing-collection-id = collection.id;
+                                    root.collection-name-draft = collection.name;
+                                    root.collection-menu-id = -1;
+                                }
+                            }
+                            ThemedButton {
+                                horizontal-stretch: 1;
+                                height: 29px;
+                                text: "Delete collection";
+                                dark-mode: root.dark-mode;
+                                accent-button: false;
+                                destructive-button: true;
+                                enabled: root.collections.length > 1;
+                                clicked => {
+                                    root.confirm-delete-collection-id = collection.id;
+                                    root.collection-menu-id = -1;
+                                }
                             }
                         }
-                        ThemedButton {
-                            horizontal-stretch: 1;
-                            height: 29px;
-                            text: "Delete";
-                            dark-mode: root.dark-mode;
-                            accent-button: false;
-                            destructive-button: true;
-                            enabled: root.collections.length > 1;
-                            clicked => {
-                                root.selected-collection-id = collection.id;
-                                root.selected-collection-name = collection.name;
-                                root.active-view = "Variables";
-                                root.saved-requests = [];
-                                root.collection-variables = [];
-                                root.confirm-delete-collection = true;
-                                root.show-rename-collection = false;
-                                root.collection-menu-id = -1;
-                                root.variables-message = "";
+                    }
+
+                    if root.confirm-delete-collection-id == collection.id : Rectangle {
+                        background: panel-bg;
+                        border-width: 1px;
+                        border-color: root.dark-mode ? #70443f : #e5b7b2;
+                        border-radius: 8px;
+                        VerticalLayout {
+                            padding: 8px;
+                            spacing: 6px;
+                            Text {
+                                text: "Delete collection and its requests?";
+                                color: text-secondary;
+                                font-size: 10px;
+                                wrap: word-wrap;
+                            }
+                            HorizontalLayout {
+                                spacing: 5px;
+                                ThemedButton {
+                                    horizontal-stretch: 1;
+                                    height: 27px;
+                                    text: "Cancel";
+                                    dark-mode: root.dark-mode;
+                                    accent-button: false;
+                                    clicked => { root.confirm-delete-collection-id = -1; }
+                                }
+                                ThemedButton {
+                                    horizontal-stretch: 1;
+                                    height: 27px;
+                                    text: "Delete";
+                                    dark-mode: root.dark-mode;
+                                    accent-button: false;
+                                    destructive-button: true;
+                                    enabled: root.collections.length > 1;
+                                    clicked => root.delete-collection(collection.id);
+                                }
                             }
                         }
                     }
@@ -427,6 +656,17 @@ export component AppWindow inherits Window {
                 HorizontalLayout {
                     spacing: 6px;
 
+                    ThemedButton {
+                        width: 30px;
+                        height: 30px;
+                        icon: @image-url("../assets/icons/menu.png");
+                        dark-mode: root.dark-mode;
+                        accent-button: false;
+                        clicked => {
+                            root.show-navigation-sidebar = !root.show-navigation-sidebar;
+                        }
+                    }
+
                     Text {
                         text: "Requests";
                         color: text-primary;
@@ -441,9 +681,9 @@ export component AppWindow inherits Window {
                     }
 
                     ThemedButton {
-                        width: 74px;
+                        width: 92px;
                         height: 30px;
-                        text: "Variables";
+                        text: "Env vars";
                         dark-mode: root.dark-mode;
                         accent-button: root.active-view == "Variables";
                         clicked => {
@@ -453,8 +693,13 @@ export component AppWindow inherits Window {
                     }
                 }
 
-                LineEdit {
+                request-search-field := LineEdit {
+                    text: root.request-search;
                     placeholder-text: "Search requests...";
+                    edited(value) => {
+                        root.request-search = value;
+                        root.search-requests(value);
+                    }
                 }
 
                 HorizontalLayout {
@@ -476,7 +721,9 @@ export component AppWindow inherits Window {
                 }
 
                 Text {
-                    text: "Select a request to edit · × to delete";
+                    text: root.saved-requests.length == 0
+                        ? (root.request-search == "" ? "Send or save a request to add it here" : "No requests match your search")
+                        : "Select a request to edit · × to delete";
                     color: text-secondary;
                     font-size: 9px;
                     overflow: elide;
@@ -490,10 +737,13 @@ export component AppWindow inherits Window {
                 }
 
                 for request in root.saved-requests: Rectangle {
+                    width: 218px;
                     height: 56px;
                     background: transparent;
 
                     HorizontalLayout {
+                        width: parent.width;
+                        height: parent.height;
                         spacing: 4px;
 
                         Rectangle {
@@ -523,23 +773,28 @@ export component AppWindow inherits Window {
                                 spacing: 3px;
 
                                 Text {
+                                    width: 168px;
                                     text: request.method + "  " + request.name;
                                     color: text-primary;
                                     font-size: 12px;
                                     font-weight: 600;
+                                    overflow: elide;
                                 }
 
                                 Text {
+                                    width: 168px;
                                     text: request.url;
                                     color: text-secondary;
                                     font-size: 10px;
+                                    overflow: elide;
                                 }
                             }
                         }
 
                         ThemedButton {
-                            text: "×";
-                            width: 32px;
+                            icon: @image-url("../assets/icons/close.png");
+                            width: 30px;
+                            height: 30px;
                             dark-mode: root.dark-mode;
                             accent-button: false;
                             destructive-button: true;
@@ -563,6 +818,88 @@ export component AppWindow inherits Window {
             horizontal-stretch: 1;
             background: window-bg;
 
+            if root.active-view == "History" : VerticalLayout {
+                padding: 24px;
+                spacing: 14px;
+                HorizontalLayout {
+                    height: 50px;
+                    Text {
+                        text: "Request history";
+                        color: text-primary;
+                        font-size: 22px;
+                        font-weight: 700;
+                        vertical-alignment: center;
+                    }
+                    Rectangle { horizontal-stretch: 1; background: transparent; }
+                    Text {
+                        text: "Last 500 sent requests";
+                        color: text-secondary;
+                        font-size: 11px;
+                        vertical-alignment: center;
+                    }
+                }
+                if root.history-items.length == 0 : Rectangle {
+                    vertical-stretch: 1;
+                    background: panel-bg;
+                    border-width: 1px;
+                    border-color: border-color;
+                    border-radius: 12px;
+                    Text {
+                        text: "Requests you send will appear here";
+                        color: text-secondary;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+                }
+                for item in root.history-items : Rectangle {
+                    height: 66px;
+                    background: panel-bg;
+                    border-width: 1px;
+                    border-color: border-color;
+                    border-radius: 9px;
+                    history-touch := TouchArea {
+                        clicked => {
+                            root.selected-collection-name = item.collection-name;
+                            root.select-request(item.request-id);
+                        }
+                    }
+                    HorizontalLayout {
+                        padding: 10px;
+                        spacing: 12px;
+                        VerticalLayout {
+                            horizontal-stretch: 1;
+                            spacing: 3px;
+                            Text {
+                                text: item.method + "  " + item.request-name;
+                                color: text-primary;
+                                font-size: 12px;
+                                font-weight: 600;
+                                overflow: elide;
+                            }
+                            Text {
+                                text: item.collection-name + " · " + item.url;
+                                color: text-secondary;
+                                font-size: 10px;
+                                overflow: elide;
+                            }
+                        }
+                        Text {
+                            text: item.status + " · " + item.duration;
+                            color: item.status.starts-with("2") ? #2ec27e : text-secondary;
+                            font-size: 11px;
+                            vertical-alignment: center;
+                        }
+                        Text {
+                            text: item.date;
+                            color: text-secondary;
+                            font-size: 10px;
+                            vertical-alignment: center;
+                        }
+                    }
+                }
+                Rectangle { vertical-stretch: 1; background: transparent; }
+            }
+
             if root.active-view == "Request" : VerticalLayout {
                 padding: 20px;
                 spacing: 14px;
@@ -572,20 +909,80 @@ export component AppWindow inherits Window {
                     height: 52px;
 
                     VerticalLayout {
+                        horizontal-stretch: 1;
                         spacing: 3px;
 
-                        LineEdit {
-                            width: 300px;
-                            height: 36px;
-                            text: root.active-request;
-                            placeholder-text: "Request name";
-                            font-size: 20px;
-                            edited(value) => { root.active-request = value; }
+                        if root.editing-request-name : HorizontalLayout {
+                            spacing: 6px;
+                            LineEdit {
+                                horizontal-stretch: 1;
+                                height: 36px;
+                                text: root.request-name-draft;
+                                placeholder-text: "Request name";
+                                font-size: 20px;
+                                edited(value) => { root.request-name-draft = value; }
+                            }
+                            ThemedButton {
+                                text: "Save name";
+                                icon: @image-url("../assets/icons/save(right).png");
+                                dark-mode: root.dark-mode;
+                                accent-button: true;
+                                enabled: root.request-name-draft != "";
+                                clicked => {
+                                    root.active-request = root.request-name-draft;
+                                    root.editing-request-name = false;
+                                    if root.active-request-id > 0 && root.request-url != "" {
+                                        root.save-request(
+                                            root.active-request-id,
+                                            root.selected-collection-id,
+                                            root.active-request,
+                                            root.active-method,
+                                            root.request-url,
+                                            root.request-headers,
+                                            root.request-params,
+                                            root.request-body,
+                                            root.body-format,
+                                            root.auth-type,
+                                            root.auth-value,
+                                            root.auth-secret
+                                        );
+                                    }
+                                }
+                            }
+                            ThemedButton {
+                                text: "Cancel";
+                                icon: @image-url("../assets/icons/close.png");
+                                dark-mode: root.dark-mode;
+                                accent-button: false;
+                                clicked => { root.editing-request-name = false; }
+                            }
+                        }
+                        if !root.editing-request-name : HorizontalLayout {
+                            spacing: 8px;
+                            Text {
+                                horizontal-stretch: 1;
+                                text: root.active-request;
+                                color: text-primary;
+                                font-size: 22px;
+                                font-weight: 700;
+                                vertical-alignment: center;
+                                overflow: elide;
+                            }
+                            ThemedButton {
+                                text: "Edit name";
+                                icon: @image-url("../assets/icons/edit.png");
+                                dark-mode: root.dark-mode;
+                                accent-button: false;
+                                clicked => {
+                                    root.request-name-draft = root.active-request;
+                                    root.editing-request-name = true;
+                                }
+                            }
                         }
 
                         Text {
                             text: root.active-request-id < 0
-                                ? "New · " + root.selected-collection-name + " · Send saves automatically"
+                                ? "Draft · " + root.selected-collection-name + " · Send saves automatically"
                                 : "Saved · " + root.selected-collection-name + " · Send updates automatically";
                             color: text-secondary;
                             font-size: 11px;
@@ -598,22 +995,14 @@ export component AppWindow inherits Window {
                     }
 
                     ThemedButton {
-    text: "Save";
+    text: "Save request";
+    icon: @image-url("../assets/icons/save(right).png");
     dark-mode: root.dark-mode;
     accent-button: false;
     enabled: root.selected-collection-id > 0 && root.request-url != "" && root.active-request != "";
 
     clicked => {
-    root.save-request(
-        root.active-request-id,
-        root.selected-collection-id,
-        root.active-request,
-        root.active-method,
-        root.request-url,
-        root.request-headers,
-        root.request-params,
-        root.request-body
-    );
+    root.save-current-request();
 }
 }
                 }
@@ -648,7 +1037,10 @@ export component AppWindow inherits Window {
                                 root.active-method =
                                     root.active-method == "GET" ? "POST" :
                                     root.active-method == "POST" ? "PUT" :
-                                    root.active-method == "PUT" ? "DELETE" : "GET";
+                                    root.active-method == "PUT" ? "PATCH" :
+                                    root.active-method == "PATCH" ? "DELETE" :
+                                    root.active-method == "DELETE" ? "HEAD" :
+                                    root.active-method == "HEAD" ? "OPTIONS" : "GET";
                             }
                         }
 
@@ -663,28 +1055,12 @@ export component AppWindow inherits Window {
 
                         ThemedButton {
                             text: root.is-loading ? "Sending..." : "Send";
+                            icon: @image-url("../assets/icons/send.png");
                             dark-mode: root.dark-mode;
                             accent-button: true;
                             enabled: !root.is-loading && root.selected-collection-id > 0 && root.request-url != "" && root.active-request != "";
 
-                            clicked => {
-                                root.is-loading = true;
-                                root.response-status = "Sending...";
-                                root.response-state = "loading";
-                                root.response-format = "Text";
-                                root.response-body = "Waiting for response...";
-                                root.response-time = "---";
-                                root.send-request(
-                                    root.active-method,
-                                    root.request-url,
-                                    root.request-body,
-                                    root.request-headers,
-                                    root.request-params,
-                                    root.selected-collection-id,
-                                    root.active-request-id,
-                                    root.active-request
-                                );
-                            }
+                            clicked => root.send-current-request();
                         }
                     }
                 }
@@ -721,13 +1097,30 @@ export component AppWindow inherits Window {
                     background: border-color;
                 }
 
-                Text {
-                    text: root.active-tab == "Body" ? "Request body" :
-                          root.active-tab == "Headers" ? "Request headers" :
-                          root.active-tab == "Params" ? "Query parameters" : "Authentication";
-                    color: text-primary;
-                    font-size: 14px;
-                    font-weight: 600;
+                HorizontalLayout {
+                    height: 34px;
+                    Text {
+                        text: root.active-tab == "Body" ? "Request body" :
+                              root.active-tab == "Headers" ? "Request headers" :
+                              root.active-tab == "Params" ? "Query parameters" : "Authentication";
+                        color: text-primary;
+                        font-size: 14px;
+                        font-weight: 600;
+                        vertical-alignment: center;
+                    }
+                    Rectangle { horizontal-stretch: 1; background: transparent; }
+                    if root.active-tab == "Body" : ThemedButton {
+                        width: 88px;
+                        height: 29px;
+                        text: root.body-format + " ▾";
+                        dark-mode: root.dark-mode;
+                        accent-button: false;
+                        clicked => {
+                            root.body-format = root.body-format == "JSON" ? "Text" :
+                                root.body-format == "Text" ? "HTML" :
+                                root.body-format == "HTML" ? "XML" : "JSON";
+                        }
+                    }
                 }
 
                 Rectangle {
@@ -768,17 +1161,56 @@ export component AppWindow inherits Window {
                         }
                     }
 
-                    if root.active-tab == "Auth" : Text {
-                        text: "Authentication support will be added later.";
-                        color: text-secondary;
-                        horizontal-alignment: center;
-                        vertical-alignment: center;
+                    if root.active-tab == "Auth" : VerticalLayout {
+                        padding: 16px;
+                        spacing: 10px;
+                        Text {
+                            text: "Authentication type";
+                            color: text-secondary;
+                            font-size: 11px;
+                        }
+                        ThemedButton {
+                            width: 150px;
+                            text: root.auth-type == "None" ? "No authentication ▾" : root.auth-type + " ▾";
+                            dark-mode: root.dark-mode;
+                            accent-button: false;
+                            clicked => {
+                                root.auth-type = root.auth-type == "None" ? "Bearer" :
+                                    root.auth-type == "Bearer" ? "Basic" : "None";
+                                root.auth-value = "";
+                                root.auth-secret = "";
+                            }
+                        }
+                        if root.auth-type == "Bearer" : LineEdit {
+                            width: 340px;
+                            text: root.auth-value;
+                            placeholder-text: "Bearer token";
+                            input-type: password;
+                            edited(value) => { root.auth-value = value; }
+                        }
+                        if root.auth-type == "Basic" : HorizontalLayout {
+                            spacing: 8px;
+                            LineEdit {
+                                horizontal-stretch: 1;
+                                text: root.auth-value;
+                                placeholder-text: "Username";
+                                edited(value) => { root.auth-value = value; }
+                            }
+                            LineEdit {
+                                horizontal-stretch: 1;
+                                text: root.auth-secret;
+                                placeholder-text: "Password";
+                                input-type: password;
+                                edited(value) => { root.auth-secret = value; }
+                            }
+                        }
+                        Rectangle { vertical-stretch: 1; background: transparent; }
                     }
 
                     if root.active-tab == "Body" && root.request-body == "" : Text {
                         x: 16px;
                         y: 14px;
-                        text: "Write JSON, text, or form data here…";
+                        text: "Write " + root.body-format + " request data here…";
                         color: text-secondary;
                         font-size: 12px;
                     }
@@ -856,13 +1288,30 @@ export component AppWindow inherits Window {
                             padding-left: 12px;
                             padding-right: 12px;
                             Text {
-                                text: "Response body · " + root.response-format;
+                                text: root.response-tab == "Body" ? "Response body · " + root.response-format : "Response " + root.response-tab;
                                 color: text-secondary;
                                 font-size: 10px;
                                 font-weight: 700;
                                 vertical-alignment: center;
                             }
                             Rectangle { horizontal-stretch: 1; background: transparent; }
+                            for tab in ["Body", "Headers", "Cookies"] : Rectangle {
+                                width: tab == "Headers" ? 54px : 48px;
+                                height: 24px;
+                                border-radius: 5px;
+                                background: root.response-tab == tab ? selected-bg : transparent;
+                                response-tab-touch := TouchArea {
+                                    clicked => { root.response-tab = tab; }
+                                }
+                                Text {
+                                    text: tab;
+                                    color: root.response-tab == tab ? text-primary : text-secondary;
+                                    font-size: 9px;
+                                    font-weight: root.response-tab == tab ? 600 : 400;
+                                    horizontal-alignment: center;
+                                    vertical-alignment: center;
+                                }
+                            }
                             Text {
                                 text: root.response-state == "success" || root.response-state == "http-error" ? "Received" : "";
                                 color: text-secondary;
@@ -905,13 +1354,14 @@ export component AppWindow inherits Window {
                                 mouse-drag-pan-enabled: true;
                                 vertical-scrollbar-policy: always-on;
                                 content-width: self.width;
-                                content-height: response-text.height + 20px;
+                                    content-height: response-text.height + 20px;
 
                                 response-text := Text {
                                     x: 12px;
                                     y: 10px;
                                     width: parent.width - 24px;
-                                    text: root.response-body;
+                                    text: root.response-tab == "Body" ? root.response-body :
+                                        root.response-tab == "Headers" ? root.response-headers : root.response-cookies;
                                     color: text-primary;
                                     font-family: "monospace";
                                     font-size: 12px;
@@ -959,80 +1409,6 @@ export component AppWindow inherits Window {
                     }
                 }
 
-                if root.show-rename-collection : Rectangle {
-                    background: panel-bg;
-                    border-width: 1px;
-                    border-color: border-color;
-                    border-radius: 10px;
-                    HorizontalLayout {
-                        padding: 12px;
-                        spacing: 8px;
-                        LineEdit {
-                            horizontal-stretch: 1;
-                            text: root.rename-collection-name;
-                            placeholder-text: "Collection name";
-                            edited(value) => { root.rename-collection-name = value; }
-                        }
-                        ThemedButton {
-                            text: "Save name";
-                            dark-mode: root.dark-mode;
-                            accent-button: true;
-                            enabled: root.rename-collection-name != "";
-                            clicked => root.rename-collection(root.selected-collection-id, root.rename-collection-name);
-                        }
-                        ThemedButton {
-                            text: "Cancel";
-                            dark-mode: root.dark-mode;
-                            accent-button: false;
-                            clicked => { root.show-rename-collection = false; }
-                        }
-                    }
-                }
-
-                if root.confirm-delete-collection : Rectangle {
-                    background: panel-bg;
-                    border-width: 1px;
-                    border-color: root.dark-mode ? #70443f : #e5b7b2;
-                    border-radius: 10px;
-                    HorizontalLayout {
-                        padding: 12px;
-                        spacing: 10px;
-                        VerticalLayout {
-                            horizontal-stretch: 1;
-                            spacing: 3px;
-                            Text {
-                                text: "Delete “" + root.selected-collection-name + "”?";
-                                color: text-primary;
-                                font-size: 13px;
-                                font-weight: 600;
-                            }
-                            Text {
-                                text: "Its saved requests and variables will also be deleted.";
-                                color: text-secondary;
-                                font-size: 11px;
-                            }
-                        }
-                        ThemedButton {
-                            text: "Cancel";
-                            dark-mode: root.dark-mode;
-                            accent-button: false;
-                            clicked => {
-                                root.confirm-delete-collection = false;
-                                root.load-requests(root.selected-collection-id);
-                                root.load-collection-variables(root.selected-collection-id);
-                            }
-                        }
-                        ThemedButton {
-                            text: "Delete collection";
-                            dark-mode: root.dark-mode;
-                            accent-button: false;
-                            destructive-button: true;
-                            enabled: root.collections.length > 1;
-                            clicked => root.delete-collection(root.selected-collection-id);
-                        }
-                    }
-                }
-
                 Rectangle {
                     background: panel-bg;
                     border-width: 1px;
@@ -1074,6 +1450,7 @@ export component AppWindow inherits Window {
                             ThemedButton {
                                 width: 112px;
                                 text: "Save variable";
+                                icon: @image-url("../assets/icons/save(right).png");
                                 dark-mode: root.dark-mode;
                                 accent-button: true;
                                 enabled: root.selected-collection-id > 0 && root.variable-key != "";
@@ -1189,6 +1566,7 @@ export component AppWindow inherits Window {
                                     ThemedButton {
                                         width: 52px;
                                         text: "Edit";
+                                        icon: @image-url("../assets/icons/edit.png");
                                         dark-mode: root.dark-mode;
                                         accent-button: false;
                                         clicked => {
@@ -1199,7 +1577,7 @@ export component AppWindow inherits Window {
                                     }
                                     ThemedButton {
                                         width: 36px;
-                                        text: "×";
+                                        icon: @image-url("../assets/icons/close.png");
                                         dark-mode: root.dark-mode;
                                         accent-button: false;
                                         destructive-button: true;
@@ -1217,6 +1595,52 @@ export component AppWindow inherits Window {
                     text: "Stored locally in SQLite. Values are not encrypted.";
                     color: text-secondary;
                     font-size: 10px;
+                }
+            }
+        }
+    }
+
+        KeyBinding {
+            keys: @keys(Control + S);
+            enabled: root.active-view == "Request";
+            activated => root.save-current-request();
+        }
+        KeyBinding {
+            keys: @keys(Control + Return);
+            enabled: root.active-view == "Request";
+            activated => root.send-current-request();
+        }
+        KeyBinding {
+            keys: @keys(Control + F);
+            enabled: root.active-view == "Request";
+            activated => request-search-field.focus();
+        }
+        KeyBinding {
+            keys: @keys(Control + N);
+            enabled: root.selected-collection-id > 0;
+            activated => root.start-new-request(root.selected-collection-id, root.selected-collection-name);
+        }
+        KeyBinding {
+            keys: @keys(Control + Shift + N);
+            activated => {
+                root.show-new-collection = true;
+                root.new-collection-name = "";
+                root.variables-message = "";
+            }
+        }
+        KeyBinding {
+            keys: @keys(Escape);
+            activated => {
+                if root.collection-menu-id > 0 {
+                    root.collection-menu-id = -1;
+                } else if root.confirm-delete-collection-id > 0 {
+                    root.confirm-delete-collection-id = -1;
+                } else if root.editing-request-name {
+                    root.request-name-draft = root.active-request;
+                    root.editing-request-name = false;
+                } else if root.show-new-collection {
+                    root.show-new-collection = false;
+                    root.new-collection-name = "";
                 }
             }
         }

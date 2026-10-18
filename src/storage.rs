@@ -24,6 +24,18 @@ pub struct CollectionVariable {
     pub value: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RequestHistory {
+    pub request_id: i64,
+    pub collection_name: String,
+    pub request_name: String,
+    pub method: String,
+    pub url: String,
+    pub status: String,
+    pub elapsed_ms: i64,
+    pub created_at: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SavedRequest {
     pub id: i64,
@@ -34,6 +46,10 @@ pub struct SavedRequest {
     pub headers: String,
     pub query_params: String,
     pub body: String,
+    pub body_format: String,
+    pub auth_type: String,
+    pub auth_value: String,
+    pub auth_secret: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -45,6 +61,10 @@ pub struct NewRequest {
     pub headers: String,
     pub query_params: String,
     pub body: String,
+    pub body_format: String,
+    pub auth_type: String,
+    pub auth_value: String,
+    pub auth_secret: String,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -101,6 +121,10 @@ impl RequestStore {
                 headers      TEXT NOT NULL DEFAULT '',
                 query_params TEXT NOT NULL DEFAULT '',
                 body         TEXT NOT NULL DEFAULT '',
+                body_format  TEXT NOT NULL DEFAULT 'JSON',
+                auth_type    TEXT NOT NULL DEFAULT 'None',
+                auth_value   TEXT NOT NULL DEFAULT '',
+                auth_secret  TEXT NOT NULL DEFAULT '',
                 collection_id INTEGER REFERENCES collections(id) ON DELETE CASCADE,
                 created_at   TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 updated_at   TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -111,6 +135,18 @@ impl RequestStore {
                 key           TEXT NOT NULL,
                 value         TEXT NOT NULL,
                 PRIMARY KEY (collection_id, key)
+            );
+
+            CREATE TABLE IF NOT EXISTS request_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                request_id INTEGER NOT NULL,
+                collection_name TEXT NOT NULL,
+                request_name TEXT NOT NULL,
+                method TEXT NOT NULL,
+                url TEXT NOT NULL,
+                status TEXT NOT NULL,
+                elapsed_ms INTEGER NOT NULL,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
 
             CREATE INDEX IF NOT EXISTS idx_saved_requests_name
@@ -134,6 +170,28 @@ impl RequestStore {
                 "ALTER TABLE saved_requests ADD COLUMN collection_id INTEGER REFERENCES collections(id) ON DELETE CASCADE",
                 [],
             )?;
+        }
+
+        // Add request authentication fields to databases created by earlier versions.
+        for (column, declaration) in [
+            ("auth_type", "TEXT NOT NULL DEFAULT 'None'"),
+            ("body_format", "TEXT NOT NULL DEFAULT 'JSON'"),
+            ("auth_value", "TEXT NOT NULL DEFAULT ''"),
+            ("auth_secret", "TEXT NOT NULL DEFAULT ''"),
+        ] {
+            let has_column = {
+                let mut statement = connection.prepare("PRAGMA table_info(saved_requests)")?;
+                let columns = statement.query_map([], |row| row.get::<_, String>(1))?;
+                columns
+                    .collect::<Result<Vec<_>, _>>()?
+                    .iter()
+                    .any(|item| item == column)
+            };
+            if !has_column {
+                connection.execute_batch(&format!(
+                    "ALTER TABLE saved_requests ADD COLUMN {column} {declaration}"
+                ))?;
+            }
         }
 
         connection.execute_batch(
@@ -334,8 +392,8 @@ impl RequestStore {
         let connection = self.connect()?;
         connection.execute(
             r#"
-            INSERT INTO saved_requests (name, method, url, headers, query_params, body, collection_id)
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+            INSERT INTO saved_requests (name, method, url, headers, query_params, body, collection_id, body_format, auth_type, auth_value, auth_secret)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
             "#,
             params![
                 request.name.trim(),
@@ -344,7 +402,11 @@ impl RequestStore {
                 request.headers,
                 request.query_params,
                 request.body,
-                request.collection_id
+                request.collection_id,
+                request.body_format,
+                request.auth_type,
+                request.auth_value,
+                request.auth_secret
             ],
         )?;
         let id = connection.last_insert_rowid();
@@ -357,7 +419,7 @@ impl RequestStore {
         let connection = self.connect()?;
         let mut statement = connection.prepare(
             r#"
-            SELECT id, collection_id, name, method, url, headers, query_params, body
+            SELECT id, collection_id, name, method, url, headers, query_params, body, body_format, auth_type, auth_value, auth_secret
             FROM saved_requests WHERE collection_id = ?1
             ORDER BY name COLLATE NOCASE ASC, id ASC
             "#,
@@ -372,7 +434,7 @@ impl RequestStore {
         connection
             .query_row(
                 r#"
-                SELECT id, collection_id, name, method, url, headers, query_params, body
+                SELECT id, collection_id, name, method, url, headers, query_params, body, body_format, auth_type, auth_value, auth_secret
                 FROM saved_requests WHERE id = ?1
                 "#,
                 [id],
@@ -390,8 +452,9 @@ impl RequestStore {
             UPDATE saved_requests
             SET name = ?1, method = ?2, url = ?3, headers = ?4,
                 query_params = ?5, body = ?6, collection_id = ?7,
+                body_format = ?8, auth_type = ?9, auth_value = ?10, auth_secret = ?11,
                 updated_at = CURRENT_TIMESTAMP
-            WHERE id = ?8
+            WHERE id = ?12
             "#,
             params![
                 request.name.trim(),
@@ -401,6 +464,10 @@ impl RequestStore {
                 request.query_params,
                 request.body,
                 request.collection_id,
+                request.body_format,
+                request.auth_type,
+                request.auth_value,
+                request.auth_secret,
                 id
             ],
         )?;
@@ -411,6 +478,54 @@ impl RequestStore {
         let connection = self.connect()?;
         let changed = connection.execute("DELETE FROM saved_requests WHERE id = ?1", [id])?;
         Ok(changed == 1)
+    }
+
+    pub fn record_history(
+        &self,
+        request_id: i64,
+        collection_id: i64,
+        request_name: &str,
+        method: &str,
+        url: &str,
+        status: &str,
+        elapsed_ms: i64,
+    ) -> Result<(), StoreError> {
+        let connection = self.connect()?;
+        let collection_name = connection.query_row(
+            "SELECT name FROM collections WHERE id = ?1",
+            [collection_id],
+            |row| row.get::<_, String>(0),
+        )?;
+        connection.execute(
+            "INSERT INTO request_history (request_id, collection_name, request_name, method, url, status, elapsed_ms) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            params![request_id, collection_name, request_name, method, url, status, elapsed_ms],
+        )?;
+        connection.execute(
+            "DELETE FROM request_history WHERE id NOT IN (SELECT id FROM request_history ORDER BY id DESC LIMIT 500)",
+            [],
+        )?;
+        Ok(())
+    }
+
+    pub fn list_history(&self) -> Result<Vec<RequestHistory>, StoreError> {
+        let connection = self.connect()?;
+        let mut statement = connection.prepare(
+            "SELECT request_id, collection_name, request_name, method, url, status, elapsed_ms, created_at FROM request_history ORDER BY id DESC LIMIT 500",
+        )?;
+        let rows = statement.query_map([], |row| {
+            Ok(RequestHistory {
+                request_id: row.get(0)?,
+                collection_name: row.get(1)?,
+                request_name: row.get(2)?,
+                method: row.get(3)?,
+                url: row.get(4)?,
+                status: row.get(5)?,
+                elapsed_ms: row.get(6)?,
+                created_at: row.get(7)?,
+            })
+        })?;
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(StoreError::from)
     }
 }
 
@@ -453,6 +568,10 @@ fn row_to_request(row: &rusqlite::Row<'_>) -> rusqlite::Result<SavedRequest> {
         headers: row.get(5)?,
         query_params: row.get(6)?,
         body: row.get(7)?,
+        body_format: row.get(8)?,
+        auth_type: row.get(9)?,
+        auth_value: row.get(10)?,
+        auth_secret: row.get(11)?,
     })
 }
 
@@ -469,6 +588,10 @@ mod tests {
             headers: "Accept: application/json".into(),
             query_params: "page=1".into(),
             body: String::new(),
+            body_format: "JSON".into(),
+            auth_type: "None".into(),
+            auth_value: String::new(),
+            auth_secret: String::new(),
         }
     }
 
@@ -498,6 +621,10 @@ mod tests {
             headers: "Content-Type: application/json".into(),
             query_params: String::new(),
             body: r#"{"ok":true}"#.into(),
+            body_format: "JSON".into(),
+            auth_type: "None".into(),
+            auth_value: String::new(),
+            auth_secret: String::new(),
         };
         assert!(store.update(created.id, &updated).expect("update"));
         let loaded = store
