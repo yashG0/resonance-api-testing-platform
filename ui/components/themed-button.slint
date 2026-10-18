@@ -1,31 +1,64 @@
-
 export component ThemedButton inherits Rectangle {
     in property <string> text: "";
     in property <bool> dark-mode: true;
     in property <bool> accent-button: false;
+    in property <bool> destructive-button: false;
     in property <bool> enabled: true;
+    in property <color> accent-color: #3584e4;
+    in property <color> hover-accent-color: #4d92ec;
+    in property <color> pressed-accent-color: #2e72c6;
 
     callback clicked();
 
     height: 36px;
-    background: !root.enabled ? (root.dark-mode ? #383838 : #e5e5e5)
-        : root.accent-button ? #e879f9
-        : root.dark-mode ? #3a3a3a : #e9e7e5;
-
-    border-radius: 6px;
+    border-radius: root.accent-button ? 9px : 7px;
     clip: true;
+
+    background: {
+        if (!root.enabled) {
+            return root.dark-mode ? #383838 : #e5e5e5;
+        }
+        if (root.accent-button) {
+            return touch.pressed ? root.pressed-accent-color
+                : touch.has-hover ? root.hover-accent-color
+                : root.accent-color;
+        }
+        if (root.destructive-button && (touch.has-hover || touch.pressed)) {
+            return root.dark-mode ? #a51d2d : #c01c28;
+        }
+        if (touch.pressed) {
+            return root.dark-mode ? #4a4a4a : #d8d7d5;
+        }
+        if (touch.has-hover) {
+            return root.dark-mode ? #424242 : #e4e3e1;
+        }
+        return root.dark-mode ? #353535 : #e9e8e6;
+    }
+
+    border-width: root.accent-button ? 0px : 1px;
+    border-color: root.dark-mode ? #4b4b4b : #d5d3d0;
 
     Text {
         text: root.text;
-        color: !root.enabled ? (root.dark-mode ? #999999 : #777777)
-            : root.accent-button ? #241329
-            : root.dark-mode ? #ffffff : #241f31;
+        color: {
+            if (!root.enabled) {
+                return root.dark-mode ? #999999 : #777777;
+            }
+            if (root.accent-button || (root.destructive-button && (touch.has-hover || touch.pressed))) {
+                return #ffffff;
+            }
+            if (root.destructive-button) {
+                return root.dark-mode ? #ff7b63 : #c01c28;
+            }
+            return root.dark-mode ? #f6f5f4 : #241f31;
+        }
         horizontal-alignment: center;
         vertical-alignment: center;
         font-size: 13px;
+        font-weight: root.accent-button ? 600 : 500;
     }
 
-    TouchArea {
+    touch := TouchArea {
         enabled: root.enabled;
         clicked => {
             root.clicked();

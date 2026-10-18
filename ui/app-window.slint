@@ -1,11 +1,5 @@
 import { ThemedButton } from "components/themed-button.slint";
-import {
-    Button,
-    LineEdit,
-    TextEdit,
-    ScrollView,
-    Palette
-} from "std-widgets.slint";
+import { LineEdit, TextEdit, ScrollView, Palette } from "std-widgets.slint";
 export struct RequestItem {
     id: int,
     name: string,
@@ -28,6 +22,7 @@ in-out property <int> active-request-id: -1;
 callback load-requests();
 callback select-request(int);
 callback delete-request(int);
+callback refresh-system-theme();
     in-out property <string> theme-mode: "System";
     in-out property <string> active-request: "New Request";
     in-out property <string> active-method: "GET";
@@ -42,29 +37,43 @@ callback delete-request(int);
     in-out property <string> response-time: "---";
     in-out property <bool> is-loading: false;
 
+    // Keep the system appearance before applying an explicit per-app override.
+    in-out property <bool> system-dark-mode: Palette.color-scheme == ColorScheme.dark;
+    in-out property <string> previous-theme-mode: "System";
+
     property <bool> dark-mode:
         root.theme-mode == "Dark" ? true :
         root.theme-mode == "Light" ? false :
-        Palette.color-scheme == ColorScheme.dark;
+        root.system-dark-mode;
 
-    // Keep native Slint widgets in sync with the selected appearance.
+    // Restore the system palette when returning to System mode. Preserve the
+    // detected system appearance separately because `unknown` does not mean light.
     changed theme-mode => {
-    Palette.color-scheme =
-        root.theme-mode == "Dark" ? ColorScheme.dark :
-        root.theme-mode == "Light" ? ColorScheme.light :
-        ColorScheme.unknown;
-}
+        if (root.previous-theme-mode == "System" && root.theme-mode != "System") {
+            root.system-dark-mode = Palette.color-scheme == ColorScheme.dark;
+        }
 
-    property <color> window-bg: dark-mode ? #232326 : #f6f5f4;
-    property <color> sidebar-bg: dark-mode ? #2c2c30 : #eeedec;
-    property <color> panel-bg: dark-mode ? #29292d : #ffffff;
+        if (root.theme-mode == "System") {
+            root.refresh-system-theme();
+        }
+
+        Palette.color-scheme =
+            root.theme-mode == "Dark" ? ColorScheme.dark :
+            root.theme-mode == "Light" ? ColorScheme.light :
+            ColorScheme.unknown;
+        root.previous-theme-mode = root.theme-mode;
+    }
+
+    property <color> window-bg: dark-mode ? #222226 : #f6f5f4;
+    property <color> sidebar-bg: dark-mode ? #2c2c30 : #efeeec;
+    property <color> panel-bg: dark-mode ? #252528 : #ffffff;
     property <color> editor-bg: dark-mode ? #1e1e21 : #ffffff;
-    property <color> border-color: dark-mode ? #414146 : #d8d5d2;
-    property <color> text-primary: dark-mode ? #f5f5f7 : #242329;
-    property <color> text-secondary: dark-mode ? #b8b7c0 : #65636d;
-    property <color> accent: #d66bea;
-    property <color> selected-bg: dark-mode ? #403747 : #f0ddf5;
-    property <color> hover-bg: dark-mode ? #38383e : #e5e3e2;
+    property <color> border-color: dark-mode ? #3d3d42 : #deddda;
+    property <color> text-primary: dark-mode ? #f6f5f4 : #241f31;
+    property <color> text-secondary: dark-mode ? #b8b7b2 : #5e5c64;
+    property <color> accent: #3584e4;
+    property <color> selected-bg: dark-mode ? #45454a : #e3e2e0;
+    property <color> hover-bg: dark-mode ? #38383c : #e8e7e5;
 
     HorizontalLayout {
         spacing: 0;
@@ -130,10 +139,10 @@ callback delete-request(int);
 
                 for item in ["Collections", "History", "Environments"] : Rectangle {
                     height: 36px;
-                    border-radius: 7px;
-                    background: transparent;
+                    border-radius: 8px;
+                    background: nav-touch.has-hover ? hover-bg : transparent;
 
-                    TouchArea {
+                    nav-touch := TouchArea {
                         clicked => {
                             // Navigation destinations are placeholders for now.
                         }
@@ -162,8 +171,14 @@ callback delete-request(int);
 
                 for collection in ["Public API", "My Backend"] : Rectangle {
                     height: 36px;
-                    border-radius: 7px;
-                    background: transparent;
+                    border-radius: 8px;
+                    background: collection-touch.has-hover ? hover-bg : transparent;
+
+                    collection-touch := TouchArea {
+                        clicked => {
+                            // Collection navigation is not implemented yet.
+                        }
+                    }
 
                     Text {
                         x: 11px;
@@ -193,9 +208,10 @@ callback delete-request(int);
                         height: 32px;
                         horizontal-stretch: 1;
                         border-radius: 6px;
-                        background: root.theme-mode == mode ? selected-bg : transparent;
+                        background: root.theme-mode == mode ? selected-bg
+                            : mode-touch.has-hover ? hover-bg : transparent;
 
-                        TouchArea {
+                        mode-touch := TouchArea {
                             clicked => {
                                 root.theme-mode = mode;
                             }
@@ -203,7 +219,7 @@ callback delete-request(int);
 
                         Text {
                             text: mode;
-                            color: root.theme-mode == mode ? accent : text-secondary;
+                            color: root.theme-mode == mode ? text-primary : text-secondary;
                             font-size: 11px;
                             font-weight: root.theme-mode == mode ? 700 : 500;
                             horizontal-alignment: center;
@@ -243,15 +259,28 @@ callback delete-request(int);
                     placeholder-text: "Search requests...";
                 }
 
-                Rectangle {
-                    vertical-stretch: 1;
-                    background: transparent;
+                HorizontalLayout {
+                    spacing: 6px;
+
+                    Text {
+                        text: "Saved requests";
+                        color: text-secondary;
+                        font-size: 11px;
+                        font-weight: 600;
+                    }
+
+                    Text {
+                        text: "(" + root.saved-requests.length + ")";
+                        color: text-secondary;
+                        font-size: 11px;
+                    }
                 }
 
-                Text {
-                    text: "Saved requests (" + root.saved-requests.length + ")";
+                if root.saved-requests.length == 0 : Text {
+                    text: "No saved requests yet";
                     color: text-secondary;
-                    font-size: 10px;
+                    font-size: 12px;
+                    horizontal-alignment: center;
                 }
 
                 for request in root.saved-requests: Rectangle {
@@ -263,12 +292,21 @@ callback delete-request(int);
 
                         Rectangle {
                             horizontal-stretch: 1;
-                            border-radius: 7px;
+                            border-radius: 8px;
                             background: root.active-request-id == request.id
                                 ? selected-bg
-                                : transparent;
+                                : request-touch.has-hover ? hover-bg : transparent;
 
-                            TouchArea {
+                            if root.active-request-id == request.id : Rectangle {
+                                x: 0px;
+                                y: 14px;
+                                width: 3px;
+                                height: 28px;
+                                border-radius: 2px;
+                                background: accent;
+                            }
+
+                            request-touch := TouchArea {
                                 clicked => {
                                     root.select-request(request.id);
                                 }
@@ -295,9 +333,10 @@ callback delete-request(int);
 
                         ThemedButton {
                             text: "×";
-                            width: 28px;
+                            width: 32px;
                             dark-mode: root.dark-mode;
                             accent-button: false;
+                            destructive-button: true;
 
                             clicked => {
                                 root.delete-request(request.id);
@@ -306,8 +345,13 @@ callback delete-request(int);
                     }
                 }
 
+                Rectangle {
+                    vertical-stretch: 1;
+                    background: transparent;
+                }
+            }
         }
-    }
+
         // RIGHT PANE — Request editor and response
         Rectangle {
             horizontal-stretch: 1;
@@ -318,14 +362,24 @@ callback delete-request(int);
                 spacing: 14px;
 
                 HorizontalLayout {
-                    spacing: 8px;
+                    spacing: 12px;
+                    height: 52px;
 
-                    Text {
-                        text: root.active-request;
-                        color: text-primary;
-                        font-size: 21px;
-                        font-weight: 700;
-                        vertical-alignment: center;
+                    VerticalLayout {
+                        spacing: 3px;
+
+                        Text {
+                            text: root.active-request;
+                            color: text-primary;
+                            font-size: 22px;
+                            font-weight: 700;
+                        }
+
+                        Text {
+                            text: root.active-request-id < 0 ? "A new request, ready to configure" : "Saved request · " + root.active-method;
+                            color: text-secondary;
+                            font-size: 11px;
+                        }
                     }
 
                     Rectangle {
@@ -357,17 +411,26 @@ callback delete-request(int);
                     background: panel-bg;
                     border-width: 1px;
                     border-color: border-color;
-                    border-radius: 9px;
+                    border-radius: 12px;
 
                     HorizontalLayout {
-                        padding: 8px;
-                        spacing: 8px;
+                        padding: 9px;
+                        spacing: 9px;
 
                         ThemedButton {
                             width: 88px;
                             text: root.active-method;
                             dark-mode: root.dark-mode;
-                            accent-button: false;
+                            accent-button: true;
+                            accent-color: root.active-method == "GET" ? #2ec27e :
+                                root.active-method == "POST" ? #c64600 :
+                                root.active-method == "PUT" ? #3584e4 : #c01c28;
+                            hover-accent-color: root.active-method == "GET" ? #26a269 :
+                                root.active-method == "POST" ? #a83b00 :
+                                root.active-method == "PUT" ? #4d92ec : #a51d2d;
+                            pressed-accent-color: root.active-method == "GET" ? #1c8757 :
+                                root.active-method == "POST" ? #8f3200 :
+                                root.active-method == "PUT" ? #2e72c6 : #861a26;
 
                             clicked => {
                                 root.active-method =
@@ -415,10 +478,11 @@ callback delete-request(int);
 
                     for tab in ["Params", "Headers", "Body", "Auth"] : Rectangle {
                         height: 36px;
-                        border-radius: 6px;
-                        background: root.active-tab == tab ? selected-bg : transparent;
+                        border-radius: 8px;
+                        background: root.active-tab == tab ? selected-bg
+                            : tab-touch.has-hover ? hover-bg : transparent;
 
-                        TouchArea {
+                        tab-touch := TouchArea {
                             clicked => {
                                 root.active-tab = tab;
                             }
@@ -426,7 +490,7 @@ callback delete-request(int);
 
                         Text {
                             text: tab;
-                            color: root.active-tab == tab ? accent : text-secondary;
+                            color: root.active-tab == tab ? text-primary : text-secondary;
                             font-size: 12px;
                             font-weight: root.active-tab == tab ? 700 : 500;
                             horizontal-alignment: center;
@@ -455,7 +519,7 @@ callback delete-request(int);
                     background: panel-bg;
                     border-width: 1px;
                     border-color: border-color;
-                    border-radius: 9px;
+                    border-radius: 12px;
 
                     if root.active-tab == "Body" : TextEdit {
                         text: root.request-body;
@@ -492,6 +556,22 @@ callback delete-request(int);
                         color: text-secondary;
                         horizontal-alignment: center;
                         vertical-alignment: center;
+                    }
+
+                    if root.active-tab == "Body" && root.request-body == "" : Text {
+                        x: 16px;
+                        y: 14px;
+                        text: "Write JSON, text, or form data here…";
+                        color: text-secondary;
+                        font-size: 12px;
+                    }
+
+                    if root.active-tab == "Params" && root.request-params == "" : Text {
+                        x: 16px;
+                        y: 14px;
+                        text: "Add query parameters, one per line…";
+                        color: text-secondary;
+                        font-size: 12px;
                     }
                 }
 
@@ -533,9 +613,36 @@ callback delete-request(int);
                     background: editor-bg;
                     border-width: 1px;
                     border-color: border-color;
-                    border-radius: 9px;
+                    border-radius: 12px;
 
-                    ScrollView {
+                    if root.response-status == "No response yet" : VerticalLayout {
+                        alignment: center;
+                        spacing: 8px;
+
+                        Text {
+                            text: "↗";
+                            color: accent;
+                            font-size: 24px;
+                            horizontal-alignment: center;
+                        }
+
+                        Text {
+                            text: "Your response will appear here";
+                            color: text-primary;
+                            font-size: 13px;
+                            font-weight: 600;
+                            horizontal-alignment: center;
+                        }
+
+                        Text {
+                            text: "Send a request to inspect status, timing, and body.";
+                            color: text-secondary;
+                            font-size: 11px;
+                            horizontal-alignment: center;
+                        }
+                    }
+
+                    if root.response-status != "No response yet" : ScrollView {
                         Text {
                             text: root.response-body;
                             color: text-primary;

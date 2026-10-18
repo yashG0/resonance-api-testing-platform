@@ -1,6 +1,8 @@
 mod http;
 mod storage;
 
+#[cfg(target_os = "linux")]
+use std::process::Command;
 use std::sync::Arc;
 
 use crate::http::HttpClient;
@@ -8,6 +10,28 @@ use crate::storage::{NewRequest, RequestStore, SavedRequest};
 use slint::{ComponentHandle, ModelRc, VecModel};
 
 slint::include_modules!();
+
+fn detect_system_dark_mode(fallback: bool) -> bool {
+    #[cfg(target_os = "linux")]
+    {
+        if let Ok(output) = Command::new("gsettings")
+            .args(["get", "org.gnome.desktop.interface", "color-scheme"])
+            .output()
+        {
+            if output.status.success() {
+                let preference = String::from_utf8_lossy(&output.stdout);
+                if preference.contains("prefer-dark") {
+                    return true;
+                }
+                if preference.contains("prefer-light") {
+                    return false;
+                }
+            }
+        }
+    }
+
+    fallback
+}
 
 fn to_request_model(requests: Vec<SavedRequest>) -> ModelRc<RequestItem> {
     let items = requests
@@ -32,7 +56,19 @@ async fn main() -> Result<(), slint::PlatformError> {
     let client = Arc::new(HttpClient::new().expect("Failed to initialize Resonance HTTP client"));
 
     let app = AppWindow::new()?;
+    let system_dark_mode = detect_system_dark_mode(app.get_system_dark_mode());
+    app.set_system_dark_mode(system_dark_mode);
     let app_weak = app.as_weak();
+
+    app.on_refresh_system_theme({
+        let app_weak = app_weak.clone();
+        move || {
+            if let Some(ui) = app_weak.upgrade() {
+                let fallback = ui.get_system_dark_mode();
+                ui.set_system_dark_mode(detect_system_dark_mode(fallback));
+            }
+        }
+    });
 
     // Send HTTP requests without blocking the UI.
     app.on_send_request({
