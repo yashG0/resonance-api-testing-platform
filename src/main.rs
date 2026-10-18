@@ -1,4 +1,5 @@
 mod http;
+mod storage;
 
 use std::sync::Arc;
 
