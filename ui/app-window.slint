@@ -6,23 +6,45 @@ export struct RequestItem {
     method: string,
     url: string,
 }
+export struct CollectionItem {
+    id: int,
+    name: string,
+}
+export struct VariableItem {
+    key: string,
+    value: string,
+}
 export component AppWindow inherits Window {
     title: "Resonance";
     width: 1200px;
     height: 760px;
     background: window-bg;
 
-    callback send-request(string, string, string, string, string);
-callback save-request(
-    int, string, string, string, string, string, string
-);
-in-out property <[RequestItem]> saved-requests: [];
-in-out property <int> active-request-id: -1;
+    callback send-request(string, string, string, string, string, int);
+    callback save-request(int, int, string, string, string, string, string, string);
+    callback load-collections();
+    callback load-requests(int);
+    callback load-collection-variables(int);
+    callback create-collection(string);
+    callback save-collection-variable(int, string, string);
+    callback delete-collection-variable(int, string);
+    callback select-request(int);
+    callback delete-request(int, int);
+    callback refresh-system-theme();
 
-callback load-requests();
-callback select-request(int);
-callback delete-request(int);
-callback refresh-system-theme();
+    in-out property <[RequestItem]> saved-requests: [];
+    in-out property <[CollectionItem]> collections: [];
+    in-out property <[VariableItem]> collection-variables: [];
+    in-out property <int> active-request-id: -1;
+    in-out property <int> selected-collection-id: -1;
+    in-out property <string> selected-collection-name: "";
+    in-out property <string> active-view: "Request";
+    in-out property <string> new-collection-name: "";
+    in-out property <bool> show-new-collection: false;
+    in-out property <string> variable-key: "";
+    in-out property <string> variable-value: "";
+    in-out property <string> variables-message: "";
+    in-out property <bool> show-variable-values: false;
     in-out property <string> theme-mode: "System";
     in-out property <string> active-request: "New Request";
     in-out property <string> active-method: "GET";
@@ -162,29 +184,96 @@ callback refresh-system-theme();
                     background: border-color;
                 }
 
-                Text {
-                    text: "COLLECTIONS";
-                    color: text-secondary;
-                    font-size: 10px;
-                    font-weight: 700;
+                HorizontalLayout {
+                    height: 28px;
+                    spacing: 6px;
+
+                    Text {
+                        text: "COLLECTIONS";
+                        color: text-secondary;
+                        font-size: 10px;
+                        font-weight: 700;
+                        vertical-alignment: center;
+                    }
+
+                    Rectangle {
+                        horizontal-stretch: 1;
+                        background: transparent;
+                    }
+
+                    ThemedButton {
+                        width: 28px;
+                        height: 28px;
+                        text: "+";
+                        dark-mode: root.dark-mode;
+                        accent-button: false;
+                        clicked => {
+                            root.show-new-collection = !root.show-new-collection;
+                            root.variables-message = "";
+                        }
+                    }
                 }
 
-                for collection in ["Public API", "My Backend"] : Rectangle {
+                if root.show-new-collection : HorizontalLayout {
+                    spacing: 5px;
+
+                    LineEdit {
+                        horizontal-stretch: 1;
+                        text: root.new-collection-name;
+                        placeholder-text: "Collection name";
+                        edited(value) => { root.new-collection-name = value; }
+                    }
+
+                    ThemedButton {
+                        width: 30px;
+                        text: "✓";
+                        dark-mode: root.dark-mode;
+                        accent-button: true;
+                        enabled: root.new-collection-name != "";
+                        clicked => {
+                            root.create-collection(root.new-collection-name);
+                        }
+                    }
+                }
+
+                if root.show-new-collection && root.variables-message != "" : Text {
+                    text: root.variables-message;
+                    color: root.dark-mode ? #ff7b63 : #c01c28;
+                    font-size: 10px;
+                }
+
+                for collection in root.collections : Rectangle {
                     height: 36px;
                     border-radius: 8px;
-                    background: collection-touch.has-hover ? hover-bg : transparent;
+                    background: root.selected-collection-id == collection.id ? selected-bg
+                        : collection-touch.has-hover ? hover-bg : transparent;
 
                     collection-touch := TouchArea {
                         clicked => {
-                            // Collection navigation is not implemented yet.
+                            root.selected-collection-id = collection.id;
+                            root.selected-collection-name = collection.name;
+                            root.active-view = "Request";
+                            root.active-request-id = -1;
+                            root.active-request = "New Request";
+                            root.active-method = "GET";
+                            root.request-url = "";
+                            root.request-params = "";
+                            root.request-body = "";
+                            root.request-headers = "Accept: application/json";
+                            root.response-status = "No response yet";
+                            root.response-body = "Send a request to inspect its response.";
+                            root.response-time = "---";
+                            root.load-requests(collection.id);
+                            root.load-collection-variables(collection.id);
                         }
                     }
 
                     Text {
                         x: 11px;
-                        text: collection;
-                        color: text-primary;
+                        text: collection.name;
+                        color: root.selected-collection-id == collection.id ? text-primary : text-secondary;
                         font-size: 13px;
+                        font-weight: root.selected-collection-id == collection.id ? 600 : 400;
                         vertical-alignment: center;
                     }
                 }
@@ -248,11 +337,33 @@ callback refresh-system-theme();
                 padding: 14px;
                 spacing: 12px;
 
-                Text {
-                    text: "Requests";
-                    color: text-primary;
-                    font-size: 17px;
-                    font-weight: 700;
+                HorizontalLayout {
+                    spacing: 6px;
+
+                    Text {
+                        text: "Requests";
+                        color: text-primary;
+                        font-size: 17px;
+                        font-weight: 700;
+                        vertical-alignment: center;
+                    }
+
+                    Rectangle {
+                        horizontal-stretch: 1;
+                        background: transparent;
+                    }
+
+                    ThemedButton {
+                        width: 74px;
+                        height: 30px;
+                        text: "Variables";
+                        dark-mode: root.dark-mode;
+                        accent-button: root.active-view == "Variables";
+                        clicked => {
+                            root.active-view = "Variables";
+                            root.variables-message = "";
+                        }
+                    }
                 }
 
                 LineEdit {
@@ -339,7 +450,7 @@ callback refresh-system-theme();
                             destructive-button: true;
 
                             clicked => {
-                                root.delete-request(request.id);
+                                root.delete-request(request.id, root.selected-collection-id);
                             }
                         }
                     }
@@ -357,7 +468,7 @@ callback refresh-system-theme();
             horizontal-stretch: 1;
             background: window-bg;
 
-            VerticalLayout {
+            if root.active-view == "Request" : VerticalLayout {
                 padding: 20px;
                 spacing: 14px;
 
@@ -376,7 +487,9 @@ callback refresh-system-theme();
                         }
 
                         Text {
-                            text: root.active-request-id < 0 ? "A new request, ready to configure" : "Saved request · " + root.active-method;
+                            text: root.active-request-id < 0
+                                ? "New request · " + root.selected-collection-name
+                                : "Saved request · " + root.selected-collection-name;
                             color: text-secondary;
                             font-size: 11px;
                         }
@@ -391,10 +504,12 @@ callback refresh-system-theme();
     text: "Save";
     dark-mode: root.dark-mode;
     accent-button: false;
+    enabled: root.selected-collection-id > 0 && root.request-url != "";
 
     clicked => {
     root.save-request(
         root.active-request-id,
+        root.selected-collection-id,
         root.active-request,
         root.active-method,
         root.request-url,
@@ -453,7 +568,7 @@ callback refresh-system-theme();
                             text: root.is-loading ? "Sending..." : "Send";
                             dark-mode: root.dark-mode;
                             accent-button: true;
-                            enabled: !root.is-loading && root.request-url != "";
+                            enabled: !root.is-loading && root.selected-collection-id > 0 && root.request-url != "";
 
                             clicked => {
                                 root.is-loading = true;
@@ -465,7 +580,8 @@ callback refresh-system-theme();
                                     root.request-url,
                                     root.request-body,
                                     root.request-headers,
-                                    root.request-params
+                                    root.request-params,
+                                    root.selected-collection-id
                                 );
                             }
                         }
@@ -651,6 +767,229 @@ callback refresh-system-theme();
                             wrap: word-wrap;
                         }
                     }
+                }
+            }
+
+            if root.active-view == "Variables" : VerticalLayout {
+                padding: 24px;
+                spacing: 16px;
+
+                HorizontalLayout {
+                    height: 54px;
+                    spacing: 12px;
+
+                    VerticalLayout {
+                        spacing: 3px;
+                        Text {
+                            text: "Collection variables";
+                            color: text-primary;
+                            font-size: 22px;
+                            font-weight: 700;
+                        }
+                        Text {
+                            text: "Values available to requests in " + root.selected-collection-name;
+                            color: text-secondary;
+                            font-size: 11px;
+                        }
+                    }
+
+                    Rectangle {
+                        horizontal-stretch: 1;
+                        background: transparent;
+                    }
+
+                    ThemedButton {
+                        text: "← Requests";
+                        dark-mode: root.dark-mode;
+                        accent-button: false;
+                        clicked => { root.active-view = "Request"; }
+                    }
+                }
+
+                Rectangle {
+                    background: panel-bg;
+                    border-width: 1px;
+                    border-color: border-color;
+                    border-radius: 12px;
+
+                    VerticalLayout {
+                        padding: 18px;
+                        spacing: 10px;
+
+                        Text {
+                            text: "Add or update a variable";
+                            color: text-primary;
+                            font-size: 14px;
+                            font-weight: 600;
+                        }
+                        Text {
+                            text: "Use {{variable_name}} in a request URL, headers, query parameters, or body.";
+                            color: text-secondary;
+                            font-size: 11px;
+                        }
+
+                        HorizontalLayout {
+                            spacing: 8px;
+                            height: 38px;
+
+                            LineEdit {
+                                width: 180px;
+                                text: root.variable-key;
+                                placeholder-text: "Variable name";
+                                edited(value) => { root.variable-key = value; }
+                            }
+                            LineEdit {
+                                horizontal-stretch: 1;
+                                text: root.variable-value;
+                                placeholder-text: "Value";
+                                edited(value) => { root.variable-value = value; }
+                            }
+                            ThemedButton {
+                                width: 112px;
+                                text: "Save variable";
+                                dark-mode: root.dark-mode;
+                                accent-button: true;
+                                enabled: root.selected-collection-id > 0 && root.variable-key != "";
+                                clicked => {
+                                    root.save-collection-variable(
+                                        root.selected-collection-id,
+                                        root.variable-key,
+                                        root.variable-value
+                                    );
+                                }
+                            }
+                        }
+                        Text {
+                            text: root.variables-message;
+                            color: root.variables-message == "Variable saved." || root.variables-message == "Variable deleted."
+                                ? accent
+                                : root.variables-message == "" ? text-secondary
+                                : root.dark-mode ? #ff7b63 : #c01c28;
+                            font-size: 11px;
+                        }
+                    }
+                }
+
+                HorizontalLayout {
+                    spacing: 8px;
+                    Text {
+                        text: "Variables · " + root.collection-variables.length;
+                        color: text-primary;
+                        font-size: 16px;
+                        font-weight: 700;
+                    }
+                    Rectangle { horizontal-stretch: 1; background: transparent; }
+                    ThemedButton {
+                        width: 116px;
+                        height: 30px;
+                        text: root.show-variable-values ? "Hide values" : "Show values";
+                        dark-mode: root.dark-mode;
+                        accent-button: false;
+                        clicked => { root.show-variable-values = !root.show-variable-values; }
+                    }
+                }
+
+                Rectangle {
+                    vertical-stretch: 1;
+                    background: transparent;
+
+                    ScrollView {
+                        VerticalLayout {
+                            spacing: 8px;
+
+                            if root.collection-variables.length == 0 : Rectangle {
+                                height: 190px;
+                                background: panel-bg;
+                                border-width: 1px;
+                                border-color: border-color;
+                                border-radius: 12px;
+                                VerticalLayout {
+                                    alignment: center;
+                                    spacing: 8px;
+                                    Text {
+                                        text: "◇";
+                                        color: accent;
+                                        font-size: 24px;
+                                        horizontal-alignment: center;
+                                    }
+                                    Text {
+                                        text: "No variables in this collection yet";
+                                        color: text-primary;
+                                        font-size: 14px;
+                                        font-weight: 600;
+                                        horizontal-alignment: center;
+                                    }
+                                    Text {
+                                        text: "Add a key and value above to reuse it in requests.";
+                                        color: text-secondary;
+                                        font-size: 11px;
+                                        horizontal-alignment: center;
+                                    }
+                                }
+                            }
+
+                            for variable in root.collection-variables : Rectangle {
+                                height: 56px;
+                                background: panel-bg;
+                                border-width: 1px;
+                                border-color: border-color;
+                                border-radius: 9px;
+                                HorizontalLayout {
+                                    padding: 10px;
+                                    spacing: 12px;
+                                    VerticalLayout {
+                                        width: 180px;
+                                        spacing: 2px;
+                                        Text {
+                                            text: variable.key;
+                                            color: text-primary;
+                                            font-size: 12px;
+                                            font-weight: 600;
+                                        }
+                                        Text {
+                                            text: "Collection variable";
+                                            color: text-secondary;
+                                            font-size: 10px;
+                                        }
+                                    }
+                                    Text {
+                                        horizontal-stretch: 1;
+                                        text: root.show-variable-values ? variable.value : "••••••••";
+                                        color: text-secondary;
+                                        font-size: 12px;
+                                        vertical-alignment: center;
+                                    }
+                                    ThemedButton {
+                                        width: 52px;
+                                        text: "Edit";
+                                        dark-mode: root.dark-mode;
+                                        accent-button: false;
+                                        clicked => {
+                                            root.variable-key = variable.key;
+                                            root.variable-value = variable.value;
+                                            root.variables-message = "Edit the value, then save.";
+                                        }
+                                    }
+                                    ThemedButton {
+                                        width: 36px;
+                                        text: "×";
+                                        dark-mode: root.dark-mode;
+                                        accent-button: false;
+                                        destructive-button: true;
+                                        clicked => {
+                                            root.delete-collection-variable(root.selected-collection-id, variable.key);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                Text {
+                    text: "Stored locally in SQLite. Values are not encrypted.";
+                    color: text-secondary;
+                    font-size: 10px;
                 }
             }
         }

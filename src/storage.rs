@@ -1,17 +1,33 @@
-//! Local SQLite persistence for saved Resonance requests.
+//! Local SQLite persistence for collections, variables, and saved requests.
 //!
-//! This module is intentionally synchronous: SQLite operations are short and are
-//! expected to be called from the UI's background worker, not from the Slint event loop.
+//! SQLite work is synchronous and should run on a background worker, not on the
+//! Slint event loop.
 
-use std::path::{Path, PathBuf};
+use std::{
+    collections::HashMap,
+    path::{Path, PathBuf},
+};
 
 use directories::ProjectDirs;
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Collection {
+    pub id: i64,
+    pub name: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CollectionVariable {
+    pub key: String,
+    pub value: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SavedRequest {
     pub id: i64,
+    pub collection_id: i64,
     pub name: String,
     pub method: String,
     pub url: String,
@@ -22,6 +38,7 @@ pub struct SavedRequest {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NewRequest {
+    pub collection_id: i64,
     pub name: String,
     pub method: String,
     pub url: String,
@@ -34,7 +51,7 @@ pub struct NewRequest {
 pub enum StoreError {
     #[error("could not resolve the application data directory")]
     NoDataDirectory,
-    #[error("invalid request: {0}")]
+    #[error("invalid data: {0}")]
     Validation(String),
     #[error(transparent)]
     Sqlite(#[from] rusqlite::Error),
@@ -68,8 +85,13 @@ impl RequestStore {
         let connection = store.connect()?;
         connection.execute_batch(
             r#"
-            PRAGMA foreign_keys = ON;
             PRAGMA journal_mode = WAL;
+
+            CREATE TABLE IF NOT EXISTS collections (
+                id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                name       TEXT NOT NULL COLLATE NOCASE UNIQUE,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
 
             CREATE TABLE IF NOT EXISTS saved_requests (
                 id           INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -79,34 +101,177 @@ impl RequestStore {
                 headers      TEXT NOT NULL DEFAULT '',
                 query_params TEXT NOT NULL DEFAULT '',
                 body         TEXT NOT NULL DEFAULT '',
+                collection_id INTEGER REFERENCES collections(id) ON DELETE CASCADE,
                 created_at   TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 updated_at   TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE TABLE IF NOT EXISTS collection_variables (
+                collection_id INTEGER NOT NULL REFERENCES collections(id) ON DELETE CASCADE,
+                key           TEXT NOT NULL,
+                value         TEXT NOT NULL,
+                PRIMARY KEY (collection_id, key)
             );
 
             CREATE INDEX IF NOT EXISTS idx_saved_requests_name
                 ON saved_requests(name COLLATE NOCASE);
             "#,
         )?;
-        Ok(store)
-    }
 
-    pub fn database_path(&self) -> &Path {
-        &self.database_path
+        // Keep existing databases usable: earlier versions stored requests
+        // without a collection. Add the column and place those requests in the
+        // first default collection while retaining their IDs and contents.
+        let has_collection_id = {
+            let mut statement = connection.prepare("PRAGMA table_info(saved_requests)")?;
+            let columns = statement.query_map([], |row| row.get::<_, String>(1))?;
+            columns
+                .collect::<Result<Vec<_>, _>>()?
+                .iter()
+                .any(|column| column == "collection_id")
+        };
+        if !has_collection_id {
+            connection.execute(
+                "ALTER TABLE saved_requests ADD COLUMN collection_id INTEGER REFERENCES collections(id) ON DELETE CASCADE",
+                [],
+            )?;
+        }
+
+        connection.execute_batch(
+            "CREATE INDEX IF NOT EXISTS idx_saved_requests_collection ON saved_requests(collection_id);",
+        )?;
+        connection.execute(
+            "INSERT OR IGNORE INTO collections (name) VALUES (?1), (?2)",
+            params!["Public API", "My Backend"],
+        )?;
+        let default_id = connection.query_row(
+            "SELECT id FROM collections ORDER BY id ASC LIMIT 1",
+            [],
+            |row| row.get::<_, i64>(0),
+        )?;
+        connection.execute(
+            "UPDATE saved_requests SET collection_id = ?1 WHERE collection_id IS NULL",
+            [default_id],
+        )?;
+
+        Ok(store)
     }
 
     fn connect(&self) -> Result<Connection, StoreError> {
         let connection = Connection::open(&self.database_path)?;
         connection.busy_timeout(std::time::Duration::from_secs(3))?;
+        connection.execute_batch("PRAGMA foreign_keys = ON;")?;
         Ok(connection)
     }
 
-    pub fn create(&self, request: &NewRequest) -> Result<SavedRequest, StoreError> {
-        validate(request)?;
+    pub fn list_collections(&self) -> Result<Vec<Collection>, StoreError> {
+        let connection = self.connect()?;
+        let mut statement =
+            connection.prepare("SELECT id, name FROM collections ORDER BY id ASC")?;
+        let rows = statement.query_map([], |row| {
+            Ok(Collection {
+                id: row.get(0)?,
+                name: row.get(1)?,
+            })
+        })?;
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(StoreError::from)
+    }
+
+    pub fn create_collection(&self, name: &str) -> Result<Collection, StoreError> {
+        let name = name.trim();
+        if name.is_empty() {
+            return Err(StoreError::Validation(
+                "collection name cannot be empty".into(),
+            ));
+        }
+
+        let connection = self.connect()?;
+        let exists = connection.query_row(
+            "SELECT EXISTS(SELECT 1 FROM collections WHERE name = ?1)",
+            [name],
+            |row| row.get::<_, bool>(0),
+        )?;
+        if exists {
+            return Err(StoreError::Validation(format!(
+                "collection '{name}' already exists"
+            )));
+        }
+
+        connection.execute("INSERT INTO collections (name) VALUES (?1)", [name])?;
+        let id = connection.last_insert_rowid();
+        Ok(Collection {
+            id,
+            name: name.to_owned(),
+        })
+    }
+
+    pub fn list_variables(
+        &self,
+        collection_id: i64,
+    ) -> Result<Vec<CollectionVariable>, StoreError> {
+        let connection = self.connect()?;
+        let mut statement = connection.prepare(
+            "SELECT key, value FROM collection_variables WHERE collection_id = ?1 ORDER BY key COLLATE NOCASE ASC",
+        )?;
+        let rows = statement.query_map([collection_id], |row| {
+            Ok(CollectionVariable {
+                key: row.get(0)?,
+                value: row.get(1)?,
+            })
+        })?;
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(StoreError::from)
+    }
+
+    pub fn variables_map(&self, collection_id: i64) -> Result<HashMap<String, String>, StoreError> {
+        Ok(self
+            .list_variables(collection_id)?
+            .into_iter()
+            .map(|v| (v.key, v.value))
+            .collect())
+    }
+
+    pub fn upsert_variable(
+        &self,
+        collection_id: i64,
+        key: &str,
+        value: &str,
+    ) -> Result<(), StoreError> {
+        let key = key.trim();
+        if !valid_variable_key(key) {
+            return Err(StoreError::Validation(
+                "variable names must start with a letter or underscore and contain only letters, numbers, or underscores".into(),
+            ));
+        }
+
         let connection = self.connect()?;
         connection.execute(
             r#"
-            INSERT INTO saved_requests (name, method, url, headers, query_params, body)
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+            INSERT INTO collection_variables (collection_id, key, value)
+            VALUES (?1, ?2, ?3)
+            ON CONFLICT(collection_id, key) DO UPDATE SET value = excluded.value
+            "#,
+            params![collection_id, key, value],
+        )?;
+        Ok(())
+    }
+
+    pub fn delete_variable(&self, collection_id: i64, key: &str) -> Result<bool, StoreError> {
+        let connection = self.connect()?;
+        let changed = connection.execute(
+            "DELETE FROM collection_variables WHERE collection_id = ?1 AND key = ?2",
+            params![collection_id, key],
+        )?;
+        Ok(changed == 1)
+    }
+
+    pub fn create(&self, request: &NewRequest) -> Result<SavedRequest, StoreError> {
+        validate_request(request)?;
+        let connection = self.connect()?;
+        connection.execute(
+            r#"
+            INSERT INTO saved_requests (name, method, url, headers, query_params, body, collection_id)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
             "#,
             params![
                 request.name.trim(),
@@ -114,7 +279,8 @@ impl RequestStore {
                 request.url.trim(),
                 request.headers,
                 request.query_params,
-                request.body
+                request.body,
+                request.collection_id
             ],
         )?;
         let id = connection.last_insert_rowid();
@@ -123,21 +289,18 @@ impl RequestStore {
         })
     }
 
-    pub fn list(&self) -> Result<Vec<SavedRequest>, StoreError> {
+    pub fn list_for_collection(&self, collection_id: i64) -> Result<Vec<SavedRequest>, StoreError> {
         let connection = self.connect()?;
         let mut statement = connection.prepare(
             r#"
-            SELECT id, name, method, url, headers, query_params, body
-            FROM saved_requests
+            SELECT id, collection_id, name, method, url, headers, query_params, body
+            FROM saved_requests WHERE collection_id = ?1
             ORDER BY name COLLATE NOCASE ASC, id ASC
             "#,
         )?;
-        let rows = statement.query_map([], row_to_request)?;
-        let mut requests = Vec::new();
-        for row in rows {
-            requests.push(row?);
-        }
-        Ok(requests)
+        let rows = statement.query_map([collection_id], row_to_request)?;
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(StoreError::from)
     }
 
     pub fn get(&self, id: i64) -> Result<Option<SavedRequest>, StoreError> {
@@ -145,7 +308,7 @@ impl RequestStore {
         connection
             .query_row(
                 r#"
-                SELECT id, name, method, url, headers, query_params, body
+                SELECT id, collection_id, name, method, url, headers, query_params, body
                 FROM saved_requests WHERE id = ?1
                 "#,
                 [id],
@@ -156,14 +319,15 @@ impl RequestStore {
     }
 
     pub fn update(&self, id: i64, request: &NewRequest) -> Result<bool, StoreError> {
-        validate(request)?;
+        validate_request(request)?;
         let connection = self.connect()?;
         let changed = connection.execute(
             r#"
             UPDATE saved_requests
             SET name = ?1, method = ?2, url = ?3, headers = ?4,
-                query_params = ?5, body = ?6, updated_at = CURRENT_TIMESTAMP
-            WHERE id = ?7
+                query_params = ?5, body = ?6, collection_id = ?7,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?8
             "#,
             params![
                 request.name.trim(),
@@ -172,6 +336,7 @@ impl RequestStore {
                 request.headers,
                 request.query_params,
                 request.body,
+                request.collection_id,
                 id
             ],
         )?;
@@ -185,7 +350,13 @@ impl RequestStore {
     }
 }
 
-fn validate(request: &NewRequest) -> Result<(), StoreError> {
+fn valid_variable_key(key: &str) -> bool {
+    let mut chars = key.chars();
+    matches!(chars.next(), Some(c) if c == '_' || c.is_ascii_alphabetic())
+        && chars.all(|c| c == '_' || c.is_ascii_alphanumeric())
+}
+
+fn validate_request(request: &NewRequest) -> Result<(), StoreError> {
     if request.name.trim().is_empty() {
         return Err(StoreError::Validation(
             "request name cannot be empty".into(),
@@ -211,12 +382,13 @@ fn validate(request: &NewRequest) -> Result<(), StoreError> {
 fn row_to_request(row: &rusqlite::Row<'_>) -> rusqlite::Result<SavedRequest> {
     Ok(SavedRequest {
         id: row.get(0)?,
-        name: row.get(1)?,
-        method: row.get(2)?,
-        url: row.get(3)?,
-        headers: row.get(4)?,
-        query_params: row.get(5)?,
-        body: row.get(6)?,
+        collection_id: row.get(1)?,
+        name: row.get(2)?,
+        method: row.get(3)?,
+        url: row.get(4)?,
+        headers: row.get(5)?,
+        query_params: row.get(6)?,
+        body: row.get(7)?,
     })
 }
 
@@ -224,8 +396,9 @@ fn row_to_request(row: &rusqlite::Row<'_>) -> rusqlite::Result<SavedRequest> {
 mod tests {
     use super::*;
 
-    fn sample() -> NewRequest {
+    fn sample(collection_id: i64) -> NewRequest {
         NewRequest {
+            collection_id,
             name: "Get Users".into(),
             method: "GET".into(),
             url: "https://httpbin.org/get".into(),
@@ -239,17 +412,22 @@ mod tests {
     fn create_read_update_delete_round_trip() {
         let temp = tempfile::tempdir().expect("temporary directory");
         let store = RequestStore::open(temp.path().join("test.sqlite3")).expect("open store");
+        let collection_id = store.list_collections().expect("collections")[0].id;
 
-        let created = store.create(&sample()).expect("create request");
+        let created = store
+            .create(&sample(collection_id))
+            .expect("create request");
         assert!(created.id > 0);
         assert_eq!(created.name, "Get Users");
         assert_eq!(created.method, "GET");
+        assert_eq!(created.collection_id, collection_id);
         assert_eq!(
             store.get(created.id).expect("get request"),
             Some(created.clone())
         );
 
         let updated = NewRequest {
+            collection_id,
             name: "Updated Users".into(),
             method: "POST".into(),
             url: "https://httpbin.org/post".into(),
@@ -265,17 +443,110 @@ mod tests {
         assert_eq!(loaded.name, "Updated Users");
         assert_eq!(loaded.method, "POST");
         assert_eq!(loaded.body, r#"{"ok":true}"#);
+        assert_eq!(
+            store
+                .list_for_collection(collection_id)
+                .expect("list collection")
+                .len(),
+            1
+        );
 
-        assert_eq!(store.list().expect("list").len(), 1);
         assert!(store.delete(created.id).expect("delete"));
         assert!(store.get(created.id).expect("read deleted").is_none());
     }
 
     #[test]
-    fn rejects_empty_name() {
+    fn collection_variables_are_isolated_and_upserted() {
         let temp = tempfile::tempdir().expect("temporary directory");
         let store = RequestStore::open(temp.path().join("test.sqlite3")).expect("open store");
-        let mut request = sample();
+        let first = store.list_collections().expect("collections")[0].id;
+        let second = store
+            .create_collection("Staging")
+            .expect("create collection");
+
+        store
+            .upsert_variable(first, "base_url", "https://api.example.com")
+            .expect("add variable");
+        store
+            .upsert_variable(first, "base_url", "https://staging.example.com")
+            .expect("update variable");
+        store
+            .upsert_variable(second.id, "base_url", "https://stage.example.com")
+            .expect("add scoped variable");
+
+        assert_eq!(store.list_variables(first).expect("list vars").len(), 1);
+        assert_eq!(
+            store.variables_map(first).expect("map vars")["base_url"],
+            "https://staging.example.com"
+        );
+        assert_eq!(
+            store
+                .variables_map(second.id)
+                .expect("other collection vars")["base_url"],
+            "https://stage.example.com"
+        );
+        assert!(
+            store
+                .delete_variable(first, "base_url")
+                .expect("delete var")
+        );
+        assert!(
+            store
+                .list_variables(first)
+                .expect("list after delete")
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn migrates_existing_requests_into_default_collection() {
+        let temp = tempfile::tempdir().expect("temporary directory");
+        let path = temp.path().join("legacy.sqlite3");
+        let connection = Connection::open(&path).expect("open legacy database");
+        connection.execute_batch(
+            r#"
+            CREATE TABLE saved_requests (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                method TEXT NOT NULL,
+                url TEXT NOT NULL,
+                headers TEXT NOT NULL DEFAULT '',
+                query_params TEXT NOT NULL DEFAULT '',
+                body TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+            INSERT INTO saved_requests (name, method, url) VALUES ('Legacy', 'GET', 'https://example.com');
+            "#,
+        ).expect("create old schema");
+        drop(connection);
+
+        let store = RequestStore::open(path).expect("migrate old database");
+        let collection_id = store.list_collections().expect("collections")[0].id;
+        let migrated = store
+            .list_for_collection(collection_id)
+            .expect("list migrated");
+        assert_eq!(migrated.len(), 1);
+        assert_eq!(migrated[0].name, "Legacy");
+        assert_eq!(migrated[0].collection_id, collection_id);
+    }
+
+    #[test]
+    fn rejects_invalid_variable_keys() {
+        let temp = tempfile::tempdir().expect("temporary directory");
+        let store = RequestStore::open(temp.path().join("test.sqlite3")).expect("open store");
+        let collection_id = store.list_collections().expect("collections")[0].id;
+        assert!(matches!(
+            store.upsert_variable(collection_id, "api-key", "secret"),
+            Err(StoreError::Validation(_))
+        ));
+    }
+
+    #[test]
+    fn rejects_empty_request_name() {
+        let temp = tempfile::tempdir().expect("temporary directory");
+        let store = RequestStore::open(temp.path().join("test.sqlite3")).expect("open store");
+        let mut request = sample(store.list_collections().expect("collections")[0].id);
         request.name = "  ".into();
         assert!(matches!(
             store.create(&request),

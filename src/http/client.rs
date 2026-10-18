@@ -1,4 +1,7 @@
-use std::time::{Duration, Instant};
+use std::{
+    collections::HashMap,
+    time::{Duration, Instant},
+};
 
 use reqwest::{
     Client, Method, Url,
@@ -38,8 +41,26 @@ impl HttpClient {
         body: &str,
         headers_text: &str,
         params_text: &str,
+        variables: &HashMap<String, String>,
     ) -> HttpResult {
         let start = Instant::now();
+
+        let url = match interpolate_variables(url, variables) {
+            Ok(value) => value,
+            Err(error) => return failure(&error, start),
+        };
+        let body = match interpolate_variables(body, variables) {
+            Ok(value) => value,
+            Err(error) => return failure(&error, start),
+        };
+        let headers_text = match interpolate_variables(headers_text, variables) {
+            Ok(value) => value,
+            Err(error) => return failure(&error, start),
+        };
+        let params_text = match interpolate_variables(params_text, variables) {
+            Ok(value) => value,
+            Err(error) => return failure(&error, start),
+        };
 
         let method = match method {
             "GET" => Method::GET,
@@ -50,7 +71,7 @@ impl HttpClient {
         };
 
         // Parse the URL and append encoded query parameters.
-        let mut parsed_url = match Url::parse(url) {
+        let mut parsed_url = match Url::parse(&url) {
             Ok(url) if matches!(url.scheme(), "http" | "https") => url,
             Ok(_) => return failure("Only HTTP and HTTPS URLs are supported.", start),
             Err(error) => return failure(&format!("Invalid URL: {error}"), start),
@@ -130,7 +151,7 @@ impl HttpClient {
         let has_body = matches!(method, Method::POST | Method::PUT) && !body.is_empty();
 
         if has_body {
-            if let Err(error) = serde_json::from_str::<serde_json::Value>(body) {
+            if let Err(error) = serde_json::from_str::<serde_json::Value>(&body) {
                 return failure(&format!("Invalid JSON request body: {error}"), start);
             }
 
@@ -142,7 +163,7 @@ impl HttpClient {
         let mut request = self.client.request(method, parsed_url).headers(headers);
 
         if has_body {
-            request = request.body(body.to_owned());
+            request = request.body(body);
         }
 
         let response = match request.send().await {
@@ -198,6 +219,73 @@ impl HttpClient {
             body,
             elapsed: start.elapsed(),
         }
+    }
+}
+
+fn interpolate_variables(
+    input: &str,
+    variables: &HashMap<String, String>,
+) -> Result<String, String> {
+    let mut output = String::with_capacity(input.len());
+    let mut remaining = input;
+
+    while let Some(start) = remaining.find("{{") {
+        output.push_str(&remaining[..start]);
+        let after_open = &remaining[start + 2..];
+        let Some(end) = after_open.find("}}") else {
+            return Err("Unclosed variable placeholder. Use {{variable_name}}.".into());
+        };
+
+        let key = after_open[..end].trim();
+        if key.is_empty() {
+            return Err("Variable placeholders cannot be empty.".into());
+        }
+        let Some(value) = variables.get(key) else {
+            return Err(format!(
+                "Collection variable '{{{{{key}}}}}' is not defined."
+            ));
+        };
+        output.push_str(value);
+        remaining = &after_open[end + 2..];
+    }
+
+    output.push_str(remaining);
+    Ok(output)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn substitutes_collection_variables() {
+        let variables = HashMap::from([
+            ("base_url".into(), "https://api.example.com".into()),
+            ("api_key".into(), "secret".into()),
+        ]);
+        assert_eq!(
+            interpolate_variables("{{base_url}}/users?key={{api_key}}", &variables).unwrap(),
+            "https://api.example.com/users?key=secret"
+        );
+        assert_eq!(
+            interpolate_variables("plain text", &variables).unwrap(),
+            "plain text"
+        );
+    }
+
+    #[test]
+    fn reports_missing_and_malformed_variables() {
+        let variables = HashMap::new();
+        assert!(
+            interpolate_variables("{{base_url}}", &variables)
+                .unwrap_err()
+                .contains("base_url")
+        );
+        assert!(
+            interpolate_variables("{{base_url", &variables)
+                .unwrap_err()
+                .contains("Unclosed")
+        );
     }
 }
 
