@@ -1,7 +1,7 @@
 use std::time::{Duration, Instant};
 
 use reqwest::{
-    Client, Method,
+    Client, Method, Url,
     header::{CONTENT_TYPE, HeaderMap, HeaderName, HeaderValue},
 };
 
@@ -37,6 +37,7 @@ impl HttpClient {
         url: &str,
         body: &str,
         headers_text: &str,
+        params_text: &str,
     ) -> HttpResult {
         let start = Instant::now();
 
@@ -45,11 +46,45 @@ impl HttpClient {
             "POST" => Method::POST,
             "PUT" => Method::PUT,
             "DELETE" => Method::DELETE,
-            _ => {
-                return failure("Unsupported HTTP method.", start);
-            }
+            _ => return failure("Unsupported HTTP method.", start),
         };
 
+        // Parse the URL and append encoded query parameters.
+        let mut parsed_url = match Url::parse(url) {
+            Ok(url) if matches!(url.scheme(), "http" | "https") => url,
+            Ok(_) => return failure("Only HTTP and HTTPS URLs are supported.", start),
+            Err(error) => return failure(&format!("Invalid URL: {error}"), start),
+        };
+
+        for (index, line) in params_text.lines().enumerate() {
+            let line = line.trim();
+
+            if line.is_empty() {
+                continue;
+            }
+
+            let Some((key, value)) = line.split_once('=') else {
+                return failure(
+                    &format!(
+                        "Invalid query parameter on line {}. Expected key=value.",
+                        index + 1
+                    ),
+                    start,
+                );
+            };
+
+            let key = key.trim();
+            if key.is_empty() {
+                return failure(
+                    &format!("Query parameter name is empty on line {}.", index + 1),
+                    start,
+                );
+            }
+
+            parsed_url.query_pairs_mut().append_pair(key, value.trim());
+        }
+
+        // Parse custom headers.
         let mut headers = HeaderMap::new();
 
         for (index, line) in headers_text.lines().enumerate() {
@@ -94,19 +129,19 @@ impl HttpClient {
 
         let has_body = matches!(method, Method::POST | Method::PUT) && !body.is_empty();
 
-        if has_body && !headers.contains_key(CONTENT_TYPE) {
-            headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
-        }
-
-        let mut request = self.client.request(method, url).headers(headers);
-
         if has_body {
-            // Validate JSON before sending because the default
-            // content type is application/json.
             if let Err(error) = serde_json::from_str::<serde_json::Value>(body) {
                 return failure(&format!("Invalid JSON request body: {error}"), start);
             }
 
+            if !headers.contains_key(CONTENT_TYPE) {
+                headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
+            }
+        }
+
+        let mut request = self.client.request(method, parsed_url).headers(headers);
+
+        if has_body {
             request = request.body(body.to_owned());
         }
 

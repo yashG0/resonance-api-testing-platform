@@ -15,7 +15,7 @@ async fn main() -> Result<(), slint::PlatformError> {
 
     let client = Arc::new(HttpClient::new().expect("Failed to initialize Resonance HTTP client"));
 
-    app.on_send_request(move |method, url, body, headers| {
+    app.on_send_request(move |method, url, body, headers, params| {
         let app_handle = app_weak.clone();
         let client = Arc::clone(&client);
 
@@ -23,9 +23,10 @@ async fn main() -> Result<(), slint::PlatformError> {
         let url = url.to_string();
         let body = body.to_string();
         let headers = headers.to_string();
+        let params = params.to_string();
 
         tokio::spawn(async move {
-            let result = client.send(&method, &url, &body, &headers).await;
+            let result = client.send(&method, &url, &body, &headers, &params).await;
 
             let status = result.status;
             let body = result.body;
@@ -41,5 +42,6 @@ async fn main() -> Result<(), slint::PlatformError> {
             });
         });
     });
+
     app.run()
 }

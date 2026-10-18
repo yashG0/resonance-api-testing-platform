@@ -12,8 +12,8 @@ export component AppWindow inherits Window {
     height: 760px;
 
     
-callback send-request(string, string, string, string);
-
+callback send-request(string, string, string, string, string);
+in-out property <string> request-params: "name=Yash\npage=1";
 in-out property <string> request-body: "{\n  \"name\": \"Yash\"\n}";
 in-out property <string> request-headers: "Accept: application/json";
 in-out property <string> response-status: "No response yet";
@@ -455,11 +455,12 @@ in-out property <string> active-tab: "Body";
         root.response-time = "---";
 
         root.send-request(
-            root.active-method,
-            root.request-url,
-            root.request-body,
-            root.request-headers
-        );
+    root.active-method,
+    root.request-url,
+    root.request-body,
+    root.request-headers,
+    root.request-params
+);
     }
 }
                     }
@@ -537,12 +538,16 @@ Rectangle {
         }
     }
 
-    if root.active-tab == "Params" : Text {
-        text: "Query parameters will be added in the next milestone.";
-        color: text-secondary;
-        horizontal-alignment: center;
-        vertical-alignment: center;
+    if root.active-tab == "Params" : TextEdit {
+    text: root.request-params;
+    font-family: "monospace";
+    font-size: 12px;
+    wrap: word-wrap;
+
+    edited(value) => {
+        root.request-params = value;
     }
+}
 
     if root.active-tab == "Auth" : Text {
         text: "Authentication support will be added later.";
