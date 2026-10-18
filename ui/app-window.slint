@@ -3,43 +3,57 @@ import {
     Button,
     LineEdit,
     TextEdit,
-    ScrollView
+    ScrollView,
+    Palette
 } from "std-widgets.slint";
 
 export component AppWindow inherits Window {
     title: "Resonance";
     width: 1200px;
     height: 760px;
-
-    
-callback send-request(string, string, string, string, string);
-in-out property <string> request-params: "name=Yash\npage=1";
-in-out property <string> request-body: "{\n  \"name\": \"Yash\"\n}";
-in-out property <string> request-headers: "Accept: application/json";
-in-out property <string> response-status: "No response yet";
-in-out property <string> response-body: "Send a request to inspect its response.";
-in-out property <string> response-time: "---";
-in-out property <bool> is-loading: false;
-
-in-out property <bool> dark-mode: true;
-in-out property <string> active-request: "Get Users";
-in-out property <string> active-method: "GET";
-in-out property <string> request-url: "https://httpbin.org/get";
-in-out property <string> active-tab: "Body";
-
-
-
-    property <color> window-bg: dark-mode ? #242424 : #f6f5f4;
-    property <color> sidebar-bg: dark-mode ? #303030 : #ebebeb;
-    property <color> panel-bg: dark-mode ? #2b2b2b : #ffffff;
-    property <color> editor-bg: dark-mode ? #1e1e1e : #ffffff;
-    property <color> border-color: dark-mode ? #454545 : #d8d5d2;
-    property <color> text-primary: dark-mode ? #ffffff : #241f31;
-    property <color> text-secondary: dark-mode ? #c0bfbc : #5e5c64;
-    property <color> accent: #3584e4;
-    property <color> selected-bg: dark-mode ? #454052 : #dce8f8;
-
     background: window-bg;
+
+    callback send-request(string, string, string, string, string);
+callback save-request(
+    string, string, string, string, string, string
+);
+    in-out property <string> theme-mode: "System";
+    in-out property <string> active-request: "Get Users";
+    in-out property <string> active-method: "GET";
+    in-out property <string> request-url: "https://httpbin.org/get";
+    in-out property <string> active-tab: "Body";
+
+    in-out property <string> request-params: "";
+    in-out property <string> request-body: "{\n  \"name\": \"Yash\"\n}";
+    in-out property <string> request-headers: "Accept: application/json";
+    in-out property <string> response-status: "No response yet";
+    in-out property <string> response-body: "Send a request to inspect its response.";
+    in-out property <string> response-time: "---";
+    in-out property <bool> is-loading: false;
+
+    property <bool> dark-mode:
+        root.theme-mode == "Dark" ? true :
+        root.theme-mode == "Light" ? false :
+        Palette.color-scheme == ColorScheme.dark;
+
+    // Keep native Slint widgets in sync with the selected appearance.
+    changed theme-mode => {
+    Palette.color-scheme =
+        root.theme-mode == "Dark" ? ColorScheme.dark :
+        root.theme-mode == "Light" ? ColorScheme.light :
+        ColorScheme.unknown;
+}
+
+    property <color> window-bg: dark-mode ? #232326 : #f6f5f4;
+    property <color> sidebar-bg: dark-mode ? #2c2c30 : #eeedec;
+    property <color> panel-bg: dark-mode ? #29292d : #ffffff;
+    property <color> editor-bg: dark-mode ? #1e1e21 : #ffffff;
+    property <color> border-color: dark-mode ? #414146 : #d8d5d2;
+    property <color> text-primary: dark-mode ? #f5f5f7 : #242329;
+    property <color> text-secondary: dark-mode ? #b8b7c0 : #65636d;
+    property <color> accent: #d66bea;
+    property <color> selected-bg: dark-mode ? #403747 : #f0ddf5;
+    property <color> hover-bg: dark-mode ? #38383e : #e5e3e2;
 
     HorizontalLayout {
         spacing: 0;
@@ -50,17 +64,17 @@ in-out property <string> active-tab: "Body";
             background: sidebar-bg;
 
             VerticalLayout {
-                padding: 12px;
+                padding: 14px;
                 spacing: 12px;
 
                 HorizontalLayout {
-                    spacing: 8px;
-                    height: 38px;
+                    spacing: 9px;
+                    height: 42px;
 
                     Text {
                         text: "◉";
                         color: accent;
-                        font-size: 22px;
+                        font-size: 23px;
                         vertical-alignment: center;
                     }
 
@@ -74,18 +88,20 @@ in-out property <string> active-tab: "Body";
                 }
 
                 ThemedButton {
-    text: "+ New Request";
-    dark-mode: root.dark-mode;
-    accent-button: true;
-    width: 100%;
-
-    clicked => {
-        root.active-request = "New Request";
-        root.active-method = "GET";
-        root.request-url = "";
-        root.active-tab = "Body";
-    }
-}
+                    text: "+ New Request";
+                    dark-mode: root.dark-mode;
+                    accent-button: true;
+                    width: 100%;
+                    clicked => {
+                        root.active-request = "New Request";
+                        root.active-method = "GET";
+                        root.request-url = "";
+                        root.request-params = "";
+                        root.request-body = "";
+                        root.request-headers = "Accept: application/json";
+                        root.active-tab = "Body";
+                    }
+                }
 
                 Rectangle {
                     height: 1px;
@@ -95,23 +111,28 @@ in-out property <string> active-tab: "Body";
                 Text {
                     text: "WORKSPACE";
                     color: text-secondary;
-                    font-size: 11px;
+                    font-size: 10px;
                     font-weight: 700;
                 }
 
-                Button {
-                    text: "Collections";
-                    horizontal-stretch: 1;
-                }
+                for item in ["Collections", "History", "Environments"] : Rectangle {
+                    height: 36px;
+                    border-radius: 7px;
+                    background: transparent;
 
-                Button {
-                    text: "History";
-                    horizontal-stretch: 1;
-                }
+                    TouchArea {
+                        clicked => {
+                            // Navigation destinations are placeholders for now.
+                        }
+                    }
 
-                Button {
-                    text: "Environments";
-                    horizontal-stretch: 1;
+                    Text {
+                        x: 11px;
+                        text: item;
+                        color: text-primary;
+                        font-size: 13px;
+                        vertical-alignment: center;
+                    }
                 }
 
                 Rectangle {
@@ -122,18 +143,22 @@ in-out property <string> active-tab: "Body";
                 Text {
                     text: "COLLECTIONS";
                     color: text-secondary;
-                    font-size: 11px;
+                    font-size: 10px;
                     font-weight: 700;
                 }
 
-                Button {
-                    text: "Public API";
-                    horizontal-stretch: 1;
-                }
+                for collection in ["Public API", "My Backend"] : Rectangle {
+                    height: 36px;
+                    border-radius: 7px;
+                    background: transparent;
 
-                Button {
-                    text: "My Backend";
-                    horizontal-stretch: 1;
+                    Text {
+                        x: 11px;
+                        text: collection;
+                        color: text-primary;
+                        font-size: 13px;
+                        vertical-alignment: center;
+                    }
                 }
 
                 Rectangle {
@@ -141,13 +166,36 @@ in-out property <string> active-tab: "Body";
                     background: transparent;
                 }
 
-                Button {
-                    text: root.dark-mode
-                        ? "Light Appearance"
-                        : "Dark Appearance";
+                Text {
+                    text: "APPEARANCE";
+                    color: text-secondary;
+                    font-size: 10px;
+                    font-weight: 700;
+                }
 
-                    clicked => {
-                        root.dark-mode = !root.dark-mode;
+                HorizontalLayout {
+                    spacing: 3px;
+
+                    for mode in ["System", "Light", "Dark"] : Rectangle {
+                        height: 32px;
+                        horizontal-stretch: 1;
+                        border-radius: 6px;
+                        background: root.theme-mode == mode ? selected-bg : transparent;
+
+                        TouchArea {
+                            clicked => {
+                                root.theme-mode = mode;
+                            }
+                        }
+
+                        Text {
+                            text: mode;
+                            color: root.theme-mode == mode ? accent : text-secondary;
+                            font-size: 11px;
+                            font-weight: root.theme-mode == mode ? 700 : 500;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                        }
                     }
                 }
 
@@ -168,7 +216,7 @@ in-out property <string> active-tab: "Body";
             border-color: border-color;
 
             VerticalLayout {
-                padding: 12px;
+                padding: 14px;
                 spacing: 12px;
 
                 Text {
@@ -185,22 +233,23 @@ in-out property <string> active-tab: "Body";
                 Text {
                     text: "PUBLIC API";
                     color: text-secondary;
-                    font-size: 11px;
+                    font-size: 10px;
                     font-weight: 700;
                 }
 
                 // GET request
                 Rectangle {
-                    height: 54px;
-                    background: root.active-request == "Get Users"
-                        ? selected-bg : transparent;
-                    border-radius: 6px;
+                    height: 56px;
+                    background: root.active-request == "Get Users" ? selected-bg : transparent;
+                    border-radius: 7px;
 
                     TouchArea {
                         clicked => {
                             root.active-request = "Get Users";
                             root.active-method = "GET";
                             root.request-url = "https://httpbin.org/get";
+                            root.request-params = "";
+                            root.active-tab = "Body";
                         }
                     }
 
@@ -210,14 +259,12 @@ in-out property <string> active-tab: "Body";
 
                         HorizontalLayout {
                             spacing: 8px;
-
                             Text {
                                 text: "GET";
                                 color: #2ec27e;
-                                font-size: 11px;
+                                font-size: 10px;
                                 font-weight: 700;
                             }
-
                             Text {
                                 text: "Get Users";
                                 color: text-primary;
@@ -227,25 +274,26 @@ in-out property <string> active-tab: "Body";
                         }
 
                         Text {
-                            text: "/get";
+                            text: "https://httpbin.org/get";
                             color: text-secondary;
-                            font-size: 11px;
+                            font-size: 10px;
                         }
                     }
                 }
 
                 // POST request
                 Rectangle {
-                    height: 54px;
-                    background: root.active-request == "Create User"
-                        ? selected-bg : transparent;
-                    border-radius: 6px;
+                    height: 56px;
+                    background: root.active-request == "Create User" ? selected-bg : transparent;
+                    border-radius: 7px;
 
                     TouchArea {
                         clicked => {
                             root.active-request = "Create User";
                             root.active-method = "POST";
                             root.request-url = "https://httpbin.org/post";
+                            root.request-body = "{\n  \"name\": \"Yash\"\n}";
+                            root.active-tab = "Body";
                         }
                     }
 
@@ -255,14 +303,12 @@ in-out property <string> active-tab: "Body";
 
                         HorizontalLayout {
                             spacing: 8px;
-
                             Text {
                                 text: "POST";
                                 color: #3584e4;
-                                font-size: 11px;
+                                font-size: 10px;
                                 font-weight: 700;
                             }
-
                             Text {
                                 text: "Create User";
                                 color: text-primary;
@@ -272,25 +318,26 @@ in-out property <string> active-tab: "Body";
                         }
 
                         Text {
-                            text: "/post";
+                            text: "https://httpbin.org/post";
                             color: text-secondary;
-                            font-size: 11px;
+                            font-size: 10px;
                         }
                     }
                 }
 
                 // PUT request
                 Rectangle {
-                    height: 54px;
-                    background: root.active-request == "Update User"
-                        ? selected-bg : transparent;
-                    border-radius: 6px;
+                    height: 56px;
+                    background: root.active-request == "Update User" ? selected-bg : transparent;
+                    border-radius: 7px;
 
                     TouchArea {
                         clicked => {
                             root.active-request = "Update User";
                             root.active-method = "PUT";
                             root.request-url = "https://httpbin.org/put";
+                            root.request-body = "{\n  \"name\": \"Yash\"\n}";
+                            root.active-tab = "Body";
                         }
                     }
 
@@ -300,14 +347,12 @@ in-out property <string> active-tab: "Body";
 
                         HorizontalLayout {
                             spacing: 8px;
-
                             Text {
                                 text: "PUT";
                                 color: #e5a50a;
-                                font-size: 11px;
+                                font-size: 10px;
                                 font-weight: 700;
                             }
-
                             Text {
                                 text: "Update User";
                                 color: text-primary;
@@ -317,25 +362,25 @@ in-out property <string> active-tab: "Body";
                         }
 
                         Text {
-                            text: "/put";
+                            text: "https://httpbin.org/put";
                             color: text-secondary;
-                            font-size: 11px;
+                            font-size: 10px;
                         }
                     }
                 }
 
                 // DELETE request
                 Rectangle {
-                    height: 54px;
-                    background: root.active-request == "Delete User"
-                        ? selected-bg : transparent;
-                    border-radius: 6px;
+                    height: 56px;
+                    background: root.active-request == "Delete User" ? selected-bg : transparent;
+                    border-radius: 7px;
 
                     TouchArea {
                         clicked => {
                             root.active-request = "Delete User";
                             root.active-method = "DELETE";
                             root.request-url = "https://httpbin.org/delete";
+                            root.active-tab = "Body";
                         }
                     }
 
@@ -345,14 +390,12 @@ in-out property <string> active-tab: "Body";
 
                         HorizontalLayout {
                             spacing: 8px;
-
                             Text {
                                 text: "DEL";
                                 color: #e01b24;
-                                font-size: 11px;
+                                font-size: 10px;
                                 font-weight: 700;
                             }
-
                             Text {
                                 text: "Delete User";
                                 color: text-primary;
@@ -362,9 +405,9 @@ in-out property <string> active-tab: "Body";
                         }
 
                         Text {
-                            text: "/delete";
+                            text: "https://httpbin.org/delete";
                             color: text-secondary;
-                            font-size: 11px;
+                            font-size: 10px;
                         }
                     }
                 }
@@ -377,7 +420,7 @@ in-out property <string> active-tab: "Body";
                 Text {
                     text: "4 example requests";
                     color: text-secondary;
-                    font-size: 11px;
+                    font-size: 10px;
                 }
             }
         }
@@ -389,7 +432,7 @@ in-out property <string> active-tab: "Body";
 
             VerticalLayout {
                 padding: 20px;
-                spacing: 16px;
+                spacing: 14px;
 
                 HorizontalLayout {
                     spacing: 8px;
@@ -407,9 +450,22 @@ in-out property <string> active-tab: "Body";
                         background: transparent;
                     }
 
-                    Button {
-                        text: "Save";
-                    }
+                    ThemedButton {
+    text: "Save";
+    dark-mode: root.dark-mode;
+    accent-button: false;
+
+    clicked => {
+        root.save-request(
+            root.active-request,
+            root.active-method,
+            root.request-url,
+            root.request-headers,
+            root.request-params,
+            root.request-body
+        );
+    }
+}
                 }
 
                 // URL and method controls
@@ -417,22 +473,23 @@ in-out property <string> active-tab: "Body";
                     background: panel-bg;
                     border-width: 1px;
                     border-color: border-color;
-                    border-radius: 8px;
+                    border-radius: 9px;
 
                     HorizontalLayout {
                         padding: 8px;
                         spacing: 8px;
 
-                        Button {
-                            width: 90px;
+                        ThemedButton {
+                            width: 88px;
                             text: root.active-method;
+                            dark-mode: root.dark-mode;
+                            accent-button: false;
 
                             clicked => {
                                 root.active-method =
                                     root.active-method == "GET" ? "POST" :
                                     root.active-method == "POST" ? "PUT" :
-                                    root.active-method == "PUT" ? "DELETE" :
-                                    "GET";
+                                    root.active-method == "PUT" ? "DELETE" : "GET";
                             }
                         }
 
@@ -440,59 +497,56 @@ in-out property <string> active-tab: "Body";
                             horizontal-stretch: 1;
                             text: root.request-url;
                             placeholder-text: "Enter request URL...";
-
                             edited(value) => {
                                 root.request-url = value;
                             }
                         }
 
-                        Button {
-    text: root.is-loading ? "Sending..." : "Send";
-    enabled: !root.is-loading && root.request-url != "";
+                        ThemedButton {
+                            text: root.is-loading ? "Sending..." : "Send";
+                            dark-mode: root.dark-mode;
+                            accent-button: true;
+                            enabled: !root.is-loading && root.request-url != "";
 
-    clicked => {
-        root.is-loading = true;
-        root.response-status = "Sending...";
-        root.response-body = "Waiting for response...";
-        root.response-time = "---";
-
-        root.send-request(
-    root.active-method,
-    root.request-url,
-    root.request-body,
-    root.request-headers,
-    root.request-params
-);
-    }
-}
+                            clicked => {
+                                root.is-loading = true;
+                                root.response-status = "Sending...";
+                                root.response-body = "Waiting for response...";
+                                root.response-time = "---";
+                                root.send-request(
+                                    root.active-method,
+                                    root.request-url,
+                                    root.request-body,
+                                    root.request-headers,
+                                    root.request-params
+                                );
+                            }
+                        }
                     }
                 }
 
                 // Request configuration tabs
                 HorizontalLayout {
-                    spacing: 4px;
+                    spacing: 5px;
 
                     for tab in ["Params", "Headers", "Body", "Auth"] : Rectangle {
-                        background: root.active-tab == tab
-                            ? selected-bg : transparent;
-                        border-radius: 5px;
+                        height: 36px;
+                        border-radius: 6px;
+                        background: root.active-tab == tab ? selected-bg : transparent;
 
-                        HorizontalLayout {
-                            padding: 10px;
-
-                            Text {
-                                text: tab;
-                                color: root.active-tab == tab
-                                    ? accent : text-secondary;
-                                font-size: 12px;
-                                font-weight: root.active-tab == tab ? 700 : 400;
+                        TouchArea {
+                            clicked => {
+                                root.active-tab = tab;
                             }
+                        }
 
-                            TouchArea {
-                                clicked => {
-                                    root.active-tab = tab;
-                                }
-                            }
+                        Text {
+                            text: tab;
+                            color: root.active-tab == tab ? accent : text-secondary;
+                            font-size: 12px;
+                            font-weight: root.active-tab == tab ? 700 : 500;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
                         }
                     }
                 }
@@ -503,66 +557,58 @@ in-out property <string> active-tab: "Body";
                 }
 
                 Text {
-                    text: "Request configuration";
+                    text: root.active-tab == "Body" ? "Request body" :
+                          root.active-tab == "Headers" ? "Request headers" :
+                          root.active-tab == "Params" ? "Query parameters" : "Authentication";
                     color: text-primary;
                     font-size: 14px;
                     font-weight: 600;
                 }
 
-                
-Rectangle {
-    vertical-stretch: 1;
-    min-height: 100px;
-    background: panel-bg;
-    border-width: 1px;
-    border-color: border-color;
-    border-radius: 8px;
-
-    if root.active-tab == "Body" : TextEdit {
-        text: root.request-body;
-        font-family: "monospace";
-        font-size: 12px;
-        wrap: word-wrap;
-
-        edited(value) => {
-            root.request-body = value;
-        }
-    }
-
-    if root.active-tab == "Headers" : TextEdit {
-        text: root.request-headers;
-        font-family: "monospace";
-        font-size: 12px;
-        wrap: word-wrap;
-
-        edited(value) => {
-            root.request-headers = value;
-        }
-    }
-
-    if root.active-tab == "Params" : TextEdit {
-    text: root.request-params;
-    font-family: "monospace";
-    font-size: 12px;
-    wrap: word-wrap;
-
-    edited(value) => {
-        root.request-params = value;
-    }
-}
-
-    if root.active-tab == "Auth" : Text {
-        text: "Authentication support will be added later.";
-        color: text-secondary;
-        horizontal-alignment: center;
-        vertical-alignment: center;
-    }
-}
-
-
                 Rectangle {
                     vertical-stretch: 1;
-                    background: transparent;
+                    min-height: 100px;
+                    background: panel-bg;
+                    border-width: 1px;
+                    border-color: border-color;
+                    border-radius: 9px;
+
+                    if root.active-tab == "Body" : TextEdit {
+                        text: root.request-body;
+                        font-family: "monospace";
+                        font-size: 12px;
+                        wrap: word-wrap;
+                        edited(value) => {
+                            root.request-body = value;
+                        }
+                    }
+
+                    if root.active-tab == "Headers" : TextEdit {
+                        text: root.request-headers;
+                        font-family: "monospace";
+                        font-size: 12px;
+                        wrap: word-wrap;
+                        edited(value) => {
+                            root.request-headers = value;
+                        }
+                    }
+
+                    if root.active-tab == "Params" : TextEdit {
+                        text: root.request-params;
+                        font-family: "monospace";
+                        font-size: 12px;
+                        wrap: word-wrap;
+                        edited(value) => {
+                            root.request-params = value;
+                        }
+                    }
+
+                    if root.active-tab == "Auth" : Text {
+                        text: "Authentication support will be added later.";
+                        color: text-secondary;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
                 }
 
                 Rectangle {
@@ -571,51 +617,49 @@ Rectangle {
                 }
 
                 HorizontalLayout {
-    spacing: 12px;
+                    spacing: 12px;
 
-    Text {
-        text: "Response";
-        color: text-primary;
-        font-size: 16px;
-        font-weight: 700;
-    }
+                    Text {
+                        text: "Response";
+                        color: text-primary;
+                        font-size: 16px;
+                        font-weight: 700;
+                    }
 
-    Text {
-        text: root.response-status;
-        color: text-secondary;
-        font-size: 12px;
-    }
+                    Text {
+                        text: root.response-status;
+                        color: text-secondary;
+                        font-size: 12px;
+                    }
 
-    Rectangle {
-        horizontal-stretch: 1;
-        background: transparent;
-    }
+                    Rectangle {
+                        horizontal-stretch: 1;
+                        background: transparent;
+                    }
 
-    Text {
-        text: root.response-time;
-        color: text-secondary;
-        font-size: 11px;
-    }
-}
+                    Text {
+                        text: root.response-time;
+                        color: text-secondary;
+                        font-size: 11px;
+                    }
+                }
 
                 Rectangle {
-                    height: 170px;
+                    height: 175px;
                     background: editor-bg;
                     border-width: 1px;
                     border-color: border-color;
-                    border-radius: 8px;
+                    border-radius: 9px;
 
-                    
-ScrollView {
-    Text {
-        text: root.response-body;
-        color: text-primary;
-        font-family: "monospace";
-        font-size: 12px;
-        wrap: word-wrap;
-    }
-}
-
+                    ScrollView {
+                        Text {
+                            text: root.response-body;
+                            color: text-primary;
+                            font-family: "monospace";
+                            font-size: 12px;
+                            wrap: word-wrap;
+                        }
+                    }
                 }
             }
         }
