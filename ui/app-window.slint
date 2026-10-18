@@ -6,6 +6,10 @@ export component AppWindow inherits Window {
     width: 1200px;
     height: 760px;
 
+    in-out property <string> response-status: "No response yet";
+    in-out property <string> response-body: "Send a request to inspect its response.";
+    in-out property <string> response-time: "---";
+    in-out property <bool> is-loading: false;
     in-out property <bool> dark-mode: true;
     in-out property <string> active-request: "Get Users";
     in-out property <string> active-method: "GET";
@@ -430,15 +434,21 @@ export component AppWindow inherits Window {
                         }
 
                         Button {
-                            text: "Send";
+    text: root.is-loading ? "Sending..." : "Send";
+    enabled: !root.is-loading && root.request-url != "";
 
-                            clicked => {
-                                root.send-request(
-                                    root.active-method,
-                                    root.request-url
-                                );
-                            }
-                        }
+    clicked => {
+        root.is-loading = true;
+        root.response-status = "Request in progress...";
+        root.response-body = "Waiting for response...";
+        root.response-time = "---";
+
+        root.send-request(
+            root.active-method,
+            root.request-url
+        );
+    }
+}
                     }
                 }
 
@@ -518,26 +528,32 @@ export component AppWindow inherits Window {
                 }
 
                 HorizontalLayout {
-                    spacing: 12px;
+    spacing: 12px;
 
-                    Text {
-                        text: "Response";
-                        color: text-primary;
-                        font-size: 16px;
-                        font-weight: 700;
-                    }
+    Text {
+        text: "Response";
+        color: text-primary;
+        font-size: 16px;
+        font-weight: 700;
+    }
 
-                    Rectangle {
-                        horizontal-stretch: 1;
-                        background: transparent;
-                    }
+    Text {
+        text: root.response-status;
+        color: text-secondary;
+        font-size: 12px;
+    }
 
-                    Text {
-                        text: "No response yet";
-                        color: text-secondary;
-                        font-size: 11px;
-                    }
-                }
+    Rectangle {
+        horizontal-stretch: 1;
+        background: transparent;
+    }
+
+    Text {
+        text: root.response-time;
+        color: text-secondary;
+        font-size: 11px;
+    }
+}
 
                 Rectangle {
                     height: 170px;
@@ -547,12 +563,14 @@ export component AppWindow inherits Window {
                     border-radius: 8px;
 
                     Text {
-                        text: "Send a request to inspect its response.";
-                        color: text-secondary;
-                        font-size: 12px;
-                        horizontal-alignment: center;
-                        vertical-alignment: center;
-                    }
+    text: root.response-body;
+    color: text-primary;
+    font-family: "monospace";
+    font-size: 12px;
+    wrap: word-wrap;
+    vertical-alignment: center;
+    horizontal-alignment: center;
+}
                 }
             }
         }
