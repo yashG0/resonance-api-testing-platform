@@ -6,7 +6,12 @@ import {
     ScrollView,
     Palette
 } from "std-widgets.slint";
-
+export struct RequestItem {
+    id: int,
+    name: string,
+    method: string,
+    url: string,
+}
 export component AppWindow inherits Window {
     title: "Resonance";
     width: 1200px;
@@ -15,8 +20,14 @@ export component AppWindow inherits Window {
 
     callback send-request(string, string, string, string, string);
 callback save-request(
-    string, string, string, string, string, string
+    int, string, string, string, string, string, string
 );
+in-out property <[RequestItem]> saved-requests: [];
+in-out property <int> active-request-id: -1;
+
+callback load-requests();
+callback select-request(int);
+callback delete-request(int);
     in-out property <string> theme-mode: "System";
     in-out property <string> active-request: "Get Users";
     in-out property <string> active-method: "GET";
@@ -422,9 +433,61 @@ callback save-request(
                     color: text-secondary;
                     font-size: 10px;
                 }
+
+for request in root.saved-requests: Rectangle {
+    height: 56px;
+    background: transparent;
+
+    HorizontalLayout {
+        spacing: 4px;
+
+        Rectangle {
+            horizontal-stretch: 1;
+            border-radius: 7px;
+            background: root.active-request-id == request.id
+                ? selected-bg
+                : transparent;
+
+            TouchArea {
+                clicked => {
+                    root.select-request(request.id);
+                }
+            }
+
+            VerticalLayout {
+                padding: 8px;
+                spacing: 3px;
+
+                Text {
+                    text: request.method + "  " + request.name;
+                    color: text-primary;
+                    font-size: 12px;
+                    font-weight: 600;
+                }
+
+                Text {
+                    text: request.url;
+                    color: text-secondary;
+                    font-size: 10px;
+                }
             }
         }
 
+        ThemedButton {
+            text: "×";
+            width: 28px;
+            dark-mode: root.dark-mode;
+            accent-button: false;
+
+            clicked => {
+                root.delete-request(request.id);
+            }
+        }
+    }
+}
+
+        }
+    }
         // RIGHT PANE — Request editor and response
         Rectangle {
             horizontal-stretch: 1;
@@ -456,15 +519,16 @@ callback save-request(
     accent-button: false;
 
     clicked => {
-        root.save-request(
-            root.active-request,
-            root.active-method,
-            root.request-url,
-            root.request-headers,
-            root.request-params,
-            root.request-body
-        );
-    }
+    root.save-request(
+        root.active-request-id,
+        root.active-request,
+        root.active-method,
+        root.request-url,
+        root.request-headers,
+        root.request-params,
+        root.request-body
+    );
+}
 }
                 }
 
