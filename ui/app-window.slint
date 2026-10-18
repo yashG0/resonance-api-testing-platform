@@ -1,4 +1,5 @@
 import { ThemedButton } from "components/themed-button.slint";
+import { ChoiceDropdown } from "components/choice-dropdown.slint";
 import { LineEdit, TextEdit, ScrollView, Palette } from "std-widgets.slint";
 export struct RequestItem {
     id: int,
@@ -11,6 +12,12 @@ export struct CollectionItem {
     name: string,
 }
 export struct VariableItem {
+    key: string,
+    value: string,
+}
+export struct EnvironmentItem {
+    collection-id: int,
+    collection-name: string,
     key: string,
     value: string,
 }
@@ -37,7 +44,8 @@ export component AppWindow inherits Window {
     callback load-collections();
     callback load-requests(int);
     callback search-requests(string);
-    callback load-history();
+    callback load-history(string);
+    callback load-environments();
     callback run-collection(int);
     callback load-collection-variables(int);
     callback create-collection(string);
@@ -52,6 +60,7 @@ export component AppWindow inherits Window {
     in-out property <[RequestItem]> saved-requests: [];
     in-out property <[CollectionItem]> collections: [];
     in-out property <[VariableItem]> collection-variables: [];
+    in-out property <[EnvironmentItem]> environment-items: [];
     in-out property <[HistoryItem]> history-items: [];
     in-out property <int> active-request-id: -1;
     in-out property <int> selected-collection-id: -1;
@@ -61,6 +70,7 @@ export component AppWindow inherits Window {
     in-out property <string> selected-collection-name: "";
     in-out property <string> request-search: "";
     in-out property <string> active-view: "Request";
+    in-out property <string> history-sort: "Newest first";
     in-out property <string> new-collection-name: "";
     in-out property <bool> show-new-collection: false;
     in-out property <int> confirm-delete-collection-id: -1;
@@ -221,7 +231,8 @@ export component AppWindow inherits Window {
             opacity: root.show-navigation-sidebar ? 1 : 0;
             clip: true;
             background: sidebar-bg;
-            animate width, opacity { duration: 220ms; easing: ease-in-out; }
+            animate width { duration: 260ms; easing: cubic-bezier(0.2, 0, 0, 1); }
+            animate opacity { duration: 180ms; easing: ease-out; }
 
             VerticalLayout {
                 padding: 14px;
@@ -280,12 +291,12 @@ export component AppWindow inherits Window {
                         clicked => {
                             if item == "History" {
                                 root.active-view = "History";
-                                root.load-history();
+                                root.load-history(root.history-sort);
                             } else if item == "Collections" {
-                                root.active-view = "Request";
+                                root.active-view = "Collections";
                             } else {
-                                root.active-view = "Variables";
-                                root.load-collection-variables(root.selected-collection-id);
+                                root.active-view = "Environments";
+                                root.load-environments();
                             }
                         }
                     }
@@ -397,7 +408,7 @@ export component AppWindow inherits Window {
                 for collection in root.collections : VerticalLayout {
                     spacing: 2px;
 
-                    Rectangle {
+                    collection-row := Rectangle {
                         height: 36px;
                         border-radius: 8px;
                         background: root.selected-collection-id == collection.id ? selected-bg
@@ -412,6 +423,7 @@ export component AppWindow inherits Window {
                                     root.confirm-delete-collection-id = -1;
                                     root.editing-collection-id = -1;
                                     root.collection-menu-id = collection.id;
+                                    collection-menu-popup.show();
                                 }
                             }
                         }
@@ -466,90 +478,238 @@ export component AppWindow inherits Window {
                                 dark-mode: root.dark-mode;
                                 accent-button: false;
                                 clicked => {
-                                    root.collection-menu-id = root.collection-menu-id == collection.id ? -1 : collection.id;
+                                    root.collection-menu-id = collection.id;
+                                    collection-menu-popup.show();
                                 }
                             }
                         }
-                    }
 
-                    if root.collection-menu-id == collection.id : Rectangle {
-                        background: panel-bg;
-                        border-width: 1px;
-                        border-color: border-color;
-                        border-radius: 8px;
-                        VerticalLayout {
-                            padding: 7px;
-                            spacing: 6px;
-                            Text {
-                                text: "COLLECTION ACTIONS";
-                                color: text-secondary;
-                                font-size: 9px;
-                                font-weight: 700;
-                                horizontal-alignment: left;
-                            }
-                            ThemedButton {
-                                horizontal-stretch: 1;
-                                height: 29px;
-                                text: "New request";
-                                icon: @image-url("../assets/icons/new.png");
-                                dark-mode: root.dark-mode;
-                                accent-button: true;
-                                clicked => root.start-new-request(collection.id, collection.name);
-                            }
-                            ThemedButton {
-                                horizontal-stretch: 1;
-                                height: 29px;
-                                text: "Run all requests";
-                                dark-mode: root.dark-mode;
-                                accent-button: false;
-                                clicked => {
-                                    root.collection-menu-id = -1;
-                                    root.run-collection(collection.id);
-                                }
-                            }
-                            ThemedButton {
-                                horizontal-stretch: 1;
-                                height: 29px;
-                                text: "Collection variables";
-                                dark-mode: root.dark-mode;
-                                accent-button: false;
-                                clicked => {
-                                    root.selected-collection-id = collection.id;
-                                    root.selected-collection-name = collection.name;
-                                    root.active-view = "Variables";
-                                    root.variables-message = "";
-                                    root.collection-menu-id = -1;
-                                    root.load-collection-variables(collection.id);
-                                }
-                            }
+                        collection-menu-popup := PopupWindow {
+                            x: 0px;
+                            y: collection-row.y > 430px ? -262px : collection-row.height + 4px;
+                            width: collection-row.width;
+                            height: 258px;
+                            close-policy: close-on-click-outside;
+                            forward-focus: menu-focus;
+
                             Rectangle {
-                                height: 1px;
-                                background: border-color;
-                            }
-                            ThemedButton {
-                                horizontal-stretch: 1;
-                                height: 29px;
-                                text: "Rename collection";
-                                icon: @image-url("../assets/icons/edit.png");
-                                dark-mode: root.dark-mode;
-                                accent-button: false;
-                                clicked => {
-                                    root.editing-collection-id = collection.id;
-                                    root.collection-name-draft = collection.name;
-                                    root.collection-menu-id = -1;
+                                background: root.dark-mode ? #303034 : #ffffff;
+                                border-width: 1px;
+                                border-color: root.dark-mode ? #4b4b51 : #deddda;
+                                border-radius: 13px;
+                                drop-shadow-color: #00000066;
+                                drop-shadow-blur: 16px;
+                                drop-shadow-offset-y: 5px;
+
+                                VerticalLayout {
+                                    padding: 10px;
+                                    spacing: 4px;
+
+                                    VerticalLayout {
+                                        spacing: 2px;
+                                        Text {
+                                            text: "COLLECTION";
+                                            font-family: "Cantarell";
+                                            color: accent;
+                                            font-size: 9px;
+                                            font-weight: 700;
+                                            letter-spacing: 0.5px;
+                                        }
+                                        Text {
+                                            text: collection.name;
+                                            font-family: "Cantarell";
+                                            color: text-primary;
+                                            font-size: 14px;
+                                            font-weight: 700;
+                                            overflow: elide;
+                                        }
+                                    }
+
+                                    Rectangle { height: 1px; background: border-color; }
+
+                                    Rectangle {
+                                        height: 34px;
+                                        border-radius: 8px;
+                                        background: root.dark-mode ? #294c70 : #e5f0ff;
+                                        HorizontalLayout {
+                                            x: 10px;
+                                            width: parent.width - 20px;
+                                            height: parent.height;
+                                            spacing: 9px;
+                                            Image {
+                                                y: (parent.height - self.height) / 2;
+                                                width: 15px;
+                                                height: 15px;
+                                                source: @image-url("../assets/icons/new.png");
+                                                image-fit: contain;
+                                                colorize: accent;
+                                            }
+                                            Text {
+                                                text: "New request";
+                                                font-family: "Cantarell";
+                                                color: text-primary;
+                                                height: parent.height;
+                                                font-size: 12px;
+                                                font-weight: 600;
+                                                vertical-alignment: center;
+                                            }
+                                        }
+                                        new-request-touch := TouchArea {
+                                            width: parent.width;
+                                            height: parent.height;
+                                            clicked => {
+                                                root.collection-menu-id = -1;
+                                                collection-menu-popup.close();
+                                                root.start-new-request(collection.id, collection.name);
+                                            }
+                                        }
+                                    }
+
+                                    Rectangle {
+                                        height: 34px;
+                                        border-radius: 8px;
+                                        background: run-touch.has-hover ? hover-bg : transparent;
+                                        HorizontalLayout {
+                                            x: 10px;
+                                            width: parent.width - 20px;
+                                            height: parent.height;
+                                            spacing: 9px;
+                                            Image {
+                                                y: (parent.height - self.height) / 2;
+                                                width: 15px;
+                                                height: 15px;
+                                                source: @image-url("../assets/icons/send.png");
+                                                image-fit: contain;
+                                                colorize: text-secondary;
+                                            }
+                                            Text { text: "Run all requests"; font-family: "Cantarell"; color: text-primary; height: parent.height; font-size: 12px; vertical-alignment: center; }
+                                        }
+                                        run-touch := TouchArea {
+                                            width: parent.width;
+                                            height: parent.height;
+                                            clicked => {
+                                                root.collection-menu-id = -1;
+                                                collection-menu-popup.close();
+                                                root.run-collection(collection.id);
+                                            }
+                                        }
+                                    }
+
+                                    Rectangle {
+                                        height: 34px;
+                                        border-radius: 8px;
+                                        background: variables-touch.has-hover ? hover-bg : transparent;
+                                        HorizontalLayout {
+                                            x: 10px;
+                                            width: parent.width - 20px;
+                                            height: parent.height;
+                                            spacing: 9px;
+                                            Image {
+                                                y: (parent.height - self.height) / 2;
+                                                width: 15px;
+                                                height: 15px;
+                                                source: @image-url("../assets/icons/menu.png");
+                                                image-fit: contain;
+                                                colorize: text-secondary;
+                                            }
+                                            Text { text: "Collection variables"; font-family: "Cantarell"; color: text-primary; height: parent.height; font-size: 12px; vertical-alignment: center; }
+                                        }
+                                        variables-touch := TouchArea {
+                                            width: parent.width;
+                                            height: parent.height;
+                                            clicked => {
+                                                root.selected-collection-id = collection.id;
+                                                root.selected-collection-name = collection.name;
+                                                root.active-view = "Variables";
+                                                root.variables-message = "";
+                                                root.collection-menu-id = -1;
+                                                collection-menu-popup.close();
+                                                root.load-collection-variables(collection.id);
+                                            }
+                                        }
+                                    }
+
+                                    Rectangle { height: 1px; background: border-color; }
+
+                                    Rectangle {
+                                        height: 34px;
+                                        border-radius: 8px;
+                                        background: rename-touch.has-hover ? hover-bg : transparent;
+                                        HorizontalLayout {
+                                            x: 10px;
+                                            width: parent.width - 20px;
+                                            height: parent.height;
+                                            spacing: 9px;
+                                            Image {
+                                                y: (parent.height - self.height) / 2;
+                                                width: 15px;
+                                                height: 15px;
+                                                source: @image-url("../assets/icons/edit.png");
+                                                image-fit: contain;
+                                                colorize: text-secondary;
+                                            }
+                                            Text { text: "Rename collection"; font-family: "Cantarell"; color: text-primary; height: parent.height; font-size: 12px; vertical-alignment: center; }
+                                        }
+                                        rename-touch := TouchArea {
+                                            width: parent.width;
+                                            height: parent.height;
+                                            clicked => {
+                                                root.editing-collection-id = collection.id;
+                                                root.collection-name-draft = collection.name;
+                                                root.collection-menu-id = -1;
+                                                collection-menu-popup.close();
+                                            }
+                                        }
+                                    }
+
+                                    Rectangle {
+                                        height: 34px;
+                                        border-radius: 8px;
+                                        background: delete-touch.has-hover ? (root.dark-mode ? #48292a : #fce3e1) : transparent;
+                                        HorizontalLayout {
+                                            x: 10px;
+                                            width: parent.width - 20px;
+                                            height: parent.height;
+                                            spacing: 9px;
+                                            Image {
+                                                y: (parent.height - self.height) / 2;
+                                                width: 15px;
+                                                height: 15px;
+                                                source: @image-url("../assets/icons/close.png");
+                                                image-fit: contain;
+                                                colorize: root.dark-mode ? #ff7b63 : #c01c28;
+                                            }
+                                            Text {
+                                                text: "Delete collection";
+                                                font-family: "Cantarell";
+                                                color: root.dark-mode ? #ff7b63 : #c01c28;
+                                                height: parent.height;
+                                                font-size: 12px;
+                                                vertical-alignment: center;
+                                            }
+                                        }
+                                        delete-touch := TouchArea {
+                                            width: parent.width;
+                                            height: parent.height;
+                                            enabled: root.collections.length > 1;
+                                            clicked => {
+                                                root.confirm-delete-collection-id = collection.id;
+                                                root.collection-menu-id = -1;
+                                                collection-menu-popup.close();
+                                            }
+                                        }
+                                    }
                                 }
                             }
-                            ThemedButton {
-                                horizontal-stretch: 1;
-                                height: 29px;
-                                text: "Delete collection";
-                                dark-mode: root.dark-mode;
-                                accent-button: false;
-                                destructive-button: true;
-                                enabled: root.collections.length > 1;
-                                clicked => {
-                                    root.confirm-delete-collection-id = collection.id;
-                                    root.collection-menu-id = -1;
+
+                            menu-focus := FocusScope {
+                                key-pressed(event) => {
+                                    if event.text == Key.Escape {
+                                        root.collection-menu-id = -1;
+                                        collection-menu-popup.close();
+                                        return accept;
+                                    }
+                                    return reject;
                                 }
                             }
                         }
@@ -818,6 +978,152 @@ export component AppWindow inherits Window {
             horizontal-stretch: 1;
             background: window-bg;
 
+            if root.active-view == "Collections" : VerticalLayout {
+                padding: 24px;
+                spacing: 14px;
+                HorizontalLayout {
+                    height: 54px;
+                    VerticalLayout {
+                        spacing: 3px;
+                        Text { text: "Collections"; color: text-primary; font-size: 22px; font-weight: 700; }
+                        Text { text: "Browse your workspaces and open a collection's requests."; color: text-secondary; font-size: 11px; }
+                    }
+                    Rectangle { horizontal-stretch: 1; background: transparent; }
+                    ThemedButton {
+                        text: "+ New collection";
+                        dark-mode: root.dark-mode;
+                        accent-button: true;
+                        clicked => { root.show-new-collection = true; }
+                    }
+                }
+                ScrollView {
+                    vertical-stretch: 1;
+                    VerticalLayout {
+                        spacing: 10px;
+                        if root.collections.length == 0 : Rectangle {
+                            height: 180px;
+                            background: panel-bg;
+                            border-width: 1px;
+                            border-color: border-color;
+                            border-radius: 12px;
+                            VerticalLayout {
+                                alignment: center;
+                                spacing: 8px;
+                                Text { text: "No collections yet"; color: text-primary; font-size: 15px; font-weight: 600; horizontal-alignment: center; }
+                                Text { text: "Create a collection to organize requests and variables."; color: text-secondary; font-size: 11px; horizontal-alignment: center; }
+                            }
+                        }
+                        for collection in root.collections : Rectangle {
+                            height: 86px;
+                            background: collection.id == root.selected-collection-id ? (root.dark-mode ? #303944 : #e8f1fb) : panel-bg;
+                            border-width: 1px;
+                            border-color: collection.id == root.selected-collection-id ? accent : border-color;
+                            border-radius: 11px;
+                            HorizontalLayout {
+                                padding: 14px;
+                                spacing: 12px;
+                                VerticalLayout {
+                                    horizontal-stretch: 1;
+                                    alignment: center;
+                                    spacing: 4px;
+                                    Text { text: collection.name; color: text-primary; font-size: 15px; font-weight: 650; }
+                                    Text { text: collection.id == root.selected-collection-id ? "Currently selected" : "Collection"; color: text-secondary; font-size: 11px; }
+                                }
+                                ThemedButton {
+                                    text: "Open requests →";
+                                    dark-mode: root.dark-mode;
+                                    accent-button: collection.id == root.selected-collection-id;
+                                    clicked => {
+                                        root.selected-collection-id = collection.id;
+                                        root.selected-collection-name = collection.name;
+                                        root.active-view = "Request";
+                                        root.load-requests(collection.id);
+                                        root.load-collection-variables(collection.id);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            if root.active-view == "Environments" : VerticalLayout {
+                padding: 24px;
+                spacing: 14px;
+                HorizontalLayout {
+                    height: 54px;
+                    VerticalLayout {
+                        spacing: 3px;
+                        Text { text: "Environments"; color: text-primary; font-size: 22px; font-weight: 700; }
+                        Text { text: "Collection variables grouped by collection."; color: text-secondary; font-size: 11px; }
+                    }
+                    Rectangle { horizontal-stretch: 1; background: transparent; }
+                    ThemedButton {
+                        text: root.show-variable-values ? "Hide values" : "Show values";
+                        dark-mode: root.dark-mode;
+                        accent-button: false;
+                        clicked => { root.show-variable-values = !root.show-variable-values; }
+                    }
+                }
+                ScrollView {
+                    vertical-stretch: 1;
+                    VerticalLayout {
+                        spacing: 8px;
+                        if root.environment-items.length == 0 : Rectangle {
+                            height: 180px;
+                            background: panel-bg;
+                            border-width: 1px;
+                            border-color: border-color;
+                            border-radius: 12px;
+                            VerticalLayout {
+                                alignment: center;
+                                spacing: 8px;
+                                Text { text: "No collection variables yet"; color: text-primary; font-size: 15px; font-weight: 600; horizontal-alignment: center; }
+                                Text { text: "Add variables from a collection's variable editor to see them here."; color: text-secondary; font-size: 11px; horizontal-alignment: center; }
+                            }
+                        }
+                        for item in root.environment-items : Rectangle {
+                            height: 64px;
+                            background: panel-bg;
+                            border-width: 1px;
+                            border-color: border-color;
+                            border-radius: 9px;
+                            HorizontalLayout {
+                                padding: 10px;
+                                spacing: 12px;
+                                VerticalLayout {
+                                    width: 170px;
+                                    alignment: center;
+                                    spacing: 3px;
+                                    Text { text: item.key; color: text-primary; font-size: 12px; font-weight: 600; overflow: elide; }
+                                    Text { text: item.collection-name; color: text-secondary; font-size: 10px; overflow: elide; }
+                                }
+                                Text {
+                                    horizontal-stretch: 1;
+                                    text: root.show-variable-values ? item.value : "••••••••";
+                                    color: text-secondary;
+                                    font-size: 12px;
+                                    vertical-alignment: center;
+                                    overflow: elide;
+                                }
+                                ThemedButton {
+                                    text: "Manage";
+                                    dark-mode: root.dark-mode;
+                                    accent-button: false;
+                                    clicked => {
+                                        root.selected-collection-id = item.collection-id;
+                                        root.selected-collection-name = item.collection-name;
+                                        root.load-collection-variables(item.collection-id);
+                                        root.active-view = "Variables";
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                Text { text: "Stored locally in SQLite. Values are not encrypted."; color: text-secondary; font-size: 10px; }
+            }
+
             if root.active-view == "History" : VerticalLayout {
                 padding: 24px;
                 spacing: 14px;
@@ -831,6 +1137,16 @@ export component AppWindow inherits Window {
                         vertical-alignment: center;
                     }
                     Rectangle { horizontal-stretch: 1; background: transparent; }
+                    ChoiceDropdown {
+                        width: 150px;
+                        options: ["Newest first", "Oldest first"];
+                        current-value: root.history-sort;
+                        dark-mode: root.dark-mode;
+                        selected(value) => {
+                            root.history-sort = value;
+                            root.load-history(value);
+                        }
+                    }
                     Text {
                         text: "Last 500 sent requests";
                         color: text-secondary;
@@ -851,53 +1167,37 @@ export component AppWindow inherits Window {
                         vertical-alignment: center;
                     }
                 }
-                for item in root.history-items : Rectangle {
-                    height: 66px;
-                    background: panel-bg;
-                    border-width: 1px;
-                    border-color: border-color;
-                    border-radius: 9px;
-                    history-touch := TouchArea {
-                        clicked => {
-                            root.selected-collection-name = item.collection-name;
-                            root.select-request(item.request-id);
-                        }
-                    }
-                    HorizontalLayout {
-                        padding: 10px;
-                        spacing: 12px;
-                        VerticalLayout {
-                            horizontal-stretch: 1;
-                            spacing: 3px;
-                            Text {
-                                text: item.method + "  " + item.request-name;
-                                color: text-primary;
-                                font-size: 12px;
-                                font-weight: 600;
-                                overflow: elide;
+                if root.history-items.length > 0 : ScrollView {
+                    vertical-stretch: 1;
+                    VerticalLayout {
+                        spacing: 10px;
+                        for item in root.history-items : Rectangle {
+                            height: 66px;
+                            background: panel-bg;
+                            border-width: 1px;
+                            border-color: border-color;
+                            border-radius: 9px;
+                            history-touch := TouchArea {
+                                clicked => {
+                                    root.selected-collection-name = item.collection-name;
+                                    root.select-request(item.request-id);
+                                }
                             }
-                            Text {
-                                text: item.collection-name + " · " + item.url;
-                                color: text-secondary;
-                                font-size: 10px;
-                                overflow: elide;
+                            HorizontalLayout {
+                                padding: 10px;
+                                spacing: 12px;
+                                VerticalLayout {
+                                    horizontal-stretch: 1;
+                                    spacing: 3px;
+                                    Text { text: item.method + "  " + item.request-name; color: text-primary; font-size: 12px; font-weight: 600; overflow: elide; }
+                                    Text { text: item.collection-name + " · " + item.url; color: text-secondary; font-size: 10px; overflow: elide; }
+                                }
+                                Text { text: item.status + " · " + item.duration; color: item.status.starts-with("2") ? #2ec27e : text-secondary; font-size: 11px; vertical-alignment: center; }
+                                Text { text: item.date; color: text-secondary; font-size: 10px; vertical-alignment: center; }
                             }
-                        }
-                        Text {
-                            text: item.status + " · " + item.duration;
-                            color: item.status.starts-with("2") ? #2ec27e : text-secondary;
-                            font-size: 11px;
-                            vertical-alignment: center;
-                        }
-                        Text {
-                            text: item.date;
-                            color: text-secondary;
-                            font-size: 10px;
-                            vertical-alignment: center;
                         }
                     }
                 }
-                Rectangle { vertical-stretch: 1; background: transparent; }
             }
 
             if root.active-view == "Request" : VerticalLayout {
@@ -1018,30 +1318,16 @@ export component AppWindow inherits Window {
                         padding: 9px;
                         spacing: 9px;
 
-                        ThemedButton {
+                        ChoiceDropdown {
                             width: 88px;
-                            text: root.active-method;
+                            options: ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"];
+                            current-value: root.active-method;
                             dark-mode: root.dark-mode;
                             accent-button: true;
                             accent-color: root.active-method == "GET" ? #2ec27e :
                                 root.active-method == "POST" ? #c64600 :
                                 root.active-method == "PUT" ? #3584e4 : #c01c28;
-                            hover-accent-color: root.active-method == "GET" ? #26a269 :
-                                root.active-method == "POST" ? #a83b00 :
-                                root.active-method == "PUT" ? #4d92ec : #a51d2d;
-                            pressed-accent-color: root.active-method == "GET" ? #1c8757 :
-                                root.active-method == "POST" ? #8f3200 :
-                                root.active-method == "PUT" ? #2e72c6 : #861a26;
-
-                            clicked => {
-                                root.active-method =
-                                    root.active-method == "GET" ? "POST" :
-                                    root.active-method == "POST" ? "PUT" :
-                                    root.active-method == "PUT" ? "PATCH" :
-                                    root.active-method == "PATCH" ? "DELETE" :
-                                    root.active-method == "DELETE" ? "HEAD" :
-                                    root.active-method == "HEAD" ? "OPTIONS" : "GET";
-                            }
+                            selected(value) => { root.active-method = value; }
                         }
 
                         LineEdit {
@@ -1109,17 +1395,13 @@ export component AppWindow inherits Window {
                         vertical-alignment: center;
                     }
                     Rectangle { horizontal-stretch: 1; background: transparent; }
-                    if root.active-tab == "Body" : ThemedButton {
-                        width: 88px;
-                        height: 29px;
-                        text: root.body-format + " ▾";
+                    if root.active-tab == "Body" : ChoiceDropdown {
+                        width: 104px;
+                        height: 30px;
+                        options: ["JSON", "Text", "HTML", "XML"];
+                        current-value: root.body-format;
                         dark-mode: root.dark-mode;
-                        accent-button: false;
-                        clicked => {
-                            root.body-format = root.body-format == "JSON" ? "Text" :
-                                root.body-format == "Text" ? "HTML" :
-                                root.body-format == "HTML" ? "XML" : "JSON";
-                        }
+                        selected(value) => { root.body-format = value; }
                     }
                 }
 
@@ -1169,14 +1451,13 @@ export component AppWindow inherits Window {
                             color: text-secondary;
                             font-size: 11px;
                         }
-                        ThemedButton {
-                            width: 150px;
-                            text: root.auth-type == "None" ? "No authentication ▾" : root.auth-type + " ▾";
+                        ChoiceDropdown {
+                            width: 180px;
+                            options: ["None", "Bearer", "Basic"];
+                            current-value: root.auth-type;
                             dark-mode: root.dark-mode;
-                            accent-button: false;
-                            clicked => {
-                                root.auth-type = root.auth-type == "None" ? "Bearer" :
-                                    root.auth-type == "Bearer" ? "Basic" : "None";
+                            selected(value) => {
+                                root.auth-type = value;
                                 root.auth-value = "";
                                 root.auth-secret = "";
                             }
@@ -1273,7 +1554,7 @@ export component AppWindow inherits Window {
                 }
 
                 Rectangle {
-                    height: 218px;
+                    height: 238px;
                     background: panel-bg;
                     border-width: 1px;
                     border-color: border-color;
@@ -1290,15 +1571,15 @@ export component AppWindow inherits Window {
                             Text {
                                 text: root.response-tab == "Body" ? "Response body · " + root.response-format : "Response " + root.response-tab;
                                 color: text-secondary;
-                                font-size: 10px;
+                                font-size: 11px;
                                 font-weight: 700;
                                 vertical-alignment: center;
                             }
                             Rectangle { horizontal-stretch: 1; background: transparent; }
                             for tab in ["Body", "Headers", "Cookies"] : Rectangle {
-                                width: tab == "Headers" ? 54px : 48px;
-                                height: 24px;
-                                border-radius: 5px;
+                                width: tab == "Headers" ? 62px : tab == "Cookies" ? 58px : 48px;
+                                height: 26px;
+                                border-radius: 7px;
                                 background: root.response-tab == tab ? selected-bg : transparent;
                                 response-tab-touch := TouchArea {
                                     clicked => { root.response-tab = tab; }
@@ -1306,7 +1587,7 @@ export component AppWindow inherits Window {
                                 Text {
                                     text: tab;
                                     color: root.response-tab == tab ? text-primary : text-secondary;
-                                    font-size: 9px;
+                                    font-size: 10px;
                                     font-weight: root.response-tab == tab ? 600 : 400;
                                     horizontal-alignment: center;
                                     vertical-alignment: center;
@@ -1360,11 +1641,15 @@ export component AppWindow inherits Window {
                                     x: 12px;
                                     y: 10px;
                                     width: parent.width - 24px;
-                                    text: root.response-tab == "Body" ? root.response-body :
-                                        root.response-tab == "Headers" ? root.response-headers : root.response-cookies;
+                                    text: root.response-tab == "Body"
+                                        ? (root.response-body == "" ? "The server returned an empty response body." : root.response-body)
+                                        : root.response-tab == "Headers"
+                                            ? (root.response-headers == "" ? "No response headers were returned." : root.response-headers)
+                                            : (root.response-cookies == "" ? "No cookies were returned." : root.response-cookies);
                                     color: text-primary;
                                     font-family: "monospace";
                                     font-size: 12px;
+                                    line-height-factor: 1.3;
                                     wrap: word-wrap;
                                 }
                             }

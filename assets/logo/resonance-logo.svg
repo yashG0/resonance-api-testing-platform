@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 512 512" fill="none">
+  <title>Resonance — R mark</title>
+  <desc>Geometric folded R symbol in a cyan-to-blue-to-violet gradient on a transparent background.</desc>
+  <defs>
+    <linearGradient id="resonance-gradient" x1="80" y1="80" x2="420" y2="420" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#22D3EE"/>
+      <stop offset=".42" stop-color="#3B82F6"/>
+      <stop offset=".72" stop-color="#6366F1"/>
+      <stop offset="1" stop-color="#A855F7"/>
+    </linearGradient>
+    <linearGradient id="resonance-fold" x1="248" y1="270" x2="354" y2="390" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#4F7BF5"/>
+      <stop offset="1" stop-color="#9B50F2"/>
+    </linearGradient>
+  </defs>
+  <path fill="url(#resonance-gradient)" d="M126 72 H251 C272 72 291 81 306 97 L388 185 C410 209 408 242 385 264 L319 326 L276 283 L326 236 L239 145 H126 C111 145 101 155 101 170 V126 C101 96 96 72 126 72 Z"/>
+  <path fill="url(#resonance-gradient)" d="M101 190 C101 176 117 169 128 179 L183 230 C198 244 198 263 183 277 L130 328 C118 339 102 332 102 316 Z"/>
+  <path fill="url(#resonance-gradient)" d="M248 260 L287 298 L385 391 C395 401 389 416 374 416 H274 C254 416 240 408 226 394 L197 365 C183 351 184 331 198 317 Z"/>
+  <path fill="url(#resonance-fold)" d="M248 260 L287 298 L319 328 L276 369 L248 342 C235 330 235 313 248 301 L267 283 Z"/>
+</svg>

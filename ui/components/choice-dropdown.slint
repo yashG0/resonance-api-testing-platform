@@ -1,0 +1,77 @@
+import { ThemedButton } from "themed-button.slint";
+
+export component ChoiceDropdown inherits Rectangle {
+    in property <[string]> options: [];
+    in-out property <string> current-value: "";
+    in property <bool> dark-mode: true;
+    in property <bool> accent-button: false;
+    in property <color> accent-color: #3584e4;
+
+    callback selected(string);
+
+    height: 36px;
+
+    ThemedButton {
+        width: 100%;
+        height: parent.height;
+        text: root.current-value + "  ▾";
+        dark-mode: root.dark-mode;
+        accent-button: root.accent-button;
+        accent-color: root.accent-color;
+        clicked => popup.show();
+    }
+
+    popup := PopupWindow {
+        x: 0;
+        y: root.height + 4px;
+        width: root.width;
+        height: root.options.length * 34px + 8px;
+        close-policy: close-on-click-outside;
+
+        Rectangle {
+            background: root.dark-mode ? #303034 : #ffffff;
+            border-width: 1px;
+            border-color: root.dark-mode ? #4b4b51 : #deddda;
+            border-radius: 10px;
+            drop-shadow-color: #00000066;
+            drop-shadow-blur: 12px;
+            drop-shadow-offset-y: 4px;
+
+            VerticalLayout {
+                padding: 4px;
+                spacing: 2px;
+
+                for option in root.options : Rectangle {
+                    height: 32px;
+                    border-radius: 7px;
+                    background: option == root.current-value
+                        ? (root.dark-mode ? #414149 : #e9f1fc)
+                        : option-touch.has-hover
+                            ? (root.dark-mode ? #3b3b40 : #f3f2f0)
+                            : transparent;
+
+                    option-touch := TouchArea {
+                        clicked => {
+                            root.current-value = option;
+                            root.selected(option);
+                            popup.close();
+                        }
+                    }
+
+                    Text {
+                        x: 10px;
+                        width: parent.width - 20px;
+                        height: parent.height;
+                        text: option;
+                        font-family: "Cantarell";
+                        color: root.dark-mode ? #f6f5f4 : #241f31;
+                        font-size: 12px;
+                        font-weight: option == root.current-value ? 600 : 450;
+                        vertical-alignment: center;
+                        overflow: elide;
+                    }
+                }
+            }
+        }
+    }
+}

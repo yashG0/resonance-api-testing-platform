@@ -213,21 +213,14 @@ impl HttpClient {
         };
 
         let status = response.status().to_string();
-        let response_headers = response
-            .headers()
-            .iter()
-            .map(|(name, value)| {
-                format!("{}: {}", name, value.to_str().unwrap_or("<binary value>"))
-            })
-            .collect::<Vec<_>>()
-            .join("\n");
-        let response_cookies = response
-            .headers()
-            .get_all(reqwest::header::SET_COOKIE)
-            .iter()
-            .map(|value| value.to_str().unwrap_or("<binary value>").to_owned())
-            .collect::<Vec<_>>()
-            .join("\n");
+        let response_headers = format_response_headers(response.headers());
+        let response_cookies = format_response_cookies(
+            response
+                .headers()
+                .get_all(reqwest::header::SET_COOKIE)
+                .iter()
+                .map(|value| value.to_str().unwrap_or("<binary value>")),
+        );
         let content_type = response
             .headers()
             .get(CONTENT_TYPE)
@@ -285,6 +278,63 @@ impl HttpClient {
     }
 }
 
+fn format_response_headers(headers: &HeaderMap) -> String {
+    let mut entries = headers
+        .iter()
+        .map(|(name, value)| {
+            let display_name = name
+                .as_str()
+                .split('-')
+                .map(|part| {
+                    let mut characters = part.chars();
+                    match characters.next() {
+                        Some(first) => first.to_ascii_uppercase().to_string() + characters.as_str(),
+                        None => String::new(),
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join("-");
+            format!(
+                "{display_name}: {}",
+                value.to_str().unwrap_or("<binary value>")
+            )
+        })
+        .collect::<Vec<_>>();
+    entries.sort_unstable_by_key(|entry| entry.to_ascii_lowercase());
+    entries.join("\n")
+}
+
+fn format_response_cookies<'a>(cookies: impl Iterator<Item = &'a str>) -> String {
+    cookies
+        .enumerate()
+        .map(|(index, cookie)| {
+            let mut parts = cookie.split(';').map(str::trim);
+            let first = parts.next().unwrap_or_default();
+            let (name, value) = first.split_once('=').unwrap_or((first, ""));
+            let mut formatted = format!(
+                "Cookie {} · {}\n  Value: {}",
+                index + 1,
+                name.trim(),
+                value.trim()
+            );
+
+            for attribute in parts {
+                if attribute.is_empty() {
+                    continue;
+                }
+                if let Some((name, value)) = attribute.split_once('=') {
+                    formatted.push_str(&format!("\n  {}: {}", name.trim(), value.trim()));
+                } else {
+                    formatted.push_str(&format!("\n  {}", attribute));
+                }
+            }
+
+            formatted
+        })
+        .collect::<Vec<_>>()
+        .join("\n\n")
+}
+
 fn format_response_body(raw: &str, content_type: &str) -> (String, String) {
     let media_type = content_type
         .split(';')
@@ -312,6 +362,10 @@ fn format_response_body(raw: &str, content_type: &str) -> (String, String) {
         || raw.trim_start().to_ascii_lowercase().starts_with("<html");
     if is_html {
         return ("HTML".into(), format_html(raw));
+    }
+
+    if media_type == "application/xml" || media_type == "text/xml" || media_type.ends_with("+xml") {
+        return ("XML".into(), format_html(raw));
     }
 
     let format = if media_type.starts_with("text/") || media_type.is_empty() {

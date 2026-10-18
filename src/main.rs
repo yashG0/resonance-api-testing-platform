@@ -97,6 +97,21 @@ fn to_variable_model(variables: Vec<CollectionVariable>) -> ModelRc<VariableItem
     ModelRc::new(VecModel::from(items))
 }
 
+fn to_environment_model(items: Vec<(i32, String, CollectionVariable)>) -> ModelRc<EnvironmentItem> {
+    let items = items
+        .into_iter()
+        .map(
+            |(collection_id, collection_name, variable)| EnvironmentItem {
+                collection_id,
+                collection_name: collection_name.into(),
+                key: variable.key.into(),
+                value: variable.value.into(),
+            },
+        )
+        .collect::<Vec<_>>();
+    ModelRc::new(VecModel::from(items))
+}
+
 fn to_history_model(history: Vec<RequestHistory>) -> ModelRc<HistoryItem> {
     let items = history
         .into_iter()
@@ -474,7 +489,7 @@ async fn main() -> Result<(), slint::PlatformError> {
                             ui.set_response_time("".into());
                             ui.set_is_loading(false);
                             if ui.get_active_view() == "History" {
-                                ui.invoke_load_history();
+                                ui.invoke_load_history(ui.get_history_sort());
                             }
                         }
                     }
@@ -639,20 +654,58 @@ async fn main() -> Result<(), slint::PlatformError> {
     app.on_load_history({
         let app_weak = app_weak.clone();
         let store = Arc::clone(&store);
+        move |sort_order| {
+            let app_handle = app_weak.clone();
+            let store = Arc::clone(&store);
+            tokio::task::spawn_blocking(move || {
+                let mut history = store.list_history()?;
+                if sort_order == "Oldest first" {
+                    history.reverse();
+                }
+                Ok::<_, crate::storage::StoreError>(history)
+            })
+            .then(move |result| async move {
+                let _ = slint::invoke_from_event_loop(move || {
+                    if let Some(ui) = app_handle.upgrade() {
+                        if let Ok(Ok(history)) = result {
+                            ui.set_history_items(to_history_model(history));
+                        }
+                    }
+                });
+            });
+        }
+    });
+
+    app.on_load_environments({
+        let app_weak = app_weak.clone();
+        let store = Arc::clone(&store);
         move || {
             let app_handle = app_weak.clone();
             let store = Arc::clone(&store);
-            tokio::task::spawn_blocking(move || store.list_history()).then(
-                move |result| async move {
-                    let _ = slint::invoke_from_event_loop(move || {
-                        if let Some(ui) = app_handle.upgrade() {
-                            if let Ok(Ok(history)) = result {
-                                ui.set_history_items(to_history_model(history));
-                            }
+            tokio::task::spawn_blocking(move || {
+                let mut items = Vec::new();
+                for collection in store.list_collections()? {
+                    for variable in store.list_variables(collection.id)? {
+                        items.push((collection.id as i32, collection.name.clone(), variable));
+                    }
+                }
+                Ok::<_, crate::storage::StoreError>(items)
+            })
+            .then(move |result| async move {
+                let _ = slint::invoke_from_event_loop(move || {
+                    if let Some(ui) = app_handle.upgrade() {
+                        match result {
+                            Ok(Ok(items)) => ui.set_environment_items(to_environment_model(items)),
+                            Ok(Err(error)) => ui.set_variables_message(
+                                format!("Could not load environments: {error}").into(),
+                            ),
+                            Err(error) => ui.set_variables_message(
+                                format!("Could not load environments: {error}").into(),
+                            ),
                         }
-                    });
-                },
-            );
+                    }
+                });
+            });
         }
     });
 
