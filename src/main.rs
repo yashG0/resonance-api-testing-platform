@@ -152,7 +152,9 @@ fn detect_system_accent_color(fallback: Color) -> Color {
             .output()
         {
             if output.status.success()
-                && let Ok(index) = String::from_utf8_lossy(&output.stdout).trim().parse::<i32>()
+                && let Ok(index) = String::from_utf8_lossy(&output.stdout)
+                    .trim()
+                    .parse::<i32>()
             {
                 let rgb = match index {
                     0 => Some((0xd7, 0x00, 0x15)),
@@ -328,8 +330,8 @@ async fn main() -> Result<(), slint::PlatformError> {
         RequestStore::open_default().expect("Failed to initialize Resonance request database"),
     );
     let client = Arc::new(HttpClient::new().expect("Failed to initialize Resonance HTTP client"));
-
     let app = AppWindow::new()?;
+    slint::set_xdg_app_id("resonance")?;
     app.set_system_dark_mode(detect_system_dark_mode(app.get_system_dark_mode()));
     app.set_system_accent_color(detect_system_accent_color(app.get_system_accent_color()));
     let app_weak = app.as_weak();
@@ -1363,9 +1365,7 @@ async fn main() -> Result<(), slint::PlatformError> {
             let app_handle = theme_weak.clone();
             if slint::invoke_from_event_loop(move || {
                 if let Some(ui) = app_handle.upgrade() {
-                    if ui.get_theme_mode() == "System"
-                        && ui.get_system_dark_mode() != system_dark
-                    {
+                    if ui.get_theme_mode() == "System" && ui.get_system_dark_mode() != system_dark {
                         ui.set_system_dark_mode(system_dark);
                     }
                     if ui.get_system_accent_color() != system_accent {
