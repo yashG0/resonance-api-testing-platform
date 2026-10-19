@@ -1,0 +1,78 @@
+
+name: macOS Build
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "src/**"
+      - "ui/**"
+      - "assets/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "build.rs"
+      - ".github/workflows/macos-build.yml"
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build-macos:
+    name: Build macOS Apple Silicon (ARM64)
+    runs-on: macos-15
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+
+      - name: Check formatting
+        run: cargo fmt --check
+
+      - name: Run tests
+        run: cargo test --locked
+
+      - name: Build release executable
+        run: cargo build --release --locked --target aarch64-apple-darwin
+
+      - name: Package macOS executable
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          mkdir -p dist/resonance-macos-aarch64
+
+          cp target/aarch64-apple-darwin/release/resonance \
+            dist/resonance-macos-aarch64/
+
+          cp LICENSE README.md dist/resonance-macos-aarch64/
+
+          tar -czf dist/resonance-macos-aarch64.tar.gz \
+            -C dist resonance-macos-aarch64
+
+          cd dist
+          shasum -a 256 resonance-macos-aarch64.tar.gz \
+            > resonance-macos-aarch64.tar.gz.sha256
+
+      - name: Upload macOS build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: resonance-macos-aarch64
+          path: |
+            dist/resonance-macos-aarch64.tar.gz
+            dist/resonance-macos-aarch64.tar.gz.sha256
+          if-no-files-found: error
+          retention-days: 14
