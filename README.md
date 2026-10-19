@@ -8,6 +8,21 @@ As a backend developer familiar with Python and Go, I wanted to build something 
 
 This project is my attempt to do both.
 
+## Screenshots
+
+<table>
+  <tr>
+    <td align="center"><strong>Dark Mode</strong></td>
+    <td align="center"><strong>Light Mode</strong></td>
+  </tr>
+  <tr>
+    <td><img src="assets/images/1.png" alt="Resonance running in dark mode" width="480"></td>
+    <td><img src="assets/images/2.png" alt="Resonance running in light mode" width="480"></td>
+  </tr>
+</table>
+
+
+
 ## Why I Started This
 
 Testing APIs is a regular part of backend development. I wanted a desktop tool that kept the workflow simple and didn't introduce unnecessary complexity.
