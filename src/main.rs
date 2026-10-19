@@ -331,7 +331,7 @@ async fn main() -> Result<(), slint::PlatformError> {
     );
     let client = Arc::new(HttpClient::new().expect("Failed to initialize Resonance HTTP client"));
     let app = AppWindow::new()?;
-    slint::set_xdg_app_id("resonance")?;
+    slint::set_xdg_app_id("io.github.yashG0.resonance-api-testing-platform")?;
     app.set_system_dark_mode(detect_system_dark_mode(app.get_system_dark_mode()));
     app.set_system_accent_color(detect_system_accent_color(app.get_system_accent_color()));
     let app_weak = app.as_weak();
