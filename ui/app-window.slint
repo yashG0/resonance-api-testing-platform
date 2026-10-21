@@ -841,10 +841,12 @@ in-out property <bool> response-large: false;
                 // Header bar
                 Rectangle {
                     height: 52px;
-                    background: Theme.headerbar-bg;
-
-                    Rectangle { y: parent.height - 1px; height: 1px; background: Theme.border; }
-
+                    background: Theme.dark ? #202124 : Theme.headerbar-bg;
+                    Rectangle {
+                        y: parent.height - 1px;
+                        height: 1px;
+                        background: Theme.dark ? #ffffff0a : Theme.headerbar-border;
+                    }
                     HorizontalLayout {
                         padding-left: 10px;
                         padding-right: 12px;
@@ -1578,33 +1580,7 @@ in-out property <bool> response-large: false;
                                                 AdwLineEdit { horizontal-stretch: 1; text: root.auth-value; placeholder-text: "Username"; edited(value) => { root.auth-value = value; } }
                                                 AdwLineEdit { horizontal-stretch: 1; text: root.auth-secret; placeholder-text: "Password"; input-type: password; edited(value) => { root.auth-secret = value; } }
                                             }
-                                            if root.auth-type == "API Key" : VerticalLayout {
-    max-width: 420px;
-    spacing: 8px;
 
-    AdwLineEdit {
-        text: root.auth-value;
-        placeholder-text: "Header name (e.g. X-API-Key)";
-        edited(value) => {
-            root.auth-value = value;
-        }
-    }
-
-    AdwLineEdit {
-        text: root.auth-secret;
-        placeholder-text: "API key value";
-        input-type: password;
-        edited(value) => {
-            root.auth-secret = value;
-        }
-    }
-
-    Text {
-        text: "The key is sent as a request header.";
-        color: Theme.fg-3;
-        font-size: Theme.fs-small;
-    }
-}
                                             if root.auth-type == "None" : Text {
                                                 text: "This request is sent without authentication.";
                                                 color: Theme.fg-3;
