@@ -1,0 +1,175 @@
+import { AdwTextEdit } from "adw-inputs.slint";
+import { Theme } from "theme.slint";
+import { Icons } from "icons.slint";
+import { Btn } from "btn.slint";
+import { TabBar } from "tab-bar.slint";
+import { ScrollView } from "std-widgets.slint";
+
+export struct JsonToken {
+    text: string,
+    color: color,
+}
+
+export struct JsonLine {
+    number: int,
+    tokens: [JsonToken],
+}
+
+// Selectable, copyable response body with a slim toolbar (Pretty/Raw only when a distinct
+// pretty version exists, line wrapping, Copy). Emoji render via the renderer's font fallback.
+export component ResponseBody inherits Rectangle {
+    in property <string> raw;
+    in property <string> pretty;
+    in-out property <string> mode: "Pretty";
+    in-out property <bool> wrap-lines: false;
+    callback copy-all(string);
+    callback tokenize-response(string, string, bool) -> [JsonLine];
+    in property <string> format: "JSON";
+    in property <bool> dark: true;
+
+    property <bool> has-pretty: root.pretty != "" && root.pretty != root.raw;
+    property <string> displayed-text: (root.has-pretty && root.mode == "Pretty") ? root.pretty : root.raw;
+    in-out property <[JsonLine]> json-lines: [];
+    background: Theme.view-bg;
+    border-radius: Theme.radius-card;
+    clip: true;
+
+    init => {
+        root.json-lines = root.tokenize-response(root.displayed-text, root.format, root.dark);
+    }
+    changed displayed-text => {
+        root.json-lines = root.tokenize-response(root.displayed-text, root.format, root.dark);
+    }
+    changed format => {
+        root.json-lines = root.tokenize-response(root.displayed-text, root.format, root.dark);
+    }
+    changed dark => {
+        root.json-lines = root.tokenize-response(root.displayed-text, root.format, root.dark);
+    }
+
+    VerticalLayout {
+        spacing: 0px;
+
+        HorizontalLayout {
+            // Match the request/response header rhythm while keeping the action row compact.
+            height: 44px;
+            padding-left: 12px;
+            padding-right: 12px;
+            spacing: 8px;
+
+            if root.has-pretty : TabBar {
+                style: "pill";
+                height: 30px;
+                tabs: ["Pretty", "Raw"];
+                current: root.mode;
+                selected(m) => { root.mode = m; }
+            }
+            Rectangle { horizontal-stretch: 1; }
+            Btn {
+                height: 30px;
+                kind: "flat";
+                icon: Icons.wrap;
+                text: "Wrap";
+                active: root.wrap-lines;
+                clicked => { root.wrap-lines = !root.wrap-lines; }
+            }
+            Btn {
+                height: 30px;
+                kind: "default";
+                icon: Icons.copy;
+                text: "Copy";
+                clicked => { root.copy-all(root.displayed-text); }
+            }
+        }
+
+        Rectangle { height: 1px; background: Theme.border; }
+
+        if root.format == "JSON" && root.mode == "Pretty" : Rectangle {
+            // ScrollView has no background property; paint the containing surface.
+            vertical-stretch: 1;
+            background: Theme.view-bg;
+            clip: true;
+
+            ScrollView {
+                x: 0px;
+                y: 0px;
+                width: parent.width;
+                height: parent.height;
+                content-width: self.width;
+                content-height: max(self.height, root.json-lines.length * 22px + 16px);
+
+                VerticalLayout {
+                    padding-top: 8px;
+                    width: parent.width;
+                    spacing: 0px;
+
+                    for line in root.json-lines : HorizontalLayout {
+                        height: 22px;
+                        spacing: 0px;
+                        Rectangle {
+                            width: 42px;
+                            height: parent.height;
+                            background: Theme.code-gutter;
+                            Text {
+                                x: 0px;
+                                width: parent.width - 8px;
+                                height: parent.height;
+                                text: "" + line.number;
+                                color: Theme.code-line-number;
+                                font-family: Theme.font-mono;
+                                font-size: 12px;
+                                horizontal-alignment: right;
+                                vertical-alignment: center;
+                            }
+                        }
+                        Rectangle { width: 1px; height: parent.height; background: Theme.border-unfocused; }
+                        HorizontalLayout {
+                            // Keep tokens packed in source order. Without explicit
+                            // start alignment and zero stretch, the layout can spread
+                            // key, colon, and value across the full available width.
+                            alignment: start;
+                            padding-left: 12px;
+                            height: parent.height;
+                            spacing: 0px;
+                            for token in line.tokens : Text {
+                                text: token.text;
+                                color: token.color;
+                                font-family: Theme.font-mono;
+                                font-size: 13px;
+                                horizontal-stretch: 0;
+                                vertical-alignment: center;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Slint conditional elements are separate siblings; use the inverse
+        // condition rather than an `else` element branch.
+        if root.format != "JSON" || root.mode != "Pretty" : AdwTextEdit {
+            vertical-stretch: 1;
+            read-only: true;
+            wrap: root.wrap-lines ? TextWrap.word-wrap : TextWrap.no-wrap;
+            font-family: Theme.font-mono;
+            font-size: 13px;
+            text: root.displayed-text;
+        }
+    }
+
+    if root.raw == "" && root.pretty == "" : Rectangle {
+        // Empty-state overlay. Kept below the toolbar so Copy/Wrap stay reachable.
+        x: 0px;
+        y: 42px;
+        width: parent.width;
+        height: parent.height - 42px;
+        background: transparent;
+        Text {
+            text: "The server returned an empty response body.";
+            color: Theme.fg-3;
+            font-size: Theme.fs-body;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+    }
+}

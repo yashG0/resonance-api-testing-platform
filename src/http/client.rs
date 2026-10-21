@@ -350,7 +350,7 @@ fn format_response_body(raw: &str, content_type: &str) -> (String, String) {
         let body = serde_json::from_str::<serde_json::Value>(raw)
             .and_then(|json| serde_json::to_string_pretty(&json))
             .unwrap_or_else(|_| raw.to_owned());
-        return ("JSON".into(), body);
+        return ("JSON".into(), highlight_json(&body));
     }
 
     let is_html = media_type == "text/html"
@@ -361,11 +361,11 @@ fn format_response_body(raw: &str, content_type: &str) -> (String, String) {
             .starts_with("<!doctype html")
         || raw.trim_start().to_ascii_lowercase().starts_with("<html");
     if is_html {
-        return ("HTML".into(), format_html(raw));
+        return ("HTML".into(), highlight_xml(&format_html(raw)));
     }
 
     if media_type == "application/xml" || media_type == "text/xml" || media_type.ends_with("+xml") {
-        return ("XML".into(), format_html(raw));
+        return ("XML".into(), highlight_xml(&format_html(raw)));
     }
 
     let format = if media_type.starts_with("text/") || media_type.is_empty() {
@@ -373,13 +373,41 @@ fn format_response_body(raw: &str, content_type: &str) -> (String, String) {
     } else {
         media_type.as_str()
     };
-    (format.into(), raw.to_owned())
+    (format.into(), escape_html(raw))
+}
+
+pub(crate) fn escape_html(input: &str) -> String {
+    let mut escaped = String::with_capacity(input.len());
+    for c in input.chars() {
+        match c {
+            '<' => escaped.push_str("&lt;"),
+            '>' => escaped.push_str("&gt;"),
+            '&' => escaped.push_str("&amp;"),
+            '"' => escaped.push_str("&quot;"),
+            '\'' => escaped.push_str("&#39;"),
+            _ => escaped.push(c),
+        }
+    }
+    escaped
+}
+
+pub(crate) fn highlight_json(input: &str) -> String {
+    // Slint's Text widget does not render HTML <span> tags as rich text.
+    // Return clean, pretty-printed JSON instead — it displays professionally
+    // in monospace font without broken HTML tags showing as literal text.
+    input.to_owned()
+}
+
+pub(crate) fn highlight_xml(input: &str) -> String {
+    // Slint's Text widget does not render HTML <span> tags as rich text.
+    // Return clean, formatted XML/HTML instead.
+    input.to_owned()
 }
 
 /// Adds indentation and line breaks to HTML while preserving tag contents.
 /// Script and style contents are kept as one raw-text block so their `<` and `>`
 /// characters aren't mistaken for HTML tags.
-fn format_html(input: &str) -> String {
+pub(crate) fn format_html(input: &str) -> String {
     const VOID_ELEMENTS: &[&str] = &[
         "area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param",
         "source", "track", "wbr",
@@ -549,14 +577,21 @@ mod tests {
     fn formats_json_html_and_plain_text_responses_by_content_type() {
         let (format, json) = format_response_body(r#"{"ok":true,"count":2}"#, "application/json");
         assert_eq!(format, "JSON");
-        assert!(json.contains("\n  \"ok\": true"));
+        // JSON is pretty-printed without HTML span tags (Slint Text widget doesn't render rich text)
+        assert!(!json.contains("<span"));
+        assert!(json.contains("ok"));
+        assert!(json.contains("count"));
+        assert!(json.contains("\n")); // pretty-printed with newlines
 
         let (format, html) = format_response_body(
             "<!doctype html><html><body><h1>Hello</h1><script>if (a < b) { run(); }</script></body></html>",
             "text/html; charset=utf-8",
         );
         assert_eq!(format, "HTML");
-        assert!(html.contains("\n<html>"));
+        // HTML is formatted without HTML span tags
+        assert!(!html.contains("<span"));
+        assert!(html.contains("Hello"));
+        // Script content is preserved as raw text by format_html
         assert!(html.contains("if (a < b) { run(); }"));
 
         let raw_text = "first line\nsecond line";

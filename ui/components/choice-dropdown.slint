@@ -1,4 +1,5 @@
 import { ThemedButton } from "themed-button.slint";
+import { Theme } from "theme.slint";
 
 export component ChoiceDropdown inherits Rectangle {
     in property <[string]> options: [];
@@ -29,13 +30,13 @@ export component ChoiceDropdown inherits Rectangle {
         close-policy: close-on-click-outside;
 
         Rectangle {
-            background: root.dark-mode ? #303034 : #ffffff;
+            background: Theme.popover-bg;
             border-width: 1px;
-            border-color: root.dark-mode ? #4b4b51 : #deddda;
+            border-color: Theme.border;
             border-radius: 10px;
             drop-shadow-color: #00000066;
-            drop-shadow-blur: 12px;
-            drop-shadow-offset-y: 4px;
+            drop-shadow-blur: 20px;
+            drop-shadow-offset-y: 6px;
 
             VerticalLayout {
                 padding: 4px;
@@ -45,12 +46,13 @@ export component ChoiceDropdown inherits Rectangle {
                     height: 32px;
                     border-radius: 7px;
                     background: option == root.current-value
-                        ? (root.dark-mode ? root.accent-color.with-alpha(0.24) : root.accent-color.with-alpha(0.14))
+                        ? (Theme.dark ? root.accent-color.with-alpha(0.24) : root.accent-color.with-alpha(0.14))
                         : option-touch.has-hover
-                            ? (root.dark-mode ? #3b3b40 : #f3f2f0)
+                            ? Theme.hover
                             : transparent;
 
                     option-touch := TouchArea {
+                        mouse-cursor: pointer;
                         clicked => {
                             root.current-value = option;
                             root.selected(option);
@@ -63,9 +65,9 @@ export component ChoiceDropdown inherits Rectangle {
                         width: parent.width - 20px;
                         height: parent.height;
                         text: option;
-                        font-family: "Cantarell";
-                        color: root.dark-mode ? #f6f5f4 : #241f31;
-                        font-size: 12px;
+                        font-family: Theme.font-ui;
+                        color: option == root.current-value ? Theme.fg : Theme.fg-2;
+                        font-size: Theme.fs-body;
                         font-weight: option == root.current-value ? 600 : 450;
                         vertical-alignment: center;
                         overflow: elide;

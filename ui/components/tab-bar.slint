@@ -1,0 +1,53 @@
+import { Theme } from "theme.slint";
+
+// style "underline": modern tab strip with an accent underline (main tabs).
+// style "pill": compact segmented look (view toggles).
+//   TabBar { tabs: ["Params","Headers"]; counts: ["", "2"]; current: root.tab; selected(t) => { root.tab = t; } }
+export component TabBar inherits Rectangle {
+    in property <[string]> tabs;
+    in property <[string]> counts: [];
+    in property <string> current;
+    in property <string> style: "underline";
+    callback selected(string);
+
+    height: 34px;
+    min-width: tab-layout.min-width;
+    preferred-width: tab-layout.preferred-width;
+
+    tab-layout := HorizontalLayout {
+        spacing: root.style == "pill" ? 2px : 4px;
+        alignment: start;
+
+        for tab[idx] in root.tabs : Rectangle {
+            width: label.preferred-width + (root.style == "pill" ? 20px : 24px);
+            border-radius: root.style == "pill" ? 6px : Theme.radius-control;
+            background: root.style == "pill"
+                ? (root.current == tab ? Theme.active : touch.has-hover ? Theme.hover : transparent)
+                : (touch.has-hover && root.current != tab ? Theme.hover : transparent);
+            animate background { duration: 150ms; easing: ease-out; }
+
+            touch := TouchArea {
+                mouse-cursor: pointer;
+                clicked => { root.selected(tab); }
+            }
+
+            label := Text {
+                text: (idx < root.counts.length && root.counts[idx] != "") ? tab + "  " + root.counts[idx] : tab;
+                color: root.current == tab ? (root.style == "pill" ? Theme.fg : Theme.accent-text) : Theme.fg-2;
+                font-size: Theme.fs-body;
+                font-weight: root.current == tab ? 700 : 500;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+            }
+
+            if root.style == "underline" && root.current == tab : Rectangle {
+                x: 10px;
+                y: parent.height - 3px;
+                width: parent.width - 20px;
+                height: 3px;
+                border-radius: 2px;
+                background: Theme.accent;
+            }
+        }
+    }
+}

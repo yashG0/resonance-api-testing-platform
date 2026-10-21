@@ -1,0 +1,103 @@
+// Resonance design tokens.
+//
+// Palette values follow GNOME 45+ / GTK4 Adwaita (gtk.css + gtk-dark.css) so the app
+// sits naturally on a GNOME desktop and matches the reference header bar tones.
+export global Theme {
+    in property <bool> dark: true;
+    in property <color> accent: #3584e4;      // mirrored from AppWindow.accent (system accent)
+
+    // Fonts. "Adwaita Sans" ships with GNOME 48+. On older GNOME change to "Cantarell".
+    out property <string> font-ui: "Adwaita Sans";
+    // Keep technical content visually distinct from UI copy. JetBrains Mono is
+    // preferred on the development machine; switch to "monospace" for portability.
+    out property <string> font-mono: "JetBrains Mono";
+
+    // Type scale
+    out property <length> fs-caption: 11px;
+    out property <length> fs-small: 12px;
+    out property <length> fs-body: 14px;
+    out property <length> fs-label: 14px;
+    out property <length> fs-heading: 17px;
+    out property <length> fs-title: 22px;
+
+    // Shape and rhythm
+    out property <length> radius-card: 12px;
+    out property <length> radius-control: 8px;
+    out property <length> control-h: 34px;
+
+    // ── Surfaces ───────────────────────────────────────────────────────────
+    // window_bg_color / view_bg_color / headerbar_bg_color / sidebar_bg_color
+    out property <color> window-bg:   dark ? #1b1b1b : #e5e5e5;
+    // Keep work surfaces in the same Adwaita tonal family. A single neutral
+    // canvas prevents the request editor from looking like a separate app.
+    out property <color> view-bg:     dark ? #2b2b2b : #ffffff;
+    out property <color> headerbar-bg: dark ? #252525 : #e5e3e0;
+    out property <color> sidebar-bg:  dark ? #232323 : #f3f2f0;
+    out property <color> card-bg:     dark ? #292929 : #ffffff;
+    out property <color> dialog-bg:   dark ? #292929 : #ffffff;
+    out property <color> popover-bg:  dark ? #303030 : #ffffff;
+    out property <color> input-bg:    dark ? #1d1d1d : #ffffff;
+    out property <color> button-bg:   dark ? #353535 : #ffffff;
+    out property <color> button-border: dark ? #4a4a4a : #d5d3d1;
+    out property <color> kbd-bg:      dark ? #404040 : #e9e8e7;
+    out property <color> overlay: #00000099;
+
+    // Code-viewer surfaces: slightly distinct gutter improves scanability without a heavy IDE look.
+    out property <color> code-gutter: dark ? #242424 : #f5f6f8;
+    out property <color> code-line-number: dark ? #8b9099 : #858b96;
+
+    // Header bar separator + backdrop (window unfocused)
+    out property <color> headerbar-border:   dark ? #ffffff14 : #d4d2d0;
+    out property <color> headerbar-backdrop: dark ? #252525 : #eae8e5;
+
+    // ── Foreground ─────────────────────────────────────────────────────────
+    // fg_color, text_color_secondary, text_color_tertiary, text_color_disabled
+    out property <color> fg:         dark ? #ffffff : #241f31;
+    out property <color> fg-2:       dark ? #ffffffb3 : #00000099;
+    out property <color> fg-3:       dark ? #ffffff80 : #00000073;
+    out property <color> fg-disabled: dark ? #ffffff5c : #0000005c;
+
+    // ── Lines and states ──────────────────────────────────────────────────
+    // borders (focused, 12% white/black), unfocused_borders (7%)
+    out property <color> border:         dark ? #ffffff20 : #0000001c;
+    out property <color> border-unfocused: dark ? #ffffff12 : #0000000e;
+    out property <color> border-strong:  dark ? #ffffff35 : #00000032;
+    out property <color> hover:  dark ? #ffffff0d : #00000009;
+    out property <color> active: dark ? #ffffff19 : #00000012;
+
+    // ── Accent ─────────────────────────────────────────────────────────────
+    out property <color> accent-fg:   #ffffff;
+    out property <color> accent-text: dark ? #78aeed : #1c71d8;
+    out property <color> accent-bg:   accent;
+    out property <color> accent-hover: accent.darker(0.12);
+
+    // ── Semantic ───────────────────────────────────────────────────────────
+    out property <color> success:      dark ? #26a269 : #1b8553;
+    out property <color> success-bg:   dark ? #26a26926 : #26a26926;
+    out property <color> warning:      dark ? #f5c211 : #9c6e03;
+    out property <color> warning-bg:   dark ? #f5c21126 : #f5c21126;
+    out property <color> danger:       dark ? #ff7b63 : #c01c28;
+    out property <color> danger-bg:    dark ? #c01c2826 : #c01c2826;
+    out property <color> destructive:  #c01c28;
+
+    // ── HTTP method colors (Adwaita success/warning/error + blue/purple) ───
+    pure public function method-color(method: string) -> color {
+        if method == "GET" { return dark ? #57e389 : #26a269; }
+        if method == "POST" { return dark ? #ffa348 : #c64600; }
+        if method == "PUT" { return dark ? #62a0ea : #1c71d8; }
+        if method == "PATCH" { return dark ? #dc8add : #813d9c; }
+        if method == "DELETE" { return dark ? #ff7b63 : #c01c28; }
+        return dark ? #c0bfbc : #5e5c64;
+    }
+
+    // Filled selector surfaces need darker tones than the bright method text colors,
+    // so white labels stay legible in both appearance modes.
+    pure public function method-button-color(method: string) -> color {
+        if method == "GET" { return dark ? #176b3a : #1f7a4b; }
+        if method == "POST" { return dark ? #8a4300 : #a84300; }
+        if method == "PUT" { return dark ? #245c9b : #1c71d8; }
+        if method == "PATCH" { return dark ? #713b83 : #813d9c; }
+        if method == "DELETE" { return dark ? #9b3028 : #c01c28; }
+        return dark ? #4b4a48 : #5e5c64;
+    }
+}

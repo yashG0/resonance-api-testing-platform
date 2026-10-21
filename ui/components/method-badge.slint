@@ -1,0 +1,19 @@
+import { Theme } from "theme.slint";
+
+export component MethodBadge inherits Rectangle {
+    in property <string> value;
+    in property <length> badge-width: 50px;
+    width: root.badge-width;
+    height: 20px;
+    border-radius: 5px;
+    background: Theme.method-color(root.value).with-alpha(0.16);
+
+    Text {
+        text: root.value;
+        color: Theme.method-color(root.value);
+        font-size: 10px;
+        font-weight: 700;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+}

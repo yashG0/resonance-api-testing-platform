@@ -1,0 +1,215 @@
+import { Theme } from "theme.slint";
+
+// Adwaita-style text inputs.
+//
+// Slint's std-widgets LineEdit/TextEdit are painted with the Fluent palette:
+//   LineEdit -> control-background   = #FFFFFF0F (dark) / #FFFFFFB3 (light), radius 4px
+//   TextEdit -> alternate-background = #2C2C2C (dark) / #f0f0f0 (light)
+// Neither matches the Adwaita surfaces used across this app, so these
+// drop-in replacements are built on the built-in TextInput element and inherit
+// the app's Theme tokens instead.
+//
+// API mirrors the std widgets closely enough to be swapped in:
+//   AdwLineEdit : text, placeholder-text, read-only, enabled, input-type,
+//                 font-size, font-family, font-weight,
+//                 edited(string), accepted(string), key-pressed(KeyEvent)
+//   AdwTextEdit : text, placeholder-text, read-only, enabled, wrap,
+//                 font-size, font-family, edited(string)
+
+// ── Single line ──────────────────────────────────────────────────────────────
+export component AdwLineEdit inherits Rectangle {
+    in-out property <string> text;
+    in property <string> placeholder-text: "";
+    in property <bool> read-only: false;
+    in property <bool> enabled: true;
+    in property <InputType> input-type: InputType.text;
+    in property <length> font-size: Theme.fs-body;
+    in property <string> font-family: Theme.font-ui;
+    in property <int> font-weight: 400;
+    in property <length> text-padding: 12px;
+
+    callback edited(string);
+    callback accepted(string);
+    callback key-pressed(KeyEvent) -> EventResult;
+
+    border-radius: Theme.radius-control;
+    background: Theme.input-bg;
+    border-width: 1px;
+    // Adwaita highlights the whole entry border once it takes focus.
+    border-color: input.has-focus ? Theme.accent : Theme.border;
+    forward-focus: input;
+
+    // Default sizing: entries are at least 32px tall, matching Adwaita's
+    // control height. Callers may override with an explicit `height:`.
+    height: max(32px, input.preferred-height + 10px);
+
+    ContextMenuArea {
+        enabled: root.enabled;
+
+        Menu {
+            MenuItem {
+                title: "Cut";
+                enabled: !root.read-only && root.enabled;
+                activated => { input.cut(); }
+            }
+            MenuItem {
+                title: "Copy";
+                enabled: !input.text.is-empty;
+                activated => { input.copy(); }
+            }
+            MenuItem {
+                title: "Paste";
+                enabled: !root.read-only && root.enabled;
+                activated => { input.paste(); }
+            }
+            MenuItem {
+                title: "Select All";
+                enabled: !input.text.is-empty;
+                activated => { input.select-all(); }
+            }
+        }
+
+        input := TextInput {
+            x: root.text-padding;
+            y: (parent.height - self.height) / 2;
+            width: parent.width - 2 * root.text-padding;
+            height: self.preferred-height;
+            font-size: root.font-size;
+            font-family: root.font-family;
+            font-weight: root.font-weight;
+            // Keep external values (including Rust-updated values) visible and
+            // propagate user edits back to the component property.
+            text <=> root.text;
+            color: Theme.fg;
+            selection-background-color: Theme.accent;
+            selection-foreground-color: Theme.accent-fg;
+            read-only: root.read-only;
+            enabled: root.enabled;
+            input-type: root.input-type;
+            vertical-alignment: center;
+            horizontal-alignment: left;
+            edited => { root.edited(self.text); }
+            accepted => { root.accepted(self.text); }
+            key-pressed(event) => { root.key-pressed(event); }
+        }
+    }
+
+    // Placeholder is drawn behind the input and only while there is no text.
+    if root.text == "" : Text {
+        x: root.text-padding;
+        width: parent.width - 2 * root.text-padding;
+        height: parent.height;
+        text: root.placeholder-text;
+        color: Theme.fg-3;
+        font-size: root.font-size;
+        font-family: root.font-family;
+        font-weight: root.font-weight;
+        vertical-alignment: center;
+        overflow: elide;
+    }
+}
+
+// ── Multi line ───────────────────────────────────────────────────────────────
+export component AdwTextEdit inherits Rectangle {
+    in-out property <string> text;
+    in property <string> placeholder-text: "";
+    in property <bool> read-only: false;
+    in property <bool> enabled: true;
+    in property <TextWrap> wrap: TextWrap.word-wrap;
+    in property <length> font-size: Theme.fs-body;
+    in property <string> font-family: Theme.font-mono;
+    in property <length> text-padding: 12px;
+
+    callback edited(string);
+
+    background: transparent;
+    forward-focus: input;
+
+    ContextMenuArea {
+        enabled: root.enabled;
+
+        Menu {
+            MenuItem {
+                title: "Cut";
+                enabled: !root.read-only && root.enabled;
+                activated => { input.cut(); }
+            }
+            MenuItem {
+                title: "Copy";
+                enabled: !input.text.is-empty;
+                activated => { input.copy(); }
+            }
+            MenuItem {
+                title: "Paste";
+                enabled: !root.read-only && root.enabled;
+                activated => { input.paste(); }
+            }
+            MenuItem {
+                title: "Select All";
+                enabled: !input.text.is-empty;
+                activated => { input.select-all(); }
+            }
+        }
+
+        flick := Flickable {
+            x: 0px;
+            y: 0px;
+            width: parent.width;
+            height: parent.height;
+            interactive: true;
+            content-width: root.wrap == TextWrap.word-wrap
+                ? self.width
+                : max(self.width, input.preferred-width + 2 * root.text-padding);
+            content-height: max(self.height, input.preferred-height + 2 * root.text-padding);
+
+            input := TextInput {
+                x: root.text-padding;
+                y: root.text-padding;
+                width: root.wrap == TextWrap.word-wrap
+                    ? flick.width - 2 * root.text-padding
+                    : flick.content-width - 2 * root.text-padding;
+                height: self.preferred-height;
+                // Keep the editor and its public component property in sync.
+                // This is essential for read-only response bodies set by Rust.
+                text <=> root.text;
+                single-line: false;
+                wrap: root.wrap;
+                font-size: root.font-size;
+                font-family: root.font-family;
+                color: Theme.fg;
+                selection-background-color: Theme.accent;
+                selection-foreground-color: Theme.accent-fg;
+                read-only: root.read-only;
+                enabled: root.enabled;
+                horizontal-alignment: left;
+                vertical-alignment: top;
+                edited => { root.edited(self.text); }
+
+                // Keep the caret inside the viewport while typing or moving it.
+                cursor-position-changed(cpos) => {
+                    if (cpos.x + flick.content-x < 0px) {
+                        flick.content-x = min(0px, max(flick.width - self.width, -cpos.x));
+                    } else if (cpos.x + flick.content-x > flick.width - 20px) {
+                        flick.content-x = min(0px, max(flick.width - self.width, flick.width - cpos.x - 20px));
+                    }
+                    if (cpos.y + flick.content-y < 0px) {
+                        flick.content-y = min(0px, max(flick.height - self.height, -cpos.y));
+                    } else if (cpos.y + flick.content-y > flick.height - 20px) {
+                        flick.content-y = min(0px, max(flick.height - self.height, flick.height - cpos.y - 20px));
+                    }
+                }
+            }
+        }
+    }
+
+    if root.text == "" : Text {
+        x: root.text-padding;
+        y: root.text-padding;
+        width: parent.width - 2 * root.text-padding;
+        text: root.placeholder-text;
+        color: Theme.fg-3;
+        font-size: root.font-size;
+        font-family: root.font-family;
+        wrap: word-wrap;
+    }
+}

@@ -324,6 +324,66 @@ fn to_history_model(history: Vec<RequestHistory>) -> ModelRc<HistoryItem> {
     ModelRc::new(VecModel::from(items))
 }
 
+
+/// Convert formatted JSON into line/token models for the native Slint syntax viewer.
+/// Token text is kept verbatim, so copying the response never depends on rendered colors.
+fn tokenize_response(source: &str, format: &str, dark: bool) -> ModelRc<JsonLine> {
+    let base = if dark { Color::from_rgb_u8(0xe6, 0xe6, 0xe6) } else { Color::from_rgb_u8(0x24, 0x1f, 0x31) };
+    let key = if dark { Color::from_rgb_u8(0x78, 0xae, 0xed) } else { Color::from_rgb_u8(0x1c, 0x71, 0xd8) };
+    let string = if dark { Color::from_rgb_u8(0x8f, 0xf0, 0xa4) } else { Color::from_rgb_u8(0x26, 0xa2, 0x69) };
+    let number = if dark { Color::from_rgb_u8(0xff, 0xbe, 0x6f) } else { Color::from_rgb_u8(0xc6, 0x46, 0x00) };
+    let boolean = if dark { Color::from_rgb_u8(0xdc, 0x8a, 0xdd) } else { Color::from_rgb_u8(0x81, 0x3d, 0x9c) };
+    let punctuation = if dark { Color::from_rgb_u8(0xc0, 0xbf, 0xbc) } else { Color::from_rgb_u8(0x5e, 0x5c, 0x64) };
+    let null = if dark { Color::from_rgb_u8(0xa8, 0xa8, 0xa8) } else { Color::from_rgb_u8(0x6c, 0x6a, 0x73) };
+
+    let mut lines = Vec::new();
+    let source_lines: Vec<&str> = source.lines().collect();
+    let source_lines: Vec<&str> = if source_lines.is_empty() { vec![""] } else { source_lines };
+    for (line_index, line) in source_lines.iter().enumerate() {
+        let mut tokens: Vec<JsonToken> = Vec::new();
+        let chars: Vec<char> = line.chars().collect();
+        let mut i = 0;
+        while i < chars.len() {
+            let start = i;
+            let ch = chars[i];
+            let token_color;
+            if ch == '"' {
+                i += 1;
+                while i < chars.len() {
+                    if chars[i] == '\\' { i = (i + 2).min(chars.len()); continue; }
+                    if chars[i] == '"' { i += 1; break; }
+                    i += 1;
+                }
+                let mut lookahead = i;
+                while lookahead < chars.len() && chars[lookahead].is_whitespace() { lookahead += 1; }
+                token_color = if lookahead < chars.len() && chars[lookahead] == ':' { key } else { string };
+            } else if ch.is_ascii_digit() || (ch == '-' && chars.get(i + 1).is_some_and(|c| c.is_ascii_digit())) {
+                i += 1;
+                while i < chars.len() && (chars[i].is_ascii_digit() || matches!(chars[i], '.' | 'e' | 'E' | '+' | '-')) { i += 1; }
+                token_color = number;
+            } else if ch.is_ascii_alphabetic() {
+                i += 1;
+                while i < chars.len() && chars[i].is_ascii_alphabetic() { i += 1; }
+                let word: String = chars[start..i].iter().collect();
+                token_color = match word.as_str() { "true" | "false" => boolean, "null" => null, _ => base };
+            } else {
+                i += 1;
+                token_color = if "{}[],:".contains(ch) { punctuation } else { base };
+            }
+            let text: String = chars[start..i].iter().collect();
+            if let Some(last) = tokens.last_mut() {
+                if last.color == token_color { last.text = format!("{}{}", last.text, text).into(); continue; }
+            }
+            tokens.push(JsonToken { text: text.into(), color: token_color });
+        }
+        if format != "JSON" {
+            tokens = vec![JsonToken { text: (*line).to_string().into(), color: base }];
+        }
+        lines.push(JsonLine { number: (line_index + 1) as i32, tokens: ModelRc::new(VecModel::from(tokens)) });
+    }
+    ModelRc::new(VecModel::from(lines))
+}
+
 #[tokio::main]
 async fn main() -> Result<(), slint::PlatformError> {
     let store = Arc::new(
@@ -350,6 +410,79 @@ async fn main() -> Result<(), slint::PlatformError> {
 
     app.on_serialize_param_rows(|rows| serialize_key_value_rows(rows, "=").into());
     app.on_serialize_header_rows(|rows| serialize_key_value_rows(rows, ": ").into());
+
+    app.on_format_request_body(|body, body_format| {
+        let body_str: String = body.to_string();
+        let format_str: String = body_format.to_string();
+        let highlighted = match format_str.as_str() {
+            "JSON" => match serde_json::from_str::<serde_json::Value>(&body_str) {
+                Ok(json) => {
+                    let pretty =
+                        serde_json::to_string_pretty(&json).unwrap_or_else(|_| body_str.clone());
+                    crate::http::client::highlight_json(&pretty)
+                }
+                Err(_) => crate::http::client::escape_html(&body_str),
+            },
+            "XML" | "HTML" => {
+                crate::http::client::highlight_xml(&crate::http::client::format_html(&body_str))
+            }
+            _ => crate::http::client::escape_html(&body_str),
+        };
+        highlighted.into()
+    });
+
+    app.on_tokenize_response(|source, format, dark| {
+        tokenize_response(source.as_str(), format.as_str(), dark)
+    });
+
+    app.on_format_response_body(|body, body_format| {
+        let body_str: String = body.to_string();
+        let format_str: String = body_format.to_string();
+        let highlighted = match format_str.as_str() {
+            "JSON" => match serde_json::from_str::<serde_json::Value>(&body_str) {
+                Ok(json) => {
+                    let pretty =
+                        serde_json::to_string_pretty(&json).unwrap_or_else(|_| body_str.clone());
+                    crate::http::client::highlight_json(&pretty)
+                }
+                Err(_) => crate::http::client::escape_html(&body_str),
+            },
+            "XML" | "HTML" => {
+                crate::http::client::highlight_xml(&crate::http::client::format_html(&body_str))
+            }
+            _ => crate::http::client::escape_html(&body_str),
+        };
+        highlighted.into()
+    });
+
+    // Copy to the system clipboard. Tries Wayland first, then X11, so the Copy
+    // button works on GNOME without pulling in an extra clipboard dependency.
+    app.on_copy_text(|text| {
+        let text: String = text.to_string();
+        let copied = [
+            "wl-copy",
+            "xclip -selection clipboard",
+            "xsel --clipboard --input",
+        ]
+        .iter()
+        .any(|cmd| {
+            let mut parts = cmd.split_whitespace();
+            let Some(program) = parts.next() else {
+                return false;
+            };
+            Command::new(program)
+                .args(parts)
+                .arg(&text)
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .status()
+                .map(|status| status.success())
+                .unwrap_or(false)
+        });
+        if !copied {
+            eprintln!("Resonance: no clipboard tool found (tried wl-copy, xclip, xsel)");
+        }
+    });
 
     // Load the selected collection's variables off the UI thread, then send the
     // fully resolved request without blocking Slint's event loop.

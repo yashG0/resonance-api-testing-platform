@@ -1,0 +1,34 @@
+import { Theme } from "theme.slint";
+
+export component NavRow inherits Rectangle {
+    in property <image> icon;
+    in property <string> text;
+    in property <bool> active: false;
+    callback clicked();
+    height: 36px;
+    border-radius: Theme.radius-control;
+    background: root.active ? Theme.active : touch.has-hover ? Theme.hover : transparent;
+    animate background { duration: 130ms; easing: ease-out; }
+
+    touch := TouchArea { mouse-cursor: pointer; clicked => { root.clicked(); } }
+
+    HorizontalLayout {
+        padding-left: 10px;
+        padding-right: 10px;
+        spacing: 10px;
+        Image {
+            source: root.icon;
+            width: 16px;
+            height: 16px;
+            y: (parent.height - self.height) / 2;
+            colorize: root.active ? Theme.accent-text : Theme.fg-2;
+        }
+        Text {
+            text: root.text;
+            color: root.active ? Theme.fg : Theme.fg-2;
+            font-size: Theme.fs-label;
+            font-weight: root.active ? 700 : 500;
+            vertical-alignment: center;
+        }
+    }
+}

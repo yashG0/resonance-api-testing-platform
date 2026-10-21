@@ -1,0 +1,33 @@
+import { Theme } from "theme.slint";
+
+export component MenuItem inherits Rectangle {
+    in property <image> icon;
+    in property <string> text;
+    in property <bool> destructive: false;
+    in property <bool> enabled: true;
+    callback clicked();
+    height: 34px;
+    border-radius: 8px;
+    opacity: root.enabled ? 1 : 0.4;
+    background: touch.has-hover && root.enabled ? (root.destructive ? Theme.danger-bg : Theme.hover) : transparent;
+
+    touch := TouchArea { enabled: root.enabled; mouse-cursor: pointer; clicked => { root.clicked(); } }
+
+    HorizontalLayout {
+        padding-left: 10px;
+        spacing: 10px;
+        Image {
+            source: root.icon;
+            width: 15px;
+            height: 15px;
+            y: (parent.height - self.height) / 2;
+            colorize: root.destructive ? Theme.danger : Theme.fg-2;
+        }
+        Text {
+            text: root.text;
+            color: root.destructive ? Theme.danger : Theme.fg;
+            font-size: Theme.fs-body;
+            vertical-alignment: center;
+        }
+    }
+}

@@ -1,0 +1,28 @@
+import { Theme } from "theme.slint";
+
+// state: idle | loading | success | http-error | error (same values AppWindow already uses)
+export component StatusPill inherits Rectangle {
+    in property <string> status;
+    in property <string> state;
+    visible: root.state != "idle";
+    height: 24px;
+    preferred-width: label.preferred-width + 20px;
+    border-radius: 12px;
+    background:
+        root.state == "success" ? Theme.success-bg :
+        root.state == "loading" ? Theme.accent.with-alpha(0.18) : Theme.danger-bg;
+
+    label := Text {
+        x: 0px;
+        y: 0px;
+        width: parent.width;
+        height: parent.height;
+        text: root.status;
+        color: root.state == "success" ? Theme.success : root.state == "loading" ? Theme.accent-text : Theme.danger;
+        font-size: Theme.fs-small;
+        font-weight: 700;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+        overflow: elide;
+    }
+}

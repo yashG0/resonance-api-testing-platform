@@ -1,0 +1,63 @@
+import { Theme } from "theme.slint";
+
+// kind: "default" | "suggested" | "flat" | "destructive". `active` gives flat buttons a selected look.
+export component Btn inherits Rectangle {
+    in property <string> text;
+    in property <image> icon;
+    in property <string> kind: "default";
+    in property <bool> enabled: true;
+    in property <bool> active: false;
+    in property <length> icon-size: 16px;
+    callback clicked();
+
+    height: Theme.control-h;
+    min-width: Theme.control-h;
+    preferred-width: row.preferred-width;
+    border-radius: Theme.radius-control;
+    opacity: root.enabled ? 1 : 0.4;
+    background:
+        root.kind == "suggested" ? (touch.pressed ? Theme.accent.darker(0.12) : touch.has-hover ? Theme.accent.brighter(0.08) : Theme.accent) :
+        root.kind == "default" ? (touch.pressed ? Theme.active : touch.has-hover ? Theme.hover : Theme.button-bg) :
+        root.kind == "destructive" ? (touch.has-hover ? Theme.danger-bg : transparent) :
+        (root.active ? Theme.active : touch.pressed ? Theme.active : touch.has-hover ? Theme.hover : transparent);
+
+    // Adwaita gives default buttons a hairline border so they read as raised
+    // on light backgrounds; flat and suggested buttons stay borderless.
+    border-width: root.kind == "default" ? 1px : 0px;
+    border-color: Theme.button-border;
+    animate background { duration: 120ms; easing: ease-out; }
+    animate border-color { duration: 120ms; easing: ease-out; }
+
+    property <color> content-color:
+        root.kind == "suggested" ? Theme.accent-fg :
+        root.kind == "destructive" ? Theme.danger :
+        root.active ? Theme.accent-text : Theme.fg;
+
+    touch := TouchArea {
+        enabled: root.enabled;
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+
+    row := HorizontalLayout {
+        alignment: center;
+        spacing: 8px;
+        padding-left: root.text == "" ? 0px : 14px;
+        padding-right: root.text == "" ? 0px : 14px;
+
+        if root.icon.width > 0 : Image {
+            source: root.icon;
+            width: root.icon-size;
+            height: root.icon-size;
+            y: (parent.height - self.height) / 2;
+            colorize: root.content-color;
+        }
+        if root.text != "" : Text {
+            text: root.text;
+            color: root.content-color;
+            font-size: Theme.fs-body;
+            font-weight: 600;
+            vertical-alignment: center;
+        }
+    }
+}
