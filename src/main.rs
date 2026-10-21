@@ -364,140 +364,133 @@ fn tokenize_response(source: &str, format: &str, dark: bool) -> ModelRc<JsonLine
         Color::from_rgb_u8(0x6c, 0x6a, 0x73)
     };
 
-    // Non-JSON responses need no syntax tokenization.
-    if format != "JSON" {
-        let source_lines = if source.is_empty() {
-            vec![""]
-        } else {
-            source.lines().collect::<Vec<_>>()
-        };
-
-        let lines = source_lines
-            .into_iter()
-            .enumerate()
-            .map(|(index, line)| JsonLine {
-                number: (index + 1) as i32,
-                tokens: ModelRc::new(VecModel::from(vec![JsonToken {
-                    text: line.into(),
-                    color: base,
-                }])),
-            })
-            .collect::<Vec<_>>();
-
-        return ModelRc::new(VecModel::from(lines));
-    }
-
-    let source_lines = if source.is_empty() {
+    let source_lines: Vec<&str> = if source.is_empty() {
         vec![""]
     } else {
-        source.lines().collect::<Vec<_>>()
+        source.lines().collect()
     };
 
     let mut lines = Vec::with_capacity(source_lines.len());
 
     for (line_index, line) in source_lines.into_iter().enumerate() {
-        let bytes = line.as_bytes();
         let mut tokens: Vec<JsonToken> = Vec::new();
-        let mut i = 0;
 
-        while i < bytes.len() {
-            let start = i;
-            let byte = bytes[i];
+        if format != "JSON" {
+            tokens.push(JsonToken {
+                text: line.into(),
+                color: base,
+            });
+        } else {
+            let bytes = line.as_bytes();
+            let mut i = 0;
+            let mut run_start = 0;
+            let mut run_end = 0;
+            let mut run_color: Option<Color> = None;
 
-            let token_color;
+            while i < bytes.len() {
+                let start = i;
+                let byte = bytes[i];
 
-            if byte == b'"' {
-                i += 1;
+                let token_color;
 
-                while i < bytes.len() {
-                    match bytes[i] {
-                        b'\\' => {
-                            i += 1;
+                if byte == b'"' {
+                    i += 1;
 
-                            if i < bytes.len() {
-                                let ch_len = line[i..].chars().next().map_or(1, char::len_utf8);
-                                i += ch_len;
+                    while i < bytes.len() {
+                        match bytes[i] {
+                            b'\\' => {
+                                i += 1;
+
+                                if i < bytes.len() {
+                                    let character_length =
+                                        line[i..].chars().next().unwrap().len_utf8();
+                                    i += character_length;
+                                }
+                            }
+                            b'"' => {
+                                i += 1;
+                                break;
+                            }
+                            _ => {
+                                let character_length = line[i..].chars().next().unwrap().len_utf8();
+                                i += character_length;
                             }
                         }
-                        b'"' => {
-                            i += 1;
+                    }
+
+                    let mut lookahead = i;
+                    while lookahead < bytes.len() {
+                        let character = line[lookahead..].chars().next().unwrap();
+                        if !character.is_whitespace() {
                             break;
                         }
-                        _ => {
-                            let ch_len = line[i..].chars().next().map_or(1, char::len_utf8);
-                            i += ch_len;
-                        }
-                    }
-                }
-
-                let mut lookahead = i;
-
-                while lookahead < bytes.len() {
-                    let ch = line[lookahead..].chars().next().unwrap();
-
-                    if !ch.is_whitespace() {
-                        break;
+                        lookahead += character.len_utf8();
                     }
 
-                    lookahead += ch.len_utf8();
-                }
-
-                token_color = if lookahead < bytes.len() && bytes[lookahead] == b':' {
-                    key
-                } else {
-                    string
-                };
-            } else if byte.is_ascii_digit()
-                || (byte == b'-' && bytes.get(i + 1).is_some_and(u8::is_ascii_digit))
-            {
-                i += 1;
-
-                while i < bytes.len()
-                    && (bytes[i].is_ascii_digit()
-                        || matches!(bytes[i], b'.' | b'e' | b'E' | b'+' | b'-'))
+                    token_color = if lookahead < bytes.len() && bytes[lookahead] == b':' {
+                        key
+                    } else {
+                        string
+                    };
+                } else if byte.is_ascii_digit()
+                    || (byte == b'-' && bytes.get(i + 1).is_some_and(u8::is_ascii_digit))
                 {
                     i += 1;
-                }
 
-                token_color = number;
-            } else if byte.is_ascii_alphabetic() {
-                i += 1;
+                    while i < bytes.len()
+                        && (bytes[i].is_ascii_digit()
+                            || matches!(bytes[i], b'.' | b'e' | b'E' | b'+' | b'-'))
+                    {
+                        i += 1;
+                    }
 
-                while i < bytes.len() && bytes[i].is_ascii_alphabetic() {
+                    token_color = number;
+                } else if byte.is_ascii_alphabetic() {
                     i += 1;
-                }
 
-                token_color = match &line[start..i] {
-                    "true" | "false" => boolean,
-                    "null" => null,
-                    _ => base,
-                };
-            } else {
-                let ch = line[i..].chars().next().unwrap();
-                i += ch.len_utf8();
+                    while i < bytes.len() && bytes[i].is_ascii_alphabetic() {
+                        i += 1;
+                    }
 
-                token_color = if matches!(byte, b'{' | b'}' | b'[' | b']' | b',' | b':') {
-                    punctuation
+                    token_color = match &line[start..i] {
+                        "true" | "false" => boolean,
+                        "null" => null,
+                        _ => base,
+                    };
                 } else {
-                    base
-                };
-            }
+                    let character = line[i..].chars().next().unwrap();
+                    i += character.len_utf8();
 
-            let text = &line[start..i];
-
-            if let Some(last) = tokens.last_mut() {
-                if last.color == token_color {
-                    let mut merged = last.text.to_string();
-                    merged.push_str(text);
-                    last.text = merged.into();
-                    continue;
+                    token_color = if matches!(byte, b'{' | b'}' | b'[' | b']' | b',' | b':') {
+                        punctuation
+                    } else {
+                        base
+                    };
                 }
+
+                if let Some(current_color) = run_color {
+                    if current_color == token_color {
+                        run_end = i;
+                        continue;
+                    }
+
+                    tokens.push(JsonToken {
+                        text: line[run_start..run_end].into(),
+                        color: current_color,
+                    });
+                }
+
+                run_start = start;
+                run_end = i;
+                run_color = Some(token_color);
             }
 
-            tokens.push(JsonToken {
-                text: text.into(),
-                color: token_color,
-            });
+            if let Some(color) = run_color {
+                tokens.push(JsonToken {
+                    text: line[run_start..run_end].into(),
+                    color,
+                });
+            }
         }
 
         lines.push(JsonLine {
