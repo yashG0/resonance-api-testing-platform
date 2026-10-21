@@ -507,6 +507,55 @@ impl RequestStore {
         Ok(())
     }
 
+    pub fn record_history_batch(
+        &self,
+        entries: &[(i64, i64, String, String, String, String, i64)],
+    ) -> Result<(), StoreError> {
+        if entries.is_empty() {
+            return Ok(());
+        }
+
+        let mut connection = self.connect()?;
+        let transaction = connection.transaction()?;
+
+        {
+            let mut insert = transaction.prepare(
+                "INSERT INTO request_history
+                 (request_id, collection_name, request_name, method, url, status, elapsed_ms)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            )?;
+
+            for (request_id, collection_id, name, method, url, status, elapsed_ms) in entries {
+                let collection_name: String = transaction.query_row(
+                    "SELECT name FROM collections WHERE id = ?1",
+                    [collection_id],
+                    |row| row.get(0),
+                )?;
+
+                insert.execute(params![
+                    request_id,
+                    collection_name,
+                    name,
+                    method,
+                    url,
+                    status,
+                    elapsed_ms
+                ])?;
+            }
+        }
+
+        transaction.execute(
+            "DELETE FROM request_history
+             WHERE id NOT IN (
+                 SELECT id FROM request_history ORDER BY id DESC LIMIT 500
+             )",
+            [],
+        )?;
+
+        transaction.commit()?;
+        Ok(())
+    }
+
     pub fn list_history(&self) -> Result<Vec<RequestHistory>, StoreError> {
         let connection = self.connect()?;
         let mut statement = connection.prepare(

@@ -885,6 +885,9 @@ async fn main() -> Result<(), slint::PlatformError> {
 
                 let mut passed = 0usize;
                 let mut lines = Vec::new();
+                let mut history_entries: Vec<(i64, i64, String, String, String, String, i64)> =
+                    Vec::new();
+
                 for request in requests {
                     let result = client
                         .send(
@@ -910,25 +913,21 @@ async fn main() -> Result<(), slint::PlatformError> {
                         result.status,
                         result.elapsed.as_secs_f64() * 1000.0
                     ));
-                    let history_store = Arc::clone(&store);
-                    let status = result.status.clone();
-                    let request_name = request.name.clone();
-                    let method = request.method.clone();
-                    let url = request.url.clone();
-                    let elapsed_ms = (result.elapsed.as_secs_f64() * 1000.0) as i64;
-                    let _ = tokio::task::spawn_blocking(move || {
-                        history_store.record_history(
-                            request.id,
-                            request.collection_id,
-                            &request_name,
-                            &method,
-                            &url,
-                            &status,
-                            elapsed_ms,
-                        )
-                    })
-                    .await;
+                    history_entries.push((
+                        request.id,
+                        request.collection_id,
+                        request.name.clone(),
+                        request.method.clone(),
+                        request.url.clone(),
+                        result.status.clone(),
+                        (result.elapsed.as_secs_f64() * 1000.0) as i64,
+                    ));
                 }
+                let history_store = Arc::clone(&store);
+                let _ = tokio::task::spawn_blocking(move || {
+                    history_store.record_history_batch(&history_entries)
+                })
+                .await;
 
                 let total = lines.len();
                 let state = if passed == total {
