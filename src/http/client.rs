@@ -481,8 +481,7 @@ pub(crate) fn format_html(input: &str) -> String {
 
         if !is_closing && matches!(tag_name.as_str(), "script" | "style") {
             let closing_tag = format!("</{tag_name}");
-            let remainder = input[cursor..].to_ascii_lowercase();
-            if let Some(close_start) = remainder.find(&closing_tag) {
+            if let Some(close_start) = find_ascii_case_insensitive(&input[cursor..], &closing_tag) {
                 let raw = input[cursor..cursor + close_start].trim();
                 if !raw.is_empty() {
                     append_html_line(&mut output, raw, depth);
@@ -494,7 +493,16 @@ pub(crate) fn format_html(input: &str) -> String {
 
     output.trim_end().to_owned()
 }
+fn find_ascii_case_insensitive(input: &str, needle: &str) -> Option<usize> {
+    if needle.is_empty() {
+        return Some(0);
+    }
 
+    input
+        .as_bytes()
+        .windows(needle.len())
+        .position(|window| window.eq_ignore_ascii_case(needle.as_bytes()))
+}
 fn find_html_tag_end(input: &str, start: usize) -> Option<usize> {
     let mut quote = None;
     for (offset, character) in input[start..].char_indices() {
