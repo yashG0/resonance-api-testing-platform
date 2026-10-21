@@ -26,26 +26,43 @@ export component ResponseBody inherits Rectangle {
     callback tokenize-response(string, string, bool) -> [JsonLine];
     in property <string> format: "JSON";
     in property <bool> dark: true;
+    in property <bool> large-response: false;
 
     property <bool> has-pretty: root.pretty != "" && root.pretty != root.raw;
     property <string> displayed-text: (root.has-pretty && root.mode == "Pretty") ? root.pretty : root.raw;
-    in-out property <[JsonLine]> json-lines: [];
+
+in-out property <[JsonLine]> json-lines: [];
+
+function refresh-json-lines() {
+    if (root.format == "JSON" && root.mode == "Pretty" && !root.large-response) {
+        root.json-lines = root.tokenize-response(
+            root.displayed-text,
+            root.format,
+            root.dark
+        );
+    } else {
+        root.json-lines = [];
+    }
+}
     background: Theme.view-bg;
     border-radius: Theme.radius-card;
     clip: true;
 
     init => {
-        root.json-lines = root.tokenize-response(root.displayed-text, root.format, root.dark);
-    }
-    changed displayed-text => {
-        root.json-lines = root.tokenize-response(root.displayed-text, root.format, root.dark);
-    }
-    changed format => {
-        root.json-lines = root.tokenize-response(root.displayed-text, root.format, root.dark);
-    }
-    changed dark => {
-        root.json-lines = root.tokenize-response(root.displayed-text, root.format, root.dark);
-    }
+    root.refresh-json-lines();
+}
+
+changed displayed-text => {
+    root.refresh-json-lines();
+}
+
+changed format => {
+    root.refresh-json-lines();
+}
+
+changed dark => {
+    root.refresh-json-lines();
+}
 
     VerticalLayout {
         spacing: 0px;
@@ -84,7 +101,7 @@ export component ResponseBody inherits Rectangle {
 
         Rectangle { height: 1px; background: Theme.border; }
 
-        if root.format == "JSON" && root.mode == "Pretty" : Rectangle {
+        if root.format == "JSON" && root.mode == "Pretty" && !root.large-response : Rectangle {
             // ScrollView has no background property; paint the containing surface.
             vertical-stretch: 1;
             background: Theme.view-bg;
@@ -147,7 +164,7 @@ export component ResponseBody inherits Rectangle {
 
         // Slint conditional elements are separate siblings; use the inverse
         // condition rather than an `else` element branch.
-        if root.format != "JSON" || root.mode != "Pretty" : AdwTextEdit {
+        if root.format != "JSON" || root.mode != "Pretty" || root.large-response : AdwTextEdit {
             vertical-stretch: 1;
             read-only: true;
             wrap: root.wrap-lines ? TextWrap.word-wrap : TextWrap.no-wrap;

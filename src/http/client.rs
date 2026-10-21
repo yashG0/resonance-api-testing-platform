@@ -232,7 +232,11 @@ impl HttpClient {
             .trim()
             .to_ascii_lowercase();
         let mut response = response;
-        let mut bytes = Vec::new();
+        let initial_capacity = response
+            .content_length()
+            .unwrap_or(0)
+            .min(MAX_RESPONSE_BYTES as u64) as usize;
+        let mut bytes = Vec::with_capacity(initial_capacity);
 
         loop {
             match response.chunk().await {
