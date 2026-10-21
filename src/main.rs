@@ -333,52 +333,46 @@ fn tokenize_response(source: &str, format: &str, dark: bool) -> ModelRc<JsonLine
     } else {
         Color::from_rgb_u8(0x24, 0x1f, 0x31)
     };
-
     let key = if dark {
         Color::from_rgb_u8(0x78, 0xae, 0xed)
     } else {
         Color::from_rgb_u8(0x1c, 0x71, 0xd8)
     };
-
     let string = if dark {
         Color::from_rgb_u8(0x8f, 0xf0, 0xa4)
     } else {
         Color::from_rgb_u8(0x26, 0xa2, 0x69)
     };
-
     let number = if dark {
         Color::from_rgb_u8(0xff, 0xbe, 0x6f)
     } else {
         Color::from_rgb_u8(0xc6, 0x46, 0x00)
     };
-
     let boolean = if dark {
         Color::from_rgb_u8(0xdc, 0x8a, 0xdd)
     } else {
         Color::from_rgb_u8(0x81, 0x3d, 0x9c)
     };
-
     let punctuation = if dark {
         Color::from_rgb_u8(0xc0, 0xbf, 0xbc)
     } else {
         Color::from_rgb_u8(0x5e, 0x5c, 0x64)
     };
-
     let null = if dark {
         Color::from_rgb_u8(0xa8, 0xa8, 0xa8)
     } else {
         Color::from_rgb_u8(0x6c, 0x6a, 0x73)
     };
 
-    // Plain-text, HTML, and XML responses don't need JSON tokenization.
+    // Non-JSON responses need no syntax tokenization.
     if format != "JSON" {
-        let lines = if source.is_empty() {
+        let source_lines = if source.is_empty() {
             vec![""]
         } else {
             source.lines().collect::<Vec<_>>()
         };
 
-        let lines = lines
+        let lines = source_lines
             .into_iter()
             .enumerate()
             .map(|(index, line)| JsonLine {
@@ -393,98 +387,108 @@ fn tokenize_response(source: &str, format: &str, dark: bool) -> ModelRc<JsonLine
         return ModelRc::new(VecModel::from(lines));
     }
 
-    let mut lines = Vec::new();
-
-    // Keep the existing character-based scanner for JSON so Unicode
-    // and escaped-string handling retain their current behavior.
     let source_lines = if source.is_empty() {
         vec![""]
     } else {
         source.lines().collect::<Vec<_>>()
     };
 
-    for (line_index, line) in source_lines.iter().enumerate() {
+    let mut lines = Vec::with_capacity(source_lines.len());
+
+    for (line_index, line) in source_lines.into_iter().enumerate() {
+        let bytes = line.as_bytes();
         let mut tokens: Vec<JsonToken> = Vec::new();
-        let chars: Vec<char> = line.chars().collect();
         let mut i = 0;
 
-        while i < chars.len() {
+        while i < bytes.len() {
             let start = i;
-            let ch = chars[i];
+            let byte = bytes[i];
 
             let token_color;
 
-            if ch == '"' {
+            if byte == b'"' {
                 i += 1;
 
-                while i < chars.len() {
-                    if chars[i] == '\\' {
-                        i = (i + 2).min(chars.len());
-                        continue;
-                    }
+                while i < bytes.len() {
+                    match bytes[i] {
+                        b'\\' => {
+                            i += 1;
 
-                    if chars[i] == '"' {
-                        i += 1;
-                        break;
+                            if i < bytes.len() {
+                                let ch_len = line[i..].chars().next().map_or(1, char::len_utf8);
+                                i += ch_len;
+                            }
+                        }
+                        b'"' => {
+                            i += 1;
+                            break;
+                        }
+                        _ => {
+                            let ch_len = line[i..].chars().next().map_or(1, char::len_utf8);
+                            i += ch_len;
+                        }
                     }
-
-                    i += 1;
                 }
 
                 let mut lookahead = i;
 
-                while lookahead < chars.len() && chars[lookahead].is_whitespace() {
-                    lookahead += 1;
+                while lookahead < bytes.len() {
+                    let ch = line[lookahead..].chars().next().unwrap();
+
+                    if !ch.is_whitespace() {
+                        break;
+                    }
+
+                    lookahead += ch.len_utf8();
                 }
 
-                token_color = if lookahead < chars.len() && chars[lookahead] == ':' {
+                token_color = if lookahead < bytes.len() && bytes[lookahead] == b':' {
                     key
                 } else {
                     string
                 };
-            } else if ch.is_ascii_digit()
-                || (ch == '-' && chars.get(i + 1).is_some_and(|c| c.is_ascii_digit()))
+            } else if byte.is_ascii_digit()
+                || (byte == b'-' && bytes.get(i + 1).is_some_and(u8::is_ascii_digit))
             {
                 i += 1;
 
-                while i < chars.len()
-                    && (chars[i].is_ascii_digit()
-                        || matches!(chars[i], '.' | 'e' | 'E' | '+' | '-'))
+                while i < bytes.len()
+                    && (bytes[i].is_ascii_digit()
+                        || matches!(bytes[i], b'.' | b'e' | b'E' | b'+' | b'-'))
                 {
                     i += 1;
                 }
 
                 token_color = number;
-            } else if ch.is_ascii_alphabetic() {
+            } else if byte.is_ascii_alphabetic() {
                 i += 1;
 
-                while i < chars.len() && chars[i].is_ascii_alphabetic() {
+                while i < bytes.len() && bytes[i].is_ascii_alphabetic() {
                     i += 1;
                 }
 
-                let word: String = chars[start..i].iter().collect();
-
-                token_color = match word.as_str() {
+                token_color = match &line[start..i] {
                     "true" | "false" => boolean,
                     "null" => null,
                     _ => base,
                 };
             } else {
-                i += 1;
+                let ch = line[i..].chars().next().unwrap();
+                i += ch.len_utf8();
 
-                token_color = if "{}[],:".contains(ch) {
+                token_color = if matches!(byte, b'{' | b'}' | b'[' | b']' | b',' | b':') {
                     punctuation
                 } else {
                     base
                 };
             }
 
-            let text: String = chars[start..i].iter().collect();
+            let text = &line[start..i];
 
             if let Some(last) = tokens.last_mut() {
                 if last.color == token_color {
                     let mut merged = last.text.to_string();
-                    merged.push_str(&text);
+                    merged.push_str(text);
                     last.text = merged.into();
                     continue;
                 }
