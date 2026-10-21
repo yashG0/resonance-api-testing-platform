@@ -13,6 +13,7 @@ import { NavRow } from "components/nav-row.slint";
 import { MenuItem } from "components/menu-item.slint";
 import { ResponseBody, JsonLine } from "components/response-body.slint";
 import { ShortcutsDialog } from "components/shortcuts-dialog.slint";
+import { AboutDialog } from "components/about-dialog.slint";
 
 export { Theme }
 
@@ -58,14 +59,15 @@ export struct ResponseCookieItem {
 
 export component AppWindow inherits Window {
     title: "Resonance";
-    // Start as a comfortably sized, resizable window so desktop decoration
-    // can show its native rounded corners instead of filling the screen.
+    no-frame: true;
+    resize-border-width: 8px;
+    // A little inset keeps the client-side rounded frame visible on launch.
     preferred-width: 1120px;
     preferred-height: 740px;
     min-width: 960px;
     min-height: 620px;
     default-font-family: Theme.font-ui;
-    background: Theme.window-bg;
+    background: transparent;
     forward-focus: shortcut-scope;
 
     callback send-request(string, string, string, string, string, string, string, string, string, int, int, string);
@@ -154,9 +156,9 @@ in-out property <bool> response-large: false;
     in-out property <string> response-body-formatted: "";
 
     // New UI state
-    in-out property <string> layout-mode: "Auto";     // Auto | Side | Stacked
     in-out property <float> split-ratio: 0.5;
     in-out property <bool> show-shortcuts: false;
+    in-out property <bool> show-about: false;
     in-out property <string> history-filter: "All";   // All | Success | Failed
 
     in-out property <bool> system-dark-mode: Palette.color-scheme == ColorScheme.dark;
@@ -233,12 +235,6 @@ in-out property <bool> response-large: false;
         if on {
             root.request-body-formatted = root.format-request-body(root.request-body, root.body-format);
         }
-    }
-
-    function cycle-layout() {
-        if root.layout-mode == "Auto" { root.layout-mode = "Side"; }
-        else if root.layout-mode == "Side" { root.layout-mode = "Stacked"; }
-        else { root.layout-mode = "Auto"; }
     }
 
     function begin-rename() {
@@ -339,7 +335,190 @@ in-out property <bool> response-large: false;
         width: 100%;
         height: 100%;
 
+        Rectangle {
+            width: 100%;
+            height: 100%;
+            background: Theme.window-bg;
+            border-radius: Theme.radius-window;
+            border-width: 1px;
+            border-color: Theme.border;
+            clip: true;
+
+            VerticalLayout {
+                spacing: 0;
+
+            // Integrated client-side titlebar
+                Rectangle {
+                    height: 52px;
+                    background: Theme.headerbar-bg;
+                    WindowMoveArea {
+                        width: 100%;
+                        height: 52px;
+                        HorizontalLayout {
+                            padding-left: 10px;
+                            padding-right: 12px;
+                            spacing: 8px;
+
+                            Btn {
+                                kind: "flat";
+                                y: 9px;
+                                icon: Icons.panel-left;
+                                accessible-name: "Toggle navigation sidebar";
+                                tooltip: "Toggle Sidebar";
+
+                                active: root.show-navigation-sidebar;
+                                clicked => { root.show-navigation-sidebar = !root.show-navigation-sidebar; }
+                            }
+
+                            if root.active-view == "Request" && !root.editing-request-name : HorizontalLayout {
+                                horizontal-stretch: 1;
+                                spacing: 8px;
+                                padding-left: 6px;
+                                alignment: center;
+                                Text {
+                                    text: root.selected-collection-name != "" ? root.selected-collection-name : "No collection";
+                                    color: Theme.fg-3;
+                                    font-size: Theme.fs-label;
+                                    vertical-alignment: center;
+                                    overflow: elide;
+                                    max-width: 220px;
+                                }
+                                Image { source: Icons.chevron-right; width: 14px; height: 14px; y: (parent.height - self.height) / 2; colorize: Theme.fg-3; }
+                                Text {
+                                    text: root.active-request;
+                                    color: Theme.fg;
+                                    font-size: Theme.fs-heading;
+                                    font-weight: 700;
+                                    vertical-alignment: center;
+                                    overflow: elide;
+                                    max-width: 260px;
+                                }
+                                Btn { kind: "flat"; y: 9px; icon: Icons.pencil; icon-size: 15px; accessible-name: "Rename request"; tooltip: "Rename Request"; clicked => { root.begin-rename(); } }
+                            }
+
+                            if root.active-view == "Request" && root.editing-request-name : HorizontalLayout {
+                                horizontal-stretch: 1;
+                                spacing: 6px;
+                                padding-left: 6px;
+                                AdwLineEdit {
+                                    horizontal-stretch: 1;
+                                    height: 34px;
+                                    y: 9px;
+                                    text: root.request-name-draft;
+                                    placeholder-text: "Request name";
+                                    edited(value) => { root.request-name-draft = value; }
+                                    accepted(value) => { if value != "" { root.request-name-draft = value; root.commit-request-name(); } }
+                                }
+                                Btn { kind: "suggested"; y: 9px; icon: Icons.check; enabled: root.request-name-draft != ""; clicked => { root.commit-request-name(); } }
+                                Btn { kind: "flat"; y: 9px; icon: Icons.x; accessible-name: "Cancel rename"; clicked => { root.editing-request-name = false; } }
+                            }
+
+                            if root.active-view != "Request" : Text {
+                                horizontal-stretch: 1;
+                                text: root.active-view == "Collections" ? "Collections"
+                                    : root.active-view == "History" ? "History"
+                                    : root.active-view == "Environments" ? "Environments" : "Collection variables";
+                                color: Theme.fg;
+                                font-size: Theme.fs-heading;
+                                font-weight: 700;
+                                vertical-alignment: center;
+                                horizontal-alignment: center;
+                            }
+
+                            Btn { kind: "flat"; y: 9px; icon: Icons.maximize; accessible-name: "Toggle full screen"; tooltip: "Toggle Full Screen"; clicked => { root.full-screen = !root.full-screen; } }
+                            if root.active-view == "Request" : Btn {
+                                y: 9px;
+                                text: "Save";
+                                icon: Icons.check;
+                                enabled: root.selected-collection-id > 0 && root.request-url != "" && root.active-request != "";
+                                tooltip: "Save Request";
+
+                                clicked => { root.save-current-request(); }
+                            }
+
+                            Btn {
+                                kind: "flat";
+                                y: 9px;
+                                icon: root.theme-mode == "Dark" ? Icons.moon : root.theme-mode == "Light" ? Icons.sun : Icons.monitor;
+                                accessible-name: "Theme mode: " + root.theme-mode + ". Activate to change.";
+                                tooltip: "Theme: " + root.theme-mode;
+
+                                active: root.theme-mode != "System";
+                                clicked => {
+                                    root.theme-mode = root.theme-mode == "System" ? "Light"
+                                        : root.theme-mode == "Light" ? "Dark" : "System";
+                                }
+                            }
+                            app-menu-anchor := Rectangle {
+                                width: Theme.control-h;
+                                height: Theme.control-h;
+                                y: 9px;
+                                Btn {
+                                    width: 100%;
+                                    height: 100%;
+                                    kind: "flat";
+                                    icon: Icons.menu;
+                                    accessible-name: "Main Menu";
+                                    tooltip: "Main Menu";
+
+                                    clicked => { app-menu-popup.show(); }
+                                }
+                                app-menu-popup := PopupWindow {
+                                    x: -206px;
+                                    y: 36px;
+                                    width: 240px;
+                                    height: 90px;
+                                    close-policy: close-on-click-outside;
+                                    forward-focus: app-menu-focus;
+                                    Rectangle {
+                                        background: Theme.popover-bg;
+                                        border-width: 1px;
+                                        border-color: Theme.border;
+                                        border-radius: Theme.radius-popover;
+                                        drop-shadow-color: #00000066;
+                                        drop-shadow-blur: 24px;
+                                        drop-shadow-offset-y: 8px;
+                                        VerticalLayout {
+                                            padding: 8px;
+                                            spacing: 2px;
+                                            MenuItem {
+                                                icon: Icons.help;
+                                                text: "Keyboard Shortcuts";
+                                                clicked => {
+                                                    app-menu-popup.close();
+                                                    root.show-shortcuts = true;
+                                                }
+                                            }
+                                            Rectangle { height: 1px; background: Theme.border; }
+                                            MenuItem {
+                                                icon: Icons.info;
+                                                text: "About Resonance";
+                                                clicked => {
+                                                    app-menu-popup.close();
+                                                    root.show-about = true;
+                                                }
+                                            }
+                                        }
+                                    }
+                                    app-menu-focus := FocusScope {
+                                        key-pressed(event) => {
+                                            if event.text == Key.Escape {
+                                                app-menu-popup.close();
+                                                return accept;
+                                            }
+                                            return reject;
+                                        }
+                                    }
+                                }
+                            }
+                            Btn { kind: "close"; y: 9px; icon: Icons.x; accessible-name: "Close window"; tooltip: "Close Window"; clicked => { root.close(); } }
+                        }
+                    }
+                }
+
         HorizontalLayout {
+            width: 100%;
+            vertical-stretch: 1;
             spacing: 0;
 
             // ───────────── SIDEBAR (expanded 272px, icon rail 64px) ─────────────
@@ -765,21 +944,8 @@ in-out property <bool> response-large: false;
                         HorizontalLayout {
                             height: 38px;
                             spacing: 8px;
-
-                            Rectangle {
-                                background: Theme.input-bg;
-                                border-radius: 9px;
-                                preferred-width: theme-row.preferred-width + 6px;
-                                theme-row := HorizontalLayout {
-                                    padding: 3px;
-                                    spacing: 2px;
-                                    Btn { kind: "flat"; height: 32px; min-width: 38px; icon: Icons.monitor; active: root.theme-mode == "System"; clicked => { root.theme-mode = "System"; } }
-                                    Btn { kind: "flat"; height: 32px; min-width: 38px; icon: Icons.sun; active: root.theme-mode == "Light"; clicked => { root.theme-mode = "Light"; } }
-                                    Btn { kind: "flat"; height: 32px; min-width: 38px; icon: Icons.moon; active: root.theme-mode == "Dark"; clicked => { root.theme-mode = "Dark"; } }
-                                }
-                            }
                             Rectangle { horizontal-stretch: 1; }
-                            Btn { kind: "flat"; icon: Icons.help; clicked => { root.show-shortcuts = true; } }
+                            Btn { kind: "flat"; icon: Icons.help; accessible-name: "Keyboard shortcuts"; clicked => { root.show-shortcuts = true; } }
                         }
 
                         Text {
@@ -824,13 +990,7 @@ in-out property <bool> response-large: false;
                         Btn { kind: "flat"; height: 44px; icon: Icons.history; active: root.active-view == "History"; clicked => { root.open-view("History"); } }
                         Btn { kind: "flat"; height: 44px; icon: Icons.globe; active: root.active-view == "Environments" || root.active-view == "Variables"; clicked => { root.open-view("Environments"); } }
                         Rectangle { vertical-stretch: 1; }
-                        Btn {
-                            kind: "flat";
-                            height: 44px;
-                            icon: root.theme-mode == "Dark" ? Icons.moon : root.theme-mode == "Light" ? Icons.sun : Icons.monitor;
-                            clicked => { root.theme-mode = root.theme-mode == "System" ? "Light" : root.theme-mode == "Light" ? "Dark" : "System"; }
-                        }
-                        Btn { kind: "flat"; height: 44px; icon: Icons.help; clicked => { root.show-shortcuts = true; } }
+                        Btn { kind: "flat"; height: 44px; icon: Icons.help; accessible-name: "Keyboard shortcuts"; clicked => { root.show-shortcuts = true; } }
                     }
                 }
             }
@@ -840,99 +1000,7 @@ in-out property <bool> response-large: false;
                 horizontal-stretch: 1;
                 spacing: 0;
 
-                // Header bar
-                Rectangle {
-                    height: 52px;
-                    background: Theme.headerbar-bg;
-                    Rectangle {
-                        y: parent.height - 1px;
-                        height: 1px;
-                        background: Theme.headerbar-border;
-                    }
-                    HorizontalLayout {
-                        padding-left: 10px;
-                        padding-right: 12px;
-                        spacing: 8px;
 
-                        Btn {
-                            kind: "flat";
-                            y: 9px;
-                            icon: Icons.panel-left;
-                            active: root.show-navigation-sidebar;
-                            clicked => { root.show-navigation-sidebar = !root.show-navigation-sidebar; }
-                        }
-
-                        if root.active-view == "Request" && !root.editing-request-name : HorizontalLayout {
-                            horizontal-stretch: 1;
-                            spacing: 8px;
-                            padding-left: 6px;
-                            Text {
-                                text: root.selected-collection-name != "" ? root.selected-collection-name : "No collection";
-                                color: Theme.fg-3;
-                                font-size: Theme.fs-label;
-                                vertical-alignment: center;
-                                overflow: elide;
-                                max-width: 220px;
-                            }
-                            Image { source: Icons.chevron-right; width: 14px; height: 14px; y: (parent.height - self.height) / 2; colorize: Theme.fg-3; }
-                            Text {
-                                text: root.active-request;
-                                color: Theme.fg;
-                                font-size: Theme.fs-heading;
-                                font-weight: 700;
-                                vertical-alignment: center;
-                                overflow: elide;
-                                horizontal-stretch: 1;
-                            }
-                            Btn { kind: "flat"; y: 9px; icon: Icons.pencil; icon-size: 15px; clicked => { root.begin-rename(); } }
-                        }
-
-                        if root.active-view == "Request" && root.editing-request-name : HorizontalLayout {
-                            horizontal-stretch: 1;
-                            spacing: 6px;
-                            padding-left: 6px;
-                            AdwLineEdit {
-                                horizontal-stretch: 1;
-                                height: 34px;
-                                y: 9px;
-                                text: root.request-name-draft;
-                                placeholder-text: "Request name";
-                                edited(value) => { root.request-name-draft = value; }
-                                accepted(value) => { if value != "" { root.request-name-draft = value; root.commit-request-name(); } }
-                            }
-                            Btn { kind: "suggested"; y: 9px; icon: Icons.check; enabled: root.request-name-draft != ""; clicked => { root.commit-request-name(); } }
-                            Btn { kind: "flat"; y: 9px; icon: Icons.x; clicked => { root.editing-request-name = false; } }
-                        }
-
-                        if root.active-view != "Request" : Text {
-                            horizontal-stretch: 1;
-                            text: root.active-view == "Collections" ? "Collections"
-                                : root.active-view == "History" ? "History"
-                                : root.active-view == "Environments" ? "Environments" : "Collection variables";
-                            color: Theme.fg;
-                            font-size: Theme.fs-heading;
-                            font-weight: 700;
-                            vertical-alignment: center;
-                        }
-
-                        Btn {
-                            kind: "flat";
-                            y: 9px;
-                            icon: root.layout-mode == "Stacked" ? Icons.layout-stack : Icons.layout-side;
-                            visible: root.active-view == "Request";
-                            active: root.layout-mode != "Auto";
-                            clicked => { root.cycle-layout(); }
-                        }
-                        Btn { kind: "flat"; y: 9px; icon: Icons.maximize; clicked => { root.full-screen = !root.full-screen; } }
-                        if root.active-view == "Request" : Btn {
-                            y: 9px;
-                            text: "Save";
-                            icon: Icons.check;
-                            enabled: root.selected-collection-id > 0 && root.request-url != "" && root.active-request != "";
-                            clicked => { root.save-current-request(); }
-                        }
-                    }
-                }
 
                 // View area
                 Rectangle {
@@ -1384,11 +1452,10 @@ in-out property <bool> response-large: false;
 
                                 url-field := AdwLineEdit {
                                     horizontal-stretch: 1;
-                                    text: root.request-url;
+                                    text <=> root.request-url;
                                     placeholder-text: "Enter request URL…   (Ctrl+L to focus, Ctrl+Enter to send)";
                                     font-size: Theme.fs-label;
                                     font-family: Theme.font-mono;
-                                    edited(value) => { root.request-url = value; }
                                     accepted(value) => { root.send-current-request(); }
                                 }
 
@@ -1417,17 +1484,15 @@ in-out property <bool> response-large: false;
                             }
                         }
 
-                        // Split workspace: side by side on wide windows, stacked otherwise. Drag the handle to resize.
+                        // Request editor above the response with a draggable horizontal divider.
                         split-area := Rectangle {
                             vertical-stretch: 1;
-                            property <bool> side: root.layout-mode == "Side" ? true : root.layout-mode == "Stacked" ? false : self.width >= 1000px;
-
                             // Request pane
                             Rectangle {
                                 x: 0px;
                                 y: 0px;
-                                width: split-area.side ? parent.width * root.split-ratio - 6px : parent.width;
-                                height: split-area.side ? parent.height : parent.height * root.split-ratio - 6px;
+                                width: parent.width;
+                                height: parent.height * root.split-ratio - 6px;
                                 background: Theme.view-bg;
                                 border-width: 1px;
                                 border-color: Theme.border;
@@ -1441,48 +1506,61 @@ in-out property <bool> response-large: false;
                                         height: 48px;
                                         padding-left: 8px;
                                         padding-right: 8px;
-                                        padding-top: 7px;
                                         spacing: 8px;
 
-                                        TabBar {
-                                            tabs: ["Params", "Headers", "Body", "Auth"];
-                                            counts: [
-                                                root.request-param-rows.length > 0 ? "" + root.request-param-rows.length : "",
-                                                root.request-header-rows.length > 0 ? "" + root.request-header-rows.length : "",
-                                                "", ""
-                                            ];
-                                            current: root.active-tab;
-                                            selected(t) => { root.active-tab = t; }
+                                        VerticalLayout {
+                                            height: 48px;
+                                            alignment: center;
+                                            TabBar {
+                                                tabs: ["Params", "Headers", "Body", "Auth"];
+                                                counts: [
+                                                    root.request-param-rows.length > 0 ? "" + root.request-param-rows.length : "",
+                                                    root.request-header-rows.length > 0 ? "" + root.request-header-rows.length : "",
+                                                    "", ""
+                                                ];
+                                                current: root.active-tab;
+                                                selected(t) => { root.active-tab = t; }
+                                            }
                                         }
 
                                         Rectangle { horizontal-stretch: 1; }
 
-                                        if root.active-tab == "Body" : TabBar {
-                                            style: "pill";
-                                            y: 2px;
-                                            tabs: ["Edit", "Formatted"];
-                                            current: root.show-request-body-formatted ? "Formatted" : "Edit";
-                                            selected(t) => { root.set-body-formatted(t == "Formatted"); }
+                                        if root.active-tab == "Body" : VerticalLayout {
+                                            height: 48px;
+                                            alignment: center;
+                                            TabBar {
+                                                style: "pill";
+                                                height: 30px;
+                                                tabs: ["Edit", "Formatted"];
+                                                current: root.show-request-body-formatted ? "Formatted" : "Edit";
+                                                selected(t) => { root.set-body-formatted(t == "Formatted"); }
+                                            }
                                         }
-                                        if root.active-tab == "Body" : ChoiceDropdown {
-                                            accent-color: root.accent;
-                                            width: 96px;
-                                            height: 30px;
-                                            y: 2px;
-                                            options: ["JSON", "Text", "HTML", "XML"];
-                                            current-value: root.body-format;
-                                            dark-mode: Theme.dark;
-                                            selected(value) => { root.body-format = value; }
+                                        if root.active-tab == "Body" : VerticalLayout {
+                                            height: 48px;
+                                            alignment: center;
+                                            ChoiceDropdown {
+                                                accent-color: root.accent;
+                                                width: 96px;
+                                                height: 30px;
+                                                options: ["JSON", "Text", "HTML", "XML"];
+                                                current-value: root.body-format;
+                                                dark-mode: Theme.dark;
+                                                selected(value) => { root.body-format = value; }
+                                            }
                                         }
-                                        if root.active-tab == "Headers" : ChoiceDropdown {
-                                            accent-color: root.accent;
-                                            width: 160px;
-                                            height: 30px;
-                                            y: 2px;
-                                            options: ["Add a preset…", "Accept", "Content-Type", "Cache-Control", "User-Agent", "X-Request-ID"];
-                                            current-value: root.header-preset;
-                                            dark-mode: Theme.dark;
-                                            selected(value) => { root.add-header-preset(value); }
+                                        if root.active-tab == "Headers" : VerticalLayout {
+                                            height: 48px;
+                                            alignment: center;
+                                            ChoiceDropdown {
+                                                accent-color: root.accent;
+                                                width: 160px;
+                                                height: 30px;
+                                                options: ["Add a preset…", "Accept", "Content-Type", "Cache-Control", "User-Agent", "X-Request-ID"];
+                                                current-value: root.header-preset;
+                                                dark-mode: Theme.dark;
+                                                selected(value) => { root.add-header-preset(value); }
+                                            }
                                         }
                                     }
 
@@ -1595,10 +1673,10 @@ in-out property <bool> response-large: false;
 
                             // Response pane
                             Rectangle {
-                                x: split-area.side ? parent.width * root.split-ratio + 6px : 0px;
-                                y: split-area.side ? 0px : parent.height * root.split-ratio + 6px;
-                                width: split-area.side ? parent.width * (1 - root.split-ratio) - 6px : parent.width;
-                                height: split-area.side ? parent.height : parent.height * (1 - root.split-ratio) - 6px;
+                                x: 0px;
+                                y: parent.height * root.split-ratio + 6px;
+                                width: parent.width;
+                                height: parent.height * (1 - root.split-ratio) - 6px;
                                 background: Theme.view-bg;
                                 border-width: 1px;
                                 border-color: Theme.border;
@@ -1616,11 +1694,15 @@ in-out property <bool> response-large: false;
                                         padding-bottom: 0px;
                                         spacing: 10px;
 
-                                        TabBar {
-                                            tabs: ["Body", "Headers", "Cookies"];
-                                            counts: ["", "" + root.response-header-items.length, "" + root.response-cookie-items.length];
-                                            current: root.response-tab;
-                                            selected(t) => { root.response-tab = t; }
+                                        VerticalLayout {
+                                            height: 48px;
+                                            alignment: center;
+                                            TabBar {
+                                                tabs: ["Body", "Headers", "Cookies"];
+                                                counts: ["", "" + root.response-header-items.length, "" + root.response-cookie-items.length];
+                                                current: root.response-tab;
+                                                selected(t) => { root.response-tab = t; }
+                                            }
                                         }
 
                                         Rectangle { horizontal-stretch: 1; }
@@ -1792,14 +1874,14 @@ in-out property <bool> response-large: false;
 
                             // Drag handle between the panes
                             Rectangle {
-                                x: split-area.side ? parent.width * root.split-ratio - 6px : 0px;
-                                y: split-area.side ? 0px : parent.height * root.split-ratio - 6px;
-                                width: split-area.side ? 12px : parent.width;
-                                height: split-area.side ? parent.height : 12px;
+                                x: 0px;
+                                y: parent.height * root.split-ratio - 6px;
+                                width: parent.width;
+                                height: 12px;
 
                                 Rectangle {
-                                    width: split-area.side ? 4px : 44px;
-                                    height: split-area.side ? 44px : 4px;
+                                    width: 44px;
+                                    height: 4px;
                                     x: (parent.width - self.width) / 2;
                                     y: (parent.height - self.height) / 2;
                                     border-radius: 2px;
@@ -1807,13 +1889,9 @@ in-out property <bool> response-large: false;
                                 }
 
                                 handle-touch := TouchArea {
-                                    mouse-cursor: split-area.side ? MouseCursor.col-resize : MouseCursor.row-resize;
+                                    mouse-cursor: MouseCursor.row-resize;
                                     moved => {
-                                        if split-area.side {
-                                            root.split-ratio = Math.clamp(root.split-ratio + (self.mouse-x - self.pressed-x) / split-area.width, 0.25, 0.75);
-                                        } else {
-                                            root.split-ratio = Math.clamp(root.split-ratio + (self.mouse-y - self.pressed-y) / split-area.height, 0.25, 0.75);
-                                        }
+                                        root.split-ratio = Math.clamp(root.split-ratio + (self.mouse-y - self.pressed-y) / split-area.height, 0.25, 0.75);
                                     }
                                 }
                             }
@@ -1823,6 +1901,8 @@ in-out property <bool> response-large: false;
                 }
             }
         }
+            }
+        }
 
         if root.show-shortcuts : ShortcutsDialog {
             x: 0px;
@@ -1830,6 +1910,13 @@ in-out property <bool> response-large: false;
             width: parent.width;
             height: parent.height;
             close => { root.show-shortcuts = false; }
+        }
+        if root.show-about : AboutDialog {
+            x: 0px;
+            y: 0px;
+            width: parent.width;
+            height: parent.height;
+            close => { root.show-about = false; }
         }
 
         // ───────── Keyboard shortcuts ─────────
@@ -1862,7 +1949,6 @@ in-out property <bool> response-large: false;
         KeyBinding { keys: @keys(Control + H); activated => { root.open-view("History"); } }
         KeyBinding { keys: @keys(Control + E); activated => { root.open-view("Environments"); } }
         KeyBinding { keys: @keys(Control + Shift + O); activated => { root.open-view("Collections"); } }
-        KeyBinding { keys: @keys(Control + J); enabled: root.active-view == "Request"; activated => { root.cycle-layout(); } }
         KeyBinding { keys: @keys(F11); activated => { root.full-screen = !root.full-screen; } }
         KeyBinding { keys: @keys(F1); activated => { root.show-shortcuts = !root.show-shortcuts; } }
         KeyBinding { keys: @keys(Control + "/"); activated => { root.show-shortcuts = !root.show-shortcuts; } }
@@ -1871,6 +1957,8 @@ in-out property <bool> response-large: false;
             activated => {
                 if root.show-shortcuts {
                     root.show-shortcuts = false;
+                } else if root.show-about {
+                    root.show-about = false;
                 } else if root.collection-menu-id > 0 {
                     root.collection-menu-id = -1;
                 } else if root.confirm-delete-collection-id > 0 {

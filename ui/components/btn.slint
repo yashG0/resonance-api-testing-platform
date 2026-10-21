@@ -1,8 +1,10 @@
 import { Theme } from "theme.slint";
 
-// kind: "default" | "suggested" | "flat" | "destructive". `active` gives flat buttons a selected look.
+// kind: "default" | "suggested" | "flat" | "destructive" | "close". `active` gives flat buttons a selected look.
 export component Btn inherits Rectangle {
     in property <string> text;
+    in property <string> accessible-name: "";
+    in property <string> tooltip: "";
     in property <image> icon;
     in property <string> kind: "default";
     in property <bool> enabled: true;
@@ -10,12 +12,16 @@ export component Btn inherits Rectangle {
     in property <length> icon-size: 16px;
     callback clicked();
 
+    accessible-role: button;
+    accessible-label: root.accessible-name != "" ? root.accessible-name : root.text;
+
     height: Theme.control-h;
     min-width: Theme.control-h;
     preferred-width: row.preferred-width;
-    border-radius: Theme.radius-control;
+    border-radius: root.kind == "close" ? Theme.control-h / 2 : Theme.radius-control;
     opacity: root.enabled ? 1 : 0.4;
     background:
+        root.kind == "close" ? (touch.pressed ? Theme.active : touch.has-hover ? Theme.kbd-bg.brighter(0.08) : Theme.kbd-bg) :
         root.kind == "suggested" ? (touch.pressed ? Theme.accent.darker(0.12) : touch.has-hover ? Theme.accent.brighter(0.08) : Theme.accent) :
         root.kind == "default" ? (touch.pressed ? Theme.active : touch.has-hover ? Theme.hover : Theme.button-bg) :
         root.kind == "destructive" ? (touch.has-hover ? Theme.danger-bg : transparent) :
@@ -29,6 +35,7 @@ export component Btn inherits Rectangle {
     animate border-color { duration: 120ms; easing: ease-out; }
 
     property <color> content-color:
+        root.kind == "close" && touch.has-hover ? Theme.fg :
         root.kind == "suggested" ? Theme.accent-fg :
         root.kind == "destructive" ? Theme.danger :
         root.active ? Theme.accent-text : Theme.fg;
@@ -59,5 +66,9 @@ export component Btn inherits Rectangle {
             font-weight: 600;
             vertical-alignment: center;
         }
+    }
+
+    if root.tooltip != "" : Tooltip {
+        text: @markdown("\{root.tooltip}");
     }
 }

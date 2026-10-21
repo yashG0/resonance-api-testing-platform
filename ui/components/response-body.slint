@@ -74,34 +74,48 @@ changed dark => {
             padding-right: 12px;
             spacing: 8px;
 
-            if root.has-pretty : TabBar {
-                style: "pill";
-                height: 30px;
-                tabs: ["Pretty", "Raw"];
-                current: root.mode;
-                selected(m) => { root.mode = m; }
+            if root.has-pretty : VerticalLayout {
+                height: 44px;
+                alignment: center;
+                TabBar {
+                    style: "pill";
+                    height: 30px;
+                    tabs: ["Pretty", "Raw"];
+                    current: root.mode;
+                    selected(m) => { root.mode = m; }
+                }
             }
             Rectangle { horizontal-stretch: 1; }
-            Btn {
-                height: 30px;
-                kind: "flat";
-                icon: Icons.wrap;
-                text: "Wrap";
-                active: root.wrap-lines;
-                clicked => { root.wrap-lines = !root.wrap-lines; }
+            VerticalLayout {
+                height: 44px;
+                alignment: center;
+                Btn {
+                    height: 30px;
+                    kind: "flat";
+                    icon: Icons.wrap;
+                    text: "Wrap";
+                    active: root.wrap-lines;
+                    clicked => { root.wrap-lines = !root.wrap-lines; }
+                }
             }
-            Btn {
-                height: 30px;
-                kind: "default";
-                icon: Icons.copy;
-                text: "Copy";
-                clicked => { root.copy-all(root.displayed-text); }
+            VerticalLayout {
+                height: 44px;
+                alignment: center;
+                Btn {
+                    height: 30px;
+                    kind: "default";
+                    icon: Icons.copy;
+                    text: "Copy";
+                    clicked => { root.copy-all(root.displayed-text); }
+                }
             }
         }
 
         Rectangle { height: 1px; background: Theme.border; }
 
-        if root.format == "JSON" && root.mode == "Pretty" && !root.large-response : Rectangle {
+        // Keep the syntax-colored line renderer when unwrapped. When wrapping is
+        // enabled, use the text editor so long JSON lines can flow to the next line.
+        if root.format == "JSON" && root.mode == "Pretty" && !root.large-response && !root.wrap-lines : Rectangle {
             // ScrollView has no background property; paint the containing surface.
             vertical-stretch: 1;
             background: Theme.view-bg;
@@ -164,10 +178,12 @@ changed dark => {
 
         // Slint conditional elements are separate siblings; use the inverse
         // condition rather than an `else` element branch.
-        if root.format != "JSON" || root.mode != "Pretty" || root.large-response : AdwTextEdit {
+        if root.format != "JSON" || root.mode != "Pretty" || root.large-response || root.wrap-lines : AdwTextEdit {
             vertical-stretch: 1;
             read-only: true;
-            wrap: root.wrap-lines ? TextWrap.word-wrap : TextWrap.no-wrap;
+            wrap: root.wrap-lines
+                ? (root.format == "JSON" && root.mode == "Pretty" ? TextWrap.char-wrap : TextWrap.word-wrap)
+                : TextWrap.no-wrap;
             font-family: Theme.font-mono;
             font-size: 13px;
             text: root.displayed-text;

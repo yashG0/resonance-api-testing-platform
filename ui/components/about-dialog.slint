@@ -1,0 +1,95 @@
+import { Theme } from "theme.slint";
+import { Icons } from "icons.slint";
+import { Btn } from "btn.slint";
+
+export component AboutDialog inherits Rectangle {
+    callback close();
+    background: Theme.overlay;
+
+    TouchArea { clicked => { root.close(); } }
+
+    Rectangle {
+        width: min(420px, parent.width - 48px);
+        height: min(360px, parent.height - 48px);
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2;
+        background: Theme.dialog-bg;
+        border-radius: Theme.radius-card;
+        border-width: 1px;
+        border-color: Theme.border-strong;
+        drop-shadow-color: #00000066;
+        drop-shadow-blur: 28px;
+        drop-shadow-offset-y: 10px;
+        clip: true;
+
+        TouchArea { }
+
+        VerticalLayout {
+            width: 100%;
+            height: 100%;
+            HorizontalLayout {
+                height: 54px;
+                padding-left: 10px;
+                padding-right: 10px;
+                spacing: 8px;
+                Rectangle { width: Theme.control-h; height: Theme.control-h; }
+                Text {
+                    text: "About Resonance";
+                    color: Theme.fg;
+                    font-size: Theme.fs-heading;
+                    font-weight: 700;
+                    vertical-alignment: center;
+                    horizontal-alignment: center;
+                    horizontal-stretch: 1;
+                }
+                Btn { kind: "close"; y: 10px; icon: Icons.x; accessible-name: "Close About"; tooltip: "Close About"; clicked => { root.close(); } }
+            }
+            Rectangle { height: 1px; background: Theme.border; }
+            VerticalLayout {
+                width: 100%;
+                horizontal-stretch: 1;
+                vertical-stretch: 1;
+                alignment: center;
+                spacing: 10px;
+                padding: 24px;
+                HorizontalLayout {
+                    width: 100%;
+                    horizontal-stretch: 1;
+                    height: 84px;
+                    alignment: center;
+                    Image {
+                        source: @image-url("../../assets/logo/resonance-logo.svg");
+                        width: 84px;
+                        height: 84px;
+                        image-fit: contain;
+                    }
+                }
+                Text {
+                    text: "Resonance";
+                    color: Theme.fg;
+                    font-size: Theme.fs-title;
+                    font-weight: 700;
+                    horizontal-alignment: center;
+                }
+                Text {
+                    text: "A lightweight desktop API testing client";
+                    color: Theme.fg-2;
+                    font-size: Theme.fs-body;
+                    horizontal-alignment: center;
+                }
+                Text {
+                    text: "Version 0.1.1";
+                    color: Theme.fg-3;
+                    font-size: Theme.fs-small;
+                    horizontal-alignment: center;
+                }
+                Text {
+                    text: "Built with Rust and Slint · MIT License";
+                    color: Theme.fg-3;
+                    font-size: Theme.fs-small;
+                    horizontal-alignment: center;
+                }
+            }
+        }
+    }
+}

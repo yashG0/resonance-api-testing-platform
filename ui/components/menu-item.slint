@@ -6,6 +6,9 @@ export component MenuItem inherits Rectangle {
     in property <bool> destructive: false;
     in property <bool> enabled: true;
     callback clicked();
+
+    accessible-role: button;
+    accessible-label: root.text;
     height: 34px;
     border-radius: 8px;
     opacity: root.enabled ? 1 : 0.4;

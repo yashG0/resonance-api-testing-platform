@@ -20,7 +20,7 @@ export global Theme {
 
     // Shape and rhythm — compact, consistent Adwaita-inspired geometry
     out property <length> radius-window: 14px;
-    out property <length> radius-card: 14px;
+    out property <length> radius-card: 12px;
     out property <length> radius-control: 8px;
     out property <length> radius-popover: 12px;
     out property <length> control-h: 34px;
@@ -37,7 +37,7 @@ export global Theme {
     out property <color> button-bg:     dark ? #353539 : #ffffff;
     out property <color> button-border: dark ? #414145 : #d1d1d1;
     out property <color> kbd-bg:        dark ? #3b3b3f : #e5e5e5;
-    out property <color> overlay: #00000099;
+    out property <color> overlay: #00000066;
 
     // Code viewer
     out property <color> code-gutter:      dark ? #202023 : #f3f3f3;
@@ -62,7 +62,7 @@ export global Theme {
 
     // ── Accent ──────────────────────────────────────────────────────────
     out property <color> accent-fg:   #ffffff;
-    out property <color> accent-text: dark ? #78aeed : #1c71d8;
+    out property <color> accent-text: dark ? accent.brighter(0.14) : accent.darker(0.12);
     out property <color> accent-bg:   accent;
     out property <color> accent-hover: accent.darker(0.12);
 

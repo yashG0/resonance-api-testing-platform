@@ -82,7 +82,14 @@ Resonance is still in early development, so the current feature set is intention
 
 ## Install on Linux
 
-Resonance does not have packaged Linux releases yet. Build it from source on the Linux machine where you plan to run it.
+A Linux x86-64 executable archive is available from the [latest GitHub release](https://github.com/yashG0/resonance-api-testing-platform/releases/latest). Download `resonance-v0.1.1-linux-x86_64.tar.gz` and extract it:
+
+```bash
+tar -xzf resonance-v0.1.1-linux-x86_64.tar.gz
+./resonance
+```
+
+The archive contains the application executable only. Required Linux system libraries may need to be installed separately. You can also build Resonance from source on the Linux machine where you plan to run it.
 
 ### Requirements
 
