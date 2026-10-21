@@ -18,32 +18,34 @@ export global Theme {
     out property <length> fs-heading: 17px;
     out property <length> fs-title: 22px;
 
-    // Shape and rhythm
-    out property <length> radius-card: 12px;
+    // Shape and rhythm — compact, consistent Adwaita-inspired geometry
+    out property <length> radius-window: 14px;
+    out property <length> radius-card: 14px;
     out property <length> radius-control: 8px;
+    out property <length> radius-popover: 12px;
     out property <length> control-h: 34px;
 
     // ── Surfaces ────────────────────────────────────────────────────────
-    out property <color> window-bg:     dark ? #171819 : #e5e5e5;
-    out property <color> view-bg:       dark ? #202124 : #ffffff;
-    out property <color> headerbar-bg:  dark ? #252629 : #e5e3e0;
-    out property <color> sidebar-bg:    dark ? #1c1d1f : #f3f2f0;
-    out property <color> card-bg:       dark ? #232427 : #ffffff;
-    out property <color> dialog-bg:     dark ? #252629 : #ffffff;
-    out property <color> popover-bg:    dark ? #292a2d : #ffffff;
-    out property <color> input-bg:      dark ? #191a1c : #ffffff;
-    out property <color> button-bg:     dark ? #303135 : #ffffff;
-    out property <color> button-border: dark ? #414348 : #d5d3d1;
-    out property <color> kbd-bg:        dark ? #36373b : #e9e8e7;
+    out property <color> window-bg:     dark ? #222225 : #f6f5f4;
+    out property <color> view-bg:       dark ? #242427 : #ffffff;
+    out property <color> headerbar-bg:  dark ? #29292d : #ebebeb;
+    out property <color> sidebar-bg:    dark ? #252528 : #f6f5f4;
+    out property <color> card-bg:       dark ? #2b2b2f : #ffffff;
+    out property <color> dialog-bg:     dark ? #2b2b2f : #ffffff;
+    out property <color> popover-bg:    dark ? #333337 : #ffffff;
+    out property <color> input-bg:      dark ? #1c1c1f : #ffffff;
+    out property <color> button-bg:     dark ? #353539 : #ffffff;
+    out property <color> button-border: dark ? #414145 : #d1d1d1;
+    out property <color> kbd-bg:        dark ? #3b3b3f : #e5e5e5;
     out property <color> overlay: #00000099;
 
     // Code viewer
-    out property <color> code-gutter:      dark ? #1d1e20 : #f5f6f8;
+    out property <color> code-gutter:      dark ? #202023 : #f3f3f3;
     out property <color> code-line-number: dark ? #9296a0 : #858b96;
 
     // Header bar separators and unfocused backdrop
-    out property <color> headerbar-border:   dark ? #ffffff12 : #d4d2d0;
-    out property <color> headerbar-backdrop: dark ? #222326 : #eae8e5;
+    out property <color> headerbar-border:   dark ? #ffffff12 : #d5d5d5;
+    out property <color> headerbar-backdrop: dark ? #252528 : #f0f0f0;
 
     // ── Foreground ──────────────────────────────────────────────────────
     out property <color> fg:          dark ? #f5f5f5 : #241f31;

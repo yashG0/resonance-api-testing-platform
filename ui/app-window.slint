@@ -58,8 +58,10 @@ export struct ResponseCookieItem {
 
 export component AppWindow inherits Window {
     title: "Resonance";
-    preferred-width: 1280px;
-    preferred-height: 800px;
+    // Start as a comfortably sized, resizable window so desktop decoration
+    // can show its native rounded corners instead of filling the screen.
+    preferred-width: 1120px;
+    preferred-height: 740px;
     min-width: 960px;
     min-height: 620px;
     default-font-family: Theme.font-ui;
@@ -841,11 +843,11 @@ in-out property <bool> response-large: false;
                 // Header bar
                 Rectangle {
                     height: 52px;
-                    background: Theme.dark ? #202124 : Theme.headerbar-bg;
+                    background: Theme.headerbar-bg;
                     Rectangle {
                         y: parent.height - 1px;
                         height: 1px;
-                        background: Theme.dark ? #ffffff0a : Theme.headerbar-border;
+                        background: Theme.headerbar-border;
                     }
                     HorizontalLayout {
                         padding-left: 10px;
