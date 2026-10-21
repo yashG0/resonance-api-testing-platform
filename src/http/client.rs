@@ -342,30 +342,40 @@ fn format_response_body(raw: &str, content_type: &str) -> (String, String) {
         .unwrap_or("")
         .trim()
         .to_ascii_lowercase();
-    let is_json = media_type == "application/json"
-        || media_type.ends_with("+json")
-        || serde_json::from_str::<serde_json::Value>(raw).is_ok();
 
-    if is_json {
+    let declared_json = media_type == "application/json" || media_type.ends_with("+json");
+
+    if declared_json {
         let body = serde_json::from_str::<serde_json::Value>(raw)
             .and_then(|json| serde_json::to_string_pretty(&json))
             .unwrap_or_else(|_| raw.to_owned());
-        return ("JSON".into(), highlight_json(&body));
+
+        return ("JSON".into(), body);
     }
 
+    // Parse JSON-looking responses only once, retaining the parsed value.
+    if let Ok(json) = serde_json::from_str::<serde_json::Value>(raw) {
+        let body = serde_json::to_string_pretty(&json).unwrap_or_else(|_| raw.to_owned());
+
+        return ("JSON".into(), body);
+    }
+
+    let trimmed = raw.trim_start();
     let is_html = media_type == "text/html"
         || media_type == "application/xhtml+xml"
-        || raw
-            .trim_start()
-            .to_ascii_lowercase()
-            .starts_with("<!doctype html")
-        || raw.trim_start().to_ascii_lowercase().starts_with("<html");
+        || trimmed
+            .get(..9)
+            .is_some_and(|prefix| prefix.eq_ignore_ascii_case("<!doctype"))
+        || trimmed
+            .get(..5)
+            .is_some_and(|prefix| prefix.eq_ignore_ascii_case("<html"));
+
     if is_html {
-        return ("HTML".into(), highlight_xml(&format_html(raw)));
+        return ("HTML".into(), format_html(raw));
     }
 
     if media_type == "application/xml" || media_type == "text/xml" || media_type.ends_with("+xml") {
-        return ("XML".into(), highlight_xml(&format_html(raw)));
+        return ("XML".into(), format_html(raw));
     }
 
     let format = if media_type.starts_with("text/") || media_type.is_empty() {
@@ -373,6 +383,7 @@ fn format_response_body(raw: &str, content_type: &str) -> (String, String) {
     } else {
         media_type.as_str()
     };
+
     (format.into(), escape_html(raw))
 }
 
