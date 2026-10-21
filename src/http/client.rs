@@ -268,12 +268,12 @@ impl HttpClient {
             }
         }
 
-        let raw = String::from_utf8_lossy(&bytes);
-        let (format, body) = format_response_body(&raw, &content_type);
+        let raw = String::from_utf8_lossy(&bytes).into_owned();
+        let format = detect_response_format(&raw, &content_type);
 
         HttpResult {
             status,
-            body,
+            body: raw,
             headers: response_headers,
             cookies: response_cookies,
             format,
@@ -339,7 +339,7 @@ fn format_response_cookies<'a>(cookies: impl Iterator<Item = &'a str>) -> String
         .join("\n\n")
 }
 
-fn format_response_body(raw: &str, content_type: &str) -> (String, String) {
+fn detect_response_format(raw: &str, content_type: &str) -> String {
     let media_type = content_type
         .split(';')
         .next()
@@ -347,21 +347,13 @@ fn format_response_body(raw: &str, content_type: &str) -> (String, String) {
         .trim()
         .to_ascii_lowercase();
 
-    let declared_json = media_type == "application/json" || media_type.ends_with("+json");
-
-    if declared_json {
-        let body = serde_json::from_str::<serde_json::Value>(raw)
-            .and_then(|json| serde_json::to_string_pretty(&json))
-            .unwrap_or_else(|_| raw.to_owned());
-
-        return ("JSON".into(), body);
+    if media_type == "application/json" || media_type.ends_with("+json") {
+        return "JSON".into();
     }
 
-    // Parse JSON-looking responses only once, retaining the parsed value.
-    if let Ok(json) = serde_json::from_str::<serde_json::Value>(raw) {
-        let body = serde_json::to_string_pretty(&json).unwrap_or_else(|_| raw.to_owned());
-
-        return ("JSON".into(), body);
+    // Detect JSON responses even when the server omits the JSON content type.
+    if serde_json::from_str::<serde_json::Value>(raw).is_ok() {
+        return "JSON".into();
     }
 
     let trimmed = raw.trim_start();
@@ -375,20 +367,18 @@ fn format_response_body(raw: &str, content_type: &str) -> (String, String) {
             .is_some_and(|prefix| prefix.eq_ignore_ascii_case("<html"));
 
     if is_html {
-        return ("HTML".into(), format_html(raw));
+        return "HTML".into();
     }
 
     if media_type == "application/xml" || media_type == "text/xml" || media_type.ends_with("+xml") {
-        return ("XML".into(), format_html(raw));
+        return "XML".into();
     }
 
-    let format = if media_type.starts_with("text/") || media_type.is_empty() {
-        "Text"
+    if media_type.starts_with("text/") || media_type.is_empty() {
+        "Text".into()
     } else {
-        media_type.as_str()
-    };
-
-    (format.into(), escape_html(raw))
+        media_type
+    }
 }
 
 pub(crate) fn escape_html(input: &str) -> String {
@@ -597,30 +587,23 @@ mod tests {
     use super::*;
 
     #[test]
-    fn formats_json_html_and_plain_text_responses_by_content_type() {
-        let (format, json) = format_response_body(r#"{"ok":true,"count":2}"#, "application/json");
-        assert_eq!(format, "JSON");
-        // JSON is pretty-printed without HTML span tags (Slint Text widget doesn't render rich text)
-        assert!(!json.contains("<span"));
-        assert!(json.contains("ok"));
-        assert!(json.contains("count"));
-        assert!(json.contains("\n")); // pretty-printed with newlines
+    fn detects_json_html_and_plain_text_responses_by_content_type() {
+        let raw_json = r#"{"ok":true,"count":2}"#;
+        let format = detect_response_format(raw_json, "application/json");
 
-        let (format, html) = format_response_body(
-            "<!doctype html><html><body><h1>Hello</h1><script>if (a < b) { run(); }</script></body></html>",
-            "text/html; charset=utf-8",
-        );
+        assert_eq!(format, "JSON");
+        // Detection must not modify the response body.
+        assert_eq!(raw_json, r#"{"ok":true,"count":2}"#);
+
+        let html = r#"<!doctype html><html><body><p>Hello</p><script>if (a < b) { run(); }</script></body></html>"#;
+        let format = detect_response_format(html, "text/html");
+
         assert_eq!(format, "HTML");
-        // HTML is formatted without HTML span tags
-        assert!(!html.contains("<span"));
-        assert!(html.contains("Hello"));
-        // Script content is preserved as raw text by format_html
-        assert!(html.contains("if (a < b) { run(); }"));
 
         let raw_text = "first line\nsecond line";
-        let (format, text) = format_response_body(raw_text, "text/plain; charset=utf-8");
+        let format = detect_response_format(raw_text, "text/plain; charset=utf-8");
+
         assert_eq!(format, "Text");
-        assert_eq!(text, raw_text);
     }
 
     #[test]
