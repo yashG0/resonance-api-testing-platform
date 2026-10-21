@@ -165,7 +165,23 @@ impl HttpClient {
 
             headers.append(name, value);
         }
+        if auth_type == "API Key" {
+            let key_name = match HeaderName::from_bytes(auth_value.trim().as_bytes()) {
+                Ok(name) => name,
+                Err(_) => {
+                    return failure("Invalid API key header name.", start);
+                }
+            };
 
+            let key_value = match HeaderValue::from_str(auth_secret.trim()) {
+                Ok(value) => value,
+                Err(_) => {
+                    return failure("Invalid API key header value.", start);
+                }
+            };
+
+            headers.insert(key_name, key_value);
+        }
         let has_body = !body.is_empty();
 
         if has_body {
