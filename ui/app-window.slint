@@ -139,10 +139,12 @@ export component AppWindow inherits Window {
     in-out property <string> response-time: "---";
     in-out property <string> response-state: "idle";
     in-out property <string> response-format: "Text";
+in-out property <bool> response-large: false;
     in-out property <string> response-headers: "";
     in-out property <string> response-cookies: "";
     in-out property <[ResponseHeaderItem]> response-header-items: [];
     in-out property <[ResponseCookieItem]> response-cookie-items: [];
+
     in-out property <string> response-tab: "Body";
     in-out property <bool> is-loading: false;
     // Kept so existing Rust setters still compile; the Pretty/Raw toggle now lives inside ResponseBody.
@@ -1687,6 +1689,7 @@ export component AppWindow inherits Window {
                                             pretty: root.response-body-formatted;
                                             format: root.response-format;
                                             dark: root.dark-mode;
+                                            large-response: root.response-large;
                                             tokenize-response(source, format, dark) => { root.tokenize-response(source, format, dark); }
                                             copy-all(text) => { root.copy-text(text); }
                                         }

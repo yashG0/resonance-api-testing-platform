@@ -801,6 +801,7 @@ async fn main() -> Result<(), slint::PlatformError> {
                         if ui.get_selected_collection_id() as i64 == collection_id
                             && ui.get_active_request_id() as i64 == saved_id
                         {
+                            ui.set_response_large(result.body.len() > 256 * 1024);
                             ui.set_response_status(result.status.into());
                             ui.set_response_state(response_state.into());
                             ui.set_response_format(result.format.into());
@@ -875,6 +876,7 @@ async fn main() -> Result<(), slint::PlatformError> {
                 let start_handle = app_handle.clone();
                 let _ = slint::invoke_from_event_loop(move || {
                     if let Some(ui) = start_handle.upgrade() {
+                        ui.set_response_large(false);
                         ui.set_is_loading(true);
                         ui.set_response_status("Running collection…".into());
                         ui.set_response_state("loading".into());
