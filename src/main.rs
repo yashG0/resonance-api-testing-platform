@@ -324,63 +324,184 @@ fn to_history_model(history: Vec<RequestHistory>) -> ModelRc<HistoryItem> {
     ModelRc::new(VecModel::from(items))
 }
 
-
 /// Convert formatted JSON into line/token models for the native Slint syntax viewer.
 /// Token text is kept verbatim, so copying the response never depends on rendered colors.
+
 fn tokenize_response(source: &str, format: &str, dark: bool) -> ModelRc<JsonLine> {
-    let base = if dark { Color::from_rgb_u8(0xe6, 0xe6, 0xe6) } else { Color::from_rgb_u8(0x24, 0x1f, 0x31) };
-    let key = if dark { Color::from_rgb_u8(0x78, 0xae, 0xed) } else { Color::from_rgb_u8(0x1c, 0x71, 0xd8) };
-    let string = if dark { Color::from_rgb_u8(0x8f, 0xf0, 0xa4) } else { Color::from_rgb_u8(0x26, 0xa2, 0x69) };
-    let number = if dark { Color::from_rgb_u8(0xff, 0xbe, 0x6f) } else { Color::from_rgb_u8(0xc6, 0x46, 0x00) };
-    let boolean = if dark { Color::from_rgb_u8(0xdc, 0x8a, 0xdd) } else { Color::from_rgb_u8(0x81, 0x3d, 0x9c) };
-    let punctuation = if dark { Color::from_rgb_u8(0xc0, 0xbf, 0xbc) } else { Color::from_rgb_u8(0x5e, 0x5c, 0x64) };
-    let null = if dark { Color::from_rgb_u8(0xa8, 0xa8, 0xa8) } else { Color::from_rgb_u8(0x6c, 0x6a, 0x73) };
+    let base = if dark {
+        Color::from_rgb_u8(0xe6, 0xe6, 0xe6)
+    } else {
+        Color::from_rgb_u8(0x24, 0x1f, 0x31)
+    };
+
+    let key = if dark {
+        Color::from_rgb_u8(0x78, 0xae, 0xed)
+    } else {
+        Color::from_rgb_u8(0x1c, 0x71, 0xd8)
+    };
+
+    let string = if dark {
+        Color::from_rgb_u8(0x8f, 0xf0, 0xa4)
+    } else {
+        Color::from_rgb_u8(0x26, 0xa2, 0x69)
+    };
+
+    let number = if dark {
+        Color::from_rgb_u8(0xff, 0xbe, 0x6f)
+    } else {
+        Color::from_rgb_u8(0xc6, 0x46, 0x00)
+    };
+
+    let boolean = if dark {
+        Color::from_rgb_u8(0xdc, 0x8a, 0xdd)
+    } else {
+        Color::from_rgb_u8(0x81, 0x3d, 0x9c)
+    };
+
+    let punctuation = if dark {
+        Color::from_rgb_u8(0xc0, 0xbf, 0xbc)
+    } else {
+        Color::from_rgb_u8(0x5e, 0x5c, 0x64)
+    };
+
+    let null = if dark {
+        Color::from_rgb_u8(0xa8, 0xa8, 0xa8)
+    } else {
+        Color::from_rgb_u8(0x6c, 0x6a, 0x73)
+    };
+
+    // Plain-text, HTML, and XML responses don't need JSON tokenization.
+    if format != "JSON" {
+        let lines = if source.is_empty() {
+            vec![""]
+        } else {
+            source.lines().collect::<Vec<_>>()
+        };
+
+        let lines = lines
+            .into_iter()
+            .enumerate()
+            .map(|(index, line)| JsonLine {
+                number: (index + 1) as i32,
+                tokens: ModelRc::new(VecModel::from(vec![JsonToken {
+                    text: line.into(),
+                    color: base,
+                }])),
+            })
+            .collect::<Vec<_>>();
+
+        return ModelRc::new(VecModel::from(lines));
+    }
 
     let mut lines = Vec::new();
-    let source_lines: Vec<&str> = source.lines().collect();
-    let source_lines: Vec<&str> = if source_lines.is_empty() { vec![""] } else { source_lines };
+
+    // Keep the existing character-based scanner for JSON so Unicode
+    // and escaped-string handling retain their current behavior.
+    let source_lines = if source.is_empty() {
+        vec![""]
+    } else {
+        source.lines().collect::<Vec<_>>()
+    };
+
     for (line_index, line) in source_lines.iter().enumerate() {
         let mut tokens: Vec<JsonToken> = Vec::new();
         let chars: Vec<char> = line.chars().collect();
         let mut i = 0;
+
         while i < chars.len() {
             let start = i;
             let ch = chars[i];
+
             let token_color;
+
             if ch == '"' {
                 i += 1;
+
                 while i < chars.len() {
-                    if chars[i] == '\\' { i = (i + 2).min(chars.len()); continue; }
-                    if chars[i] == '"' { i += 1; break; }
+                    if chars[i] == '\\' {
+                        i = (i + 2).min(chars.len());
+                        continue;
+                    }
+
+                    if chars[i] == '"' {
+                        i += 1;
+                        break;
+                    }
+
                     i += 1;
                 }
+
                 let mut lookahead = i;
-                while lookahead < chars.len() && chars[lookahead].is_whitespace() { lookahead += 1; }
-                token_color = if lookahead < chars.len() && chars[lookahead] == ':' { key } else { string };
-            } else if ch.is_ascii_digit() || (ch == '-' && chars.get(i + 1).is_some_and(|c| c.is_ascii_digit())) {
+
+                while lookahead < chars.len() && chars[lookahead].is_whitespace() {
+                    lookahead += 1;
+                }
+
+                token_color = if lookahead < chars.len() && chars[lookahead] == ':' {
+                    key
+                } else {
+                    string
+                };
+            } else if ch.is_ascii_digit()
+                || (ch == '-' && chars.get(i + 1).is_some_and(|c| c.is_ascii_digit()))
+            {
                 i += 1;
-                while i < chars.len() && (chars[i].is_ascii_digit() || matches!(chars[i], '.' | 'e' | 'E' | '+' | '-')) { i += 1; }
+
+                while i < chars.len()
+                    && (chars[i].is_ascii_digit()
+                        || matches!(chars[i], '.' | 'e' | 'E' | '+' | '-'))
+                {
+                    i += 1;
+                }
+
                 token_color = number;
             } else if ch.is_ascii_alphabetic() {
                 i += 1;
-                while i < chars.len() && chars[i].is_ascii_alphabetic() { i += 1; }
+
+                while i < chars.len() && chars[i].is_ascii_alphabetic() {
+                    i += 1;
+                }
+
                 let word: String = chars[start..i].iter().collect();
-                token_color = match word.as_str() { "true" | "false" => boolean, "null" => null, _ => base };
+
+                token_color = match word.as_str() {
+                    "true" | "false" => boolean,
+                    "null" => null,
+                    _ => base,
+                };
             } else {
                 i += 1;
-                token_color = if "{}[],:".contains(ch) { punctuation } else { base };
+
+                token_color = if "{}[],:".contains(ch) {
+                    punctuation
+                } else {
+                    base
+                };
             }
+
             let text: String = chars[start..i].iter().collect();
+
             if let Some(last) = tokens.last_mut() {
-                if last.color == token_color { last.text = format!("{}{}", last.text, text).into(); continue; }
+                if last.color == token_color {
+                    let mut merged = last.text.to_string();
+                    merged.push_str(&text);
+                    last.text = merged.into();
+                    continue;
+                }
             }
-            tokens.push(JsonToken { text: text.into(), color: token_color });
+
+            tokens.push(JsonToken {
+                text: text.into(),
+                color: token_color,
+            });
         }
-        if format != "JSON" {
-            tokens = vec![JsonToken { text: (*line).to_string().into(), color: base }];
-        }
-        lines.push(JsonLine { number: (line_index + 1) as i32, tokens: ModelRc::new(VecModel::from(tokens)) });
+
+        lines.push(JsonLine {
+            number: (line_index + 1) as i32,
+            tokens: ModelRc::new(VecModel::from(tokens)),
+        });
     }
+
     ModelRc::new(VecModel::from(lines))
 }
 
