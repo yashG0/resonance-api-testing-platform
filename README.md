@@ -71,27 +71,61 @@ For me, this project is about building a useful tool while learning through prac
 
 ## Current Features
 
-- Send HTTP requests and inspect responses.
-- Configure request methods and URLs.
-- Add request headers, query parameters, and request bodies.
-- View HTTP status codes, response times, and response bodies.
-- Save, load, update, and delete requests using SQLite.
-- Switch between dark, light, and system themes.
+### Requests and collections
 
-Resonance is still in early development, so the current feature set is intentionally limited.
+- Create, rename, save, and delete requests organized into collections.
+- Configure HTTP methods, URLs, query parameters, headers, request bodies, and None, Bearer, Basic, or API Key authentication.
+- Define reusable variables for each collection and use them in templated requests.
+- Review request history with status filters and sort order controls.
 
-## Install on Linux
+### Responses
 
-A Linux x86-64 executable archive is available from the [latest GitHub release](https://github.com/yashG0/resonance-api-testing-platform/releases/latest). Download `resonance-v0.1.1-linux-x86_64.tar.gz` and extract it:
+- Inspect response status, elapsed time, body, headers, and cookies.
+- View responses in Pretty or Raw mode. JSON Pretty mode includes syntax colors and line numbers.
+- Wrap long response lines and copy the response body. Turn wrapping off to keep JSON syntax colors and line numbers in Pretty mode.
+- Edit request bodies and format them as JSON, text, HTML, or XML.
+
+### Desktop workflow
+
+- Keep the request editor above the response panel by default, with a draggable divider to resize both areas.
+- Collapse the navigation sidebar or switch to its compact icon rail.
+- Choose System, Light, or Dark theme.
+- Use the integrated GNOME/Adwaita-inspired title bar, application menu, About dialog, and keyboard shortcuts.
+
+## Version 0.1.1 Highlights
+
+- Refined the application frame, title bar, compact controls, tab alignment, and light and dark themes.
+- Made the stacked request and response layout the default and removed the layout-cycling control while keeping the sidebar toggle.
+- Fixed the request URL field so it updates when a different saved request is selected.
+- Fixed line wrapping in Pretty JSON responses.
+- Added the About dialog and improved the application menu and control tooltips.
+
+## Downloads and Installation
+
+Release archives and SHA-256 checksum files are available on the [latest GitHub release](https://github.com/yashG0/resonance-api-testing-platform/releases/latest).
+
+### Linux x86-64
+
+Download `resonance-v0.1.1-linux-x86_64.tar.gz` and extract it:
 
 ```bash
 tar -xzf resonance-v0.1.1-linux-x86_64.tar.gz
 ./resonance
 ```
 
-The archive contains the application executable only. Required Linux system libraries may need to be installed separately. You can also build Resonance from source on the Linux machine where you plan to run it.
+The archive contains the application executable only. Required Linux system libraries may need to be installed separately.
 
-### Requirements
+### Windows x86-64
+
+Download and extract `resonance-windows-x86_64.zip`, then run `resonance.exe`. The executable and package are built by GitHub Actions; runtime behavior on Windows has not yet been verified.
+
+### macOS Apple Silicon (ARM64)
+
+Download and extract `resonance-macos-aarch64.tar.gz`, then run the `resonance` executable from the extracted folder. The package is built by GitHub Actions; runtime behavior on macOS has not yet been verified.
+
+### Build from source on Linux
+
+#### Requirements
 
 - Rust and Cargo 1.92 or newer.
 - A C/C++ build toolchain and the Linux libraries used by Slint's desktop backend.
@@ -129,15 +163,12 @@ Local storage is also not a complete security guarantee. Protecting sensitive da
 
 ## What's Next?
 
-I'm planning to improve Resonance incrementally, with a focus on:
+Resonance is in early development. Next areas of work include:
 
-- A better response viewer with formatted JSON.
-- More comfortable request editing.
-- Improved response inspection.
-- Better error handling and reliability.
-- Further security and privacy improvements.
-
-I'd rather make the core experience dependable before adding features simply to increase the feature list.
+- Broader runtime testing across Linux, Windows, and macOS.
+- Improving diagnostics and handling for failed or unusual requests.
+- Strengthening the handling of credentials and other sensitive local data.
+- Exploring import and export for collections and requests.
 
 ## Technology Stack
 
@@ -152,6 +183,8 @@ I'd rather make the core experience dependable before adding features simply to 
 ## Project Status
 
 **Early development — actively evolving.**
+
+Version 0.1.1 is available for Linux x86-64, Windows x86-64, and macOS Apple Silicon. Formatting, the test suite, and the optimized Linux build passed for this release; Windows and macOS CI builds also passed. Runtime behavior on Windows and macOS has not yet been verified.
 
 Resonance is a personal project and a learning experience. I'm building it to solve a workflow problem of my own while improving my understanding of Rust, systems programming, and software design.
 
