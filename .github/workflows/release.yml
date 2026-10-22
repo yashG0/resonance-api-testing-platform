@@ -1,0 +1,124 @@
+
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: Build ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux-x86_64
+            os: ubuntu-24.04
+            target: x86_64-unknown-linux-gnu
+            binary: resonance
+          - name: windows-x86_64
+            os: windows-2025
+            target: x86_64-pc-windows-msvc
+            binary: resonance.exe
+          - name: macos-aarch64
+            os: macos-15
+            target: aarch64-apple-darwin
+            binary: resonance
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libxkbcommon-dev libxkbcommon-x11-0 \
+            libxcb-shape0-dev libxcb-xfixes0-dev \
+            libfontconfig1-dev libfreetype-dev libegl1-mesa-dev
+
+      - name: Check formatting
+        run: cargo fmt --check
+
+      - name: Test
+        run: cargo test --locked
+
+      - name: Build
+        run: cargo build --release --locked --target ${{ matrix.target }}
+
+      - name: Package Linux
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist/resonance-${GITHUB_REF_NAME}-linux-x86_64
+          cp target/${{ matrix.target }}/release/${{ matrix.binary }} dist/resonance-${GITHUB_REF_NAME}-linux-x86_64/
+          cp README.md RELEASE_NOTES.md LICENSE dist/resonance-${GITHUB_REF_NAME}-linux-x86_64/
+          tar -czf resonance-${GITHUB_REF_NAME}-linux-x86_64.tar.gz -C dist resonance-${GITHUB_REF_NAME}-linux-x86_64
+          sha256sum resonance-${GITHUB_REF_NAME}-linux-x86_64.tar.gz > resonance-${GITHUB_REF_NAME}-linux-x86_64.tar.gz.sha256
+
+      - name: Package macOS
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist/resonance-${GITHUB_REF_NAME}-macos-aarch64
+          cp target/${{ matrix.target }}/release/${{ matrix.binary }} dist/resonance-${GITHUB_REF_NAME}-macos-aarch64/
+          cp README.md RELEASE_NOTES.md LICENSE dist/resonance-${GITHUB_REF_NAME}-macos-aarch64/
+          tar -czf resonance-${GITHUB_REF_NAME}-macos-aarch64.tar.gz -C dist resonance-${GITHUB_REF_NAME}-macos-aarch64
+          shasum -a 256 resonance-${GITHUB_REF_NAME}-macos-aarch64.tar.gz > resonance-${GITHUB_REF_NAME}-macos-aarch64.tar.gz.sha256
+
+      - name: Package Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $name = "resonance-$env:GITHUB_REF_NAME-windows-x86_64"
+          New-Item -ItemType Directory -Force -Path "dist/$name" | Out-Null
+          Copy-Item "target/${{ matrix.target }}/release/${{ matrix.binary }}" "dist/$name/"
+          Copy-Item README.md, RELEASE_NOTES.md, LICENSE "dist/$name/"
+          Compress-Archive -Path "dist/$name/*" -DestinationPath "$name.zip"
+          $hash = (Get-FileHash "$name.zip" -Algorithm SHA256).Hash.ToLower()
+          "$hash  $name.zip" | Out-File "$name.zip.sha256" -Encoding ascii
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.name }}
+          path: |
+            resonance-${{ github.ref_name }}-*.tar.gz
+            resonance-${{ github.ref_name }}-*.zip
+            resonance-${{ github.ref_name }}-*.sha256
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    name: Publish GitHub Release
+    needs: build
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          pattern: release-*
+          merge-multiple: true
+
+      - name: Publish all artifacts
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: dist/*

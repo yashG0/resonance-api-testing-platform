@@ -1,67 +1,59 @@
-# Resonance v0.1.0
+# Resonance v1.0.0
 
-The first tagged release of **Resonance**, a lightweight desktop API testing client built with Rust and Slint.
+**Release status: Preparation — publish only after release validation is complete.**
 
-## Features
+Resonance v1.0.0 is intended to be the first stable release of the native desktop API testing client.
 
-- Send HTTP requests and inspect responses.
-- Configure request methods and URLs.
-- Add request headers, query parameters, and request bodies.
-- Inspect HTTP status codes, response times, and response bodies.
-- Save, load, update, and delete requests using SQLite.
-- Switch between dark, light, and system themes.
+## Highlights
+
+- Native desktop interface built with Rust and Slint.
+- HTTP request configuration and response inspection.
+- Request collections, environment variables, and history.
+- Local SQLite storage.
+- Operating-system credential-store integration.
+- Light and dark themes.
 
 ## Downloads
 
-### Linux x86-64
+Release artifacts will be listed below once their builds and validation are complete.
 
-Download `resonance-v0.1.0-linux-x86_64.tar.gz` and extract it:
+| Platform | Artifact |
+|---|---|
+| Linux x86_64 | Linux archive or package |
+| Windows x86_64 | Windows ZIP containing the executable |
+| macOS | DMG or ZIP for each supported architecture |
 
-```bash
-tar -xzf resonance-v0.1.0-linux-x86_64.tar.gz
-./resonance
-```
+Download: https://github.com/yashG0/resonance-api-testing-platform/releases
 
-The archive contains the application executable only. Required Linux system libraries may need to be installed separately.
+## Installation
 
-Verify the download with the checksum file in the same directory:
+### Linux
 
-```bash
-sha256sum -c resonance-v0.1.0-linux-x86_64.tar.gz.sha256
-```
+Download the Linux artifact, extract it if necessary, and follow the included instructions. Required system libraries may vary by distribution.
 
-### Windows x86-64
+### Windows
 
-Download `resonance-windows-x86_64.zip` and extract it. The archive includes `resonance.exe`, `LICENSE`, and `README.md`.
+Download and extract the Windows package, then run the included executable. Any required runtime dependencies will be documented with the artifact.
 
-The executable was built successfully using GitHub Actions, but runtime testing on a Windows machine has not yet been performed.
+### macOS
 
-### macOS Apple Silicon (ARM64)
+Download the package matching your Mac's architecture. Installation, signing, notarization, and first-launch instructions will be documented with the published build.
 
-Download `resonance-macos-aarch64.tar.gz` and extract it:
+## Validation
 
-```bash
-tar -xzf resonance-macos-aarch64.tar.gz
-cd resonance-macos-aarch64
-./resonance
-```
+Before this release is marked stable, validate:
 
-The executable was built successfully using GitHub Actions, but runtime testing on a macOS machine has not yet been performed.
+- Formatting, compilation, and automated tests.
+- Optimized builds for all supported targets.
+- Application launch and basic request workflows on each operating system.
+- Data persistence and credential-store behavior.
+- Packaged artifacts on clean environments.
+- SHA-256 checksums and installation instructions.
 
-Verify the macOS archive with its checksum file:
+## Known limitations
 
-```bash
-shasum -a 256 -c resonance-macos-aarch64.tar.gz.sha256
-```
+Platform-specific limitations and unverified behavior will be documented here before publication.
 
-### Checksums
+## Checksums
 
-Each downloadable archive has a corresponding `.sha256` file. Keep the archive and its checksum file in the same directory when verifying downloads.
-
-## Project Status
-
-Resonance is in early development. Linux compatibility with other distributions and environments has not been established. Windows and macOS builds have been compiled by GitHub Actions, but their runtime compatibility remains unverified.
-
-Resonance was developed with AI assistance.
-
-Feedback and constructive criticism are welcome.
+SHA-256 checksums will be published alongside the final release artifacts.
