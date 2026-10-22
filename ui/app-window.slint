@@ -1290,7 +1290,9 @@ in-out property <bool> response-large: false;
                 // Let the parent allocate all remaining window width instead
                 // of inheriting the tab strip's content-based preferred size.
                 horizontal-stretch: 1;
+                min-width: 0px;
                 preferred-width: 0px;
+                max-width: 100000px;
                 spacing: 0;
 
                 if root.active-view == "Request" && root.request-tabs.length > 0 : Rectangle {
@@ -1300,15 +1302,15 @@ in-out property <bool> response-large: false;
                     border-width: 1px;
                     border-color: Theme.border;
                     HorizontalLayout {
+                        alignment: start;
                         cross-axis-alignment: center;
                         padding-left: 10px;
                         padding-right: 10px;
                         spacing: 4px;
-                        Btn {
+                        if root.request-tabs-overflow : Btn {
                             kind: "flat";
                             width: 30px;
                             text: "‹";
-                            visible: root.request-tabs-overflow;
                             accessible-name: "Scroll tabs left";
                             tooltip: "Scroll tabs left";
                             enabled: request-tab-scroll.content-x < 0px;
@@ -1319,6 +1321,7 @@ in-out property <bool> response-large: false;
                         }
                         request-tab-scroll := Flickable {
                             horizontal-stretch: 1;
+                            max-width: root.request-tabs.length * 228px;
                             height: 40px;
                             content-width: root.request-tabs.length * 224px;
                             content-height: 34px;
@@ -1370,11 +1373,10 @@ in-out property <bool> response-large: false;
                                 }
                             }
                         }
-                        Btn {
+                        if root.request-tabs-overflow : Btn {
                             kind: "flat";
                             width: 30px;
                             text: "›";
-                            visible: root.request-tabs-overflow;
                             accessible-name: "Scroll tabs right";
                             tooltip: "Scroll tabs right";
                             enabled: request-tab-scroll.content-x > request-tab-scroll.width - request-tab-scroll.content-width;
@@ -1902,18 +1904,12 @@ in-out property <bool> response-large: false;
                         }
 
                         VerticalLayout {
-                        // Explicitly bind the workspace layout to the available main-pane size.
-                        // Without this, Slint can size it from its intrinsic children, leaving
-                        // unused blank space on the right at wide window sizes.
-                        width: parent.width;
-                        height: parent.height;
                         padding: 16px;
                         padding-top: 14px;
                         spacing: 12px;
 
                         // URL bar
                         Rectangle {
-                            width: parent.width;
                             visible: root.selected-collection-id > 0 || root.active-request-id > 0 || root.active-request-tab-index >= 0;
                             height: 54px;
                             background: Theme.card-bg;
@@ -1957,7 +1953,6 @@ in-out property <bool> response-large: false;
 
                         // Request editor above the response with a draggable horizontal divider.
                         split-area := Rectangle {
-                            width: parent.width;
                             visible: root.selected-collection-id > 0 || root.active-request-id > 0 || root.active-request-tab-index >= 0;
                             vertical-stretch: 1;
                             // Request pane
