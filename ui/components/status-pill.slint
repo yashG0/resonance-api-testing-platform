@@ -6,11 +6,20 @@ export component StatusPill inherits Rectangle {
     in property <string> state;
     visible: root.state != "idle";
     height: 24px;
-    preferred-width: label.preferred-width + 20px;
+    // Size to the text. `measure` is an invisible copy of the label, so the pill
+    // never stretches to fill the response header.
+    width: measure.preferred-width + 22px;
     border-radius: 12px;
     background:
         root.state == "success" ? Theme.success-bg :
         root.state == "loading" ? Theme.accent.with-alpha(0.18) : Theme.danger-bg;
+
+    measure := Text {
+        visible: false;
+        text: root.status;
+        font-size: Theme.fs-small;
+        font-weight: 700;
+    }
 
     label := Text {
         x: 0px;

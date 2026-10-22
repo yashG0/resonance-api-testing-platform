@@ -116,8 +116,16 @@ export component AppWindow inherits Window {
     in-out property <int> active-request-tab-key: -1;
     in-out property <int> active-request-tab-index: -1;
     in-out property <int> next-request-tab-key: 1;
-    property <bool> request-tabs-overflow:
-        root.request-tabs.length * 224px > root.width - (root.show-navigation-sidebar ? 272px : 64px) - 128px;
+    // Updated from change handlers (not a binding) so the tab-bar layout can depend on it
+    // without creating a layout <-> window-width binding loop.
+    property <bool> request-tabs-overflow: false;
+    function refresh-tab-overflow() {
+        root.request-tabs-overflow =
+            root.request-tabs.length * 224px > root.width - (root.show-navigation-sidebar ? 272px : 64px) - 128px;
+    }
+    changed width => { root.refresh-tab-overflow(); }
+    changed request-tabs => { root.refresh-tab-overflow(); }
+    changed show-navigation-sidebar => { root.refresh-tab-overflow(); }
     in-out property <[CollectionItem]> collections: [];
     in-out property <[VariableItem]> collection-variables: [];
     in-out property <[EnvironmentItem]> environment-items: [];
@@ -197,6 +205,7 @@ in-out property <bool> response-large: false;
     init => {
         Theme.dark = root.dark-mode;
         Theme.accent = root.accent;
+        root.refresh-tab-overflow();
     }
     changed dark-mode => { Theme.dark = root.dark-mode; }
     changed accent => { Theme.accent = root.accent; }
@@ -1239,7 +1248,7 @@ in-out property <bool> response-large: false;
                         }
 
                         Text {
-                            text: "v0.1.0 · Early development";
+                            text: "v0.1.1 · Early development";
                             color: Theme.fg-3;
                             font-size: Theme.fs-caption;
                             horizontal-alignment: center;
@@ -1354,11 +1363,12 @@ in-out property <bool> response-large: false;
                                             vertical-alignment: center;
                                             overflow: elide;
                                         }
-                                        if tab.request-id <= 0 : Text {
-                                            text: "Unsaved";
-                                            color: Theme.fg-3;
-                                            font-size: Theme.fs-caption;
-                                            vertical-alignment: center;
+                                        if tab.request-id <= 0 : Rectangle {
+                                            width: 8px;
+                                            height: 8px;
+                                            border-radius: 4px;
+                                            background: Theme.warning;
+                                            accessible-role: none;
                                         }
                                         Btn {
                                             kind: "flat";
