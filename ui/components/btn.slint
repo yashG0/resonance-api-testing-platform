@@ -1,6 +1,6 @@
 import { Theme } from "theme.slint";
 
-// kind: "default" | "suggested" | "flat" | "destructive" | "close". `active` gives flat buttons a selected look.
+// kind: "default" | "suggested" | "pill" | "flat" | "destructive" | "close". `active` gives flat buttons a selected look.
 export component Btn inherits Rectangle {
     in property <string> text;
     in property <string> accessible-name: "";
@@ -15,28 +15,31 @@ export component Btn inherits Rectangle {
     accessible-role: button;
     accessible-label: root.accessible-name != "" ? root.accessible-name : root.text;
 
-    height: Theme.control-h;
-    min-width: Theme.control-h;
+    property <bool> accent-kind: root.kind == "suggested" || root.kind == "pill";
+
+    // close = 24px circle (libadwaita window control); pill = 44px fully rounded call-to-action
+    height: root.kind == "close" ? 24px : root.kind == "pill" ? 44px : Theme.control-h;
+    min-width: root.kind == "close" ? 24px : root.kind == "pill" ? 44px : Theme.control-h;
     preferred-width: row.preferred-width;
-    border-radius: root.kind == "close" ? Theme.control-h / 2 : Theme.radius-control;
+    border-radius: root.kind == "close" ? 12px : root.kind == "pill" ? 22px : Theme.radius-control;
     opacity: root.enabled ? 1 : 0.4;
     background:
-        root.kind == "close" ? (touch.pressed ? Theme.active : touch.has-hover ? Theme.kbd-bg.brighter(0.08) : Theme.kbd-bg) :
-        root.kind == "suggested" ? (touch.pressed ? Theme.accent.darker(0.12) : touch.has-hover ? Theme.accent.brighter(0.08) : Theme.accent) :
+        root.kind == "close" ? (touch.pressed ? #ffffff33 : touch.has-hover ? #ffffff26 : Theme.active) :
+        root.accent-kind ? (touch.pressed ? Theme.accent.darker(0.12) : touch.has-hover ? Theme.accent.brighter(0.08) : Theme.accent) :
         root.kind == "default" ? (touch.pressed ? Theme.active : touch.has-hover ? Theme.hover : Theme.button-bg) :
         root.kind == "destructive" ? (touch.has-hover ? Theme.danger-bg : transparent) :
         (root.active ? Theme.active : touch.pressed ? Theme.active : touch.has-hover ? Theme.hover : transparent);
 
     // Adwaita gives default buttons a hairline border so they read as raised
     // on light backgrounds; flat and suggested buttons stay borderless.
-    border-width: root.kind == "default" ? 1px : 0px;
+    border-width: 0px;
     border-color: Theme.button-border;
     animate background { duration: 120ms; easing: ease-out; }
     animate border-color { duration: 120ms; easing: ease-out; }
 
     property <color> content-color:
         root.kind == "close" && touch.has-hover ? Theme.fg :
-        root.kind == "suggested" ? Theme.accent-fg :
+        root.accent-kind ? Theme.accent-fg :
         root.kind == "destructive" ? Theme.danger :
         root.active ? Theme.accent-text : Theme.fg;
 
@@ -49,13 +52,13 @@ export component Btn inherits Rectangle {
     row := HorizontalLayout {
         alignment: center;
         spacing: 8px;
-        padding-left: root.text == "" ? 0px : 14px;
-        padding-right: root.text == "" ? 0px : 14px;
+        padding-left: root.text == "" ? 0px : root.kind == "pill" ? 32px : 14px;
+        padding-right: root.text == "" ? 0px : root.kind == "pill" ? 32px : 14px;
 
         if root.icon.width > 0 : Image {
             source: root.icon;
-            width: root.icon-size;
-            height: root.icon-size;
+            width: root.kind == "close" ? 14px : root.icon-size;
+            height: root.kind == "close" ? 14px : root.icon-size;
             y: (parent.height - self.height) / 2;
             colorize: root.content-color;
         }

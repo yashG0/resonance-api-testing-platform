@@ -76,12 +76,14 @@ export struct ResponseCookieItem {
 export component AppWindow inherits Window {
     title: "Resonance";
     no-frame: true;
-    resize-border-width: 8px;
-    // A little inset keeps the client-side rounded frame visible on launch.
-    preferred-width: 1120px;
-    preferred-height: 740px;
-    min-width: 960px;
-    min-height: 620px;
+    // GNOME-style client-side shadow: the surface is larger than the visible window by
+    // `shadow-margin` on every side. The margin is transparent, holds the drop shadow and
+    // doubles as the resize grip. It collapses when maximized / fullscreen (no shadow, square).
+    resize-border-width: root.chrome-flat ? 0px : 20px;
+    preferred-width: 1160px;   // 1120 visible + 2 * 20 margin
+    preferred-height: 780px;   // 740 visible + 2 * 20 margin
+    min-width: 1000px;         // 960 visible + 2 * 20 margin
+    min-height: 660px;         // 620 visible + 2 * 20 margin
     default-font-family: Theme.font-ui;
     background: transparent;
     forward-focus: shortcut-scope;
@@ -196,6 +198,9 @@ in-out property <bool> response-large: false;
     in-out property <string> previous-theme-mode: "System";
     in-out property <color> system-accent-color: #3584e4;
     in-out property <color> accent: root.system-accent-color;
+
+    property <bool> chrome-flat: root.full-screen || root.maximized;
+    property <length> shadow-margin: root.chrome-flat ? 0px : 20px;
 
     property <bool> dark-mode:
         root.theme-mode == "Dark" ? true :
@@ -525,12 +530,17 @@ in-out property <bool> response-large: false;
         height: 100%;
 
         Rectangle {
-            width: 100%;
-            height: 100%;
+            x: root.shadow-margin;
+            y: root.shadow-margin;
+            width: parent.width - 2 * root.shadow-margin;
+            height: parent.height - 2 * root.shadow-margin;
             background: Theme.window-bg;
-            border-radius: Theme.radius-window;
+            border-radius: root.chrome-flat ? 0px : Theme.radius-window;
             border-width: 1px;
-            border-color: Theme.border;
+            border-color: Theme.dark ? #ffffff24 : #00000026;
+            drop-shadow-blur: root.chrome-flat ? 0px : 20px;
+            drop-shadow-offset-y: root.chrome-flat ? 0px : 4px;
+            drop-shadow-color: Theme.dark ? #000000a0 : #00000040;
             clip: true;
 
             VerticalLayout {
@@ -538,25 +548,39 @@ in-out property <bool> response-large: false;
 
             // Integrated client-side titlebar
                 Rectangle {
-                    height: 52px;
-                    background: Theme.headerbar-bg;
+                    height: 48px;
+                    background: Theme.titlebar-bg;
+                    // Sidebar-coloured section: header and sidebar read as one split view.
+                    Rectangle {
+                        x: 0px;
+                        width: root.show-navigation-sidebar ? 272px : 64px;
+                        height: parent.height;
+                        background: Theme.sidebar-bg;
+                        animate width { duration: 180ms; easing: ease-out; }
+                    }
                     WindowMoveArea {
                         width: 100%;
-                        height: 52px;
+                        height: 48px;
                         HorizontalLayout {
                             padding-left: 10px;
                             padding-right: 12px;
                             spacing: 8px;
 
-                            Btn {
-                                kind: "flat";
-                                y: 9px;
-                                icon: Icons.panel-left;
-                                accessible-name: "Toggle navigation sidebar";
-                                tooltip: "Toggle Sidebar";
+                            Rectangle {
+                                width: (root.show-navigation-sidebar ? 272px : 64px) - 18px;
+                                animate width { duration: 180ms; easing: ease-out; }
+                                Btn {
+                                    x: 0px;
+                                    width: Theme.control-h;
+                                    kind: "flat";
+                                    y: 7px;
+                                    icon: Icons.panel-left;
+                                    accessible-name: "Toggle navigation sidebar";
+                                    tooltip: "Toggle Sidebar";
 
-                                active: root.show-navigation-sidebar;
-                                clicked => { root.show-navigation-sidebar = !root.show-navigation-sidebar; }
+                                    active: root.show-navigation-sidebar;
+                                    clicked => { root.show-navigation-sidebar = !root.show-navigation-sidebar; }
+                                }
                             }
 
                             if root.active-view == "Request" && !root.editing-request-name && (root.selected-collection-id > 0 || root.active-request-id > 0 || root.active-request-tab-index >= 0) : HorizontalLayout {
@@ -576,7 +600,7 @@ in-out property <bool> response-large: false;
                                 Text {
                                     text: root.active-request;
                                     color: Theme.fg;
-                                    font-size: Theme.fs-heading;
+                                    font-size: Theme.fs-body;
                                     font-weight: 700;
                                     vertical-alignment: center;
                                     overflow: elide;
@@ -596,14 +620,14 @@ in-out property <bool> response-large: false;
                                         vertical-alignment: center;
                                     }
                                 }
-                                Btn { kind: "flat"; y: 9px; icon: Icons.pencil; icon-size: 15px; accessible-name: "Rename request"; tooltip: "Rename Request"; clicked => { root.begin-rename(); } }
+                                Btn { kind: "flat"; y: 7px; icon: Icons.pencil; icon-size: 15px; accessible-name: "Rename request"; tooltip: "Rename Request"; clicked => { root.begin-rename(); } }
                             }
 
                             if root.active-view == "Request" && root.selected-collection-id <= 0 && root.active-request-id <= 0 && root.active-request-tab-index < 0 : Text {
                                 horizontal-stretch: 1;
                                 text: "Get started";
                                 color: Theme.fg;
-                                font-size: Theme.fs-heading;
+                                font-size: Theme.fs-body;
                                 font-weight: 700;
                                 vertical-alignment: center;
                                 horizontal-alignment: center;
@@ -616,14 +640,14 @@ in-out property <bool> response-large: false;
                                 AdwLineEdit {
                                     horizontal-stretch: 1;
                                     height: 34px;
-                                    y: 9px;
+                                    y: 7px;
                                     text: root.request-name-draft;
                                     placeholder-text: "Request name";
                                     edited(value) => { root.request-name-draft = value; }
                                     accepted(value) => { if value != "" { root.request-name-draft = value; root.commit-request-name(); } }
                                 }
-                                Btn { kind: "suggested"; y: 9px; icon: Icons.check; enabled: root.request-name-draft != ""; clicked => { root.commit-request-name(); } }
-                                Btn { kind: "flat"; y: 9px; icon: Icons.x; accessible-name: "Cancel rename"; clicked => { root.editing-request-name = false; } }
+                                Btn { kind: "suggested"; y: 7px; icon: Icons.check; enabled: root.request-name-draft != ""; clicked => { root.commit-request-name(); } }
+                                Btn { kind: "flat"; y: 7px; icon: Icons.x; accessible-name: "Cancel rename"; clicked => { root.editing-request-name = false; } }
                             }
 
                             if root.active-view != "Request" : Text {
@@ -632,15 +656,15 @@ in-out property <bool> response-large: false;
                                     : root.active-view == "History" ? "History"
                                     : root.active-view == "Environments" ? "Environments" : "Collection variables";
                                 color: Theme.fg;
-                                font-size: Theme.fs-heading;
+                                font-size: Theme.fs-body;
                                 font-weight: 700;
                                 vertical-alignment: center;
                                 horizontal-alignment: center;
                             }
 
-                            Btn { kind: "flat"; y: 9px; icon: Icons.maximize; accessible-name: "Toggle full screen"; tooltip: "Toggle Full Screen"; clicked => { root.full-screen = !root.full-screen; } }
+                            Btn { kind: "flat"; y: 7px; icon: Icons.maximize; accessible-name: "Toggle full screen"; tooltip: "Toggle Full Screen"; clicked => { root.full-screen = !root.full-screen; } }
                             if root.active-view == "Request" && (root.selected-collection-id > 0 || root.active-request-id > 0 || root.active-request-tab-index >= 0) : Btn {
-                                y: 9px;
+                                y: 7px;
                                 text: "Save";
                                 icon: Icons.check;
                                 enabled: root.selected-collection-id > 0 && root.request-url != "" && root.active-request != "";
@@ -651,7 +675,7 @@ in-out property <bool> response-large: false;
 
                             Btn {
                                 kind: "flat";
-                                y: 9px;
+                                y: 7px;
                                 icon: root.theme-mode == "Dark" ? Icons.moon : root.theme-mode == "Light" ? Icons.sun : Icons.monitor;
                                 accessible-name: "Theme mode: " + root.theme-mode + ". Activate to change.";
                                 tooltip: "Theme: " + root.theme-mode;
@@ -665,7 +689,7 @@ in-out property <bool> response-large: false;
                             app-menu-anchor := Rectangle {
                                 width: Theme.control-h;
                                 height: Theme.control-h;
-                                y: 9px;
+                                y: 7px;
                                 Btn {
                                     width: 100%;
                                     height: 100%;
@@ -724,7 +748,7 @@ in-out property <bool> response-large: false;
                                     }
                                 }
                             }
-                            Btn { kind: "close"; y: 9px; icon: Icons.x; accessible-name: "Close window"; tooltip: "Close Window"; clicked => { root.close(); } }
+                            Btn { kind: "close"; y: 12px; icon: Icons.x; accessible-name: "Close window"; tooltip: "Close Window"; clicked => { root.close(); } }
                         }
                     }
                 }
@@ -1849,30 +1873,22 @@ in-out property <bool> response-large: false;
                                 x: (parent.width - self.width) / 2;
                                 y: (parent.height - self.height) / 2;
                                 width: min(parent.width - 64px, 560px);
-                                height: 220px;
+                                height: 300px;
                                 alignment: center;
                                 cross-axis-alignment: center;
-                                spacing: 12px;
+                                spacing: 14px;
 
-                                Rectangle {
-                                    width: 68px;
-                                    height: 68px;
-                                    background: Theme.active;
-                                    border-radius: 22px;
-                                    Image {
-                                        source: @image-url("../assets/logo/resonance-logo.svg");
-                                        width: 38px;
-                                        height: 38px;
-                                        x: (parent.width - self.width) / 2;
-                                        y: (parent.height - self.height) / 2;
-                                        image-fit: contain;
-                                    }
+                                Image {
+                                    source: @image-url("../assets/logo/resonance-logo.svg");
+                                    width: 112px;
+                                    height: 112px;
+                                    image-fit: contain;
                                 }
 
                                 Text {
                                     text: "Your workspace starts here";
                                     color: Theme.fg;
-                                    font-size: 24px;
+                                    font-size: 26px;
                                     font-weight: 700;
                                     horizontal-alignment: center;
                                 }
@@ -1891,7 +1907,7 @@ in-out property <bool> response-large: false;
                                     alignment: center;
                                     Rectangle { width: 1px; height: 1px; horizontal-stretch: 1; }
                                     Btn {
-                                        kind: "suggested";
+                                        kind: "pill";
                                         text: root.collections.length == 0 ? "Create a collection" : "Browse collections";
                                         icon: root.collections.length == 0 ? Icons.plus : Icons.folder;
                                         clicked => {
@@ -2224,18 +2240,22 @@ in-out property <bool> response-large: false;
                                         if root.response-state == "idle" || root.response-state == "loading" : VerticalLayout {
                                             alignment: center;
                                             spacing: 8px;
-                                            Text {
-                                                text: root.response-state == "loading" ? "•••" : "↗";
-                                                color: Theme.accent-text;
-                                                font-size: 26px;
-                                                horizontal-alignment: center;
+                                            Rectangle {
+                                                height: 64px;
+                                                Image {
+                                                    source: Icons.braces;
+                                                    width: 64px;
+                                                    height: 64px;
+                                                    x: (parent.width - self.width) / 2;
+                                                    colorize: root.response-state == "loading" ? Theme.accent-text : Theme.fg.with-alpha(0.45);
+                                                }
                                             }
                                             Text {
                                                 text: root.response-state == "loading" ? "Waiting for response"
                                                     : root.active-request-id <= 0 && root.selected-collection-id > 0 ? "Your new request is ready"
                                                     : "Your response will appear here";
                                                 color: Theme.fg;
-                                                font-size: Theme.fs-label;
+                                                font-size: 20px;
                                                 font-weight: 700;
                                                 horizontal-alignment: center;
                                             }
@@ -2243,7 +2263,7 @@ in-out property <bool> response-large: false;
                                                 text: root.response-state == "loading" ? "The request is in progress."
                                                     : root.active-request-id <= 0 && root.selected-collection-id > 0 ? root.request-url == "" ? "Enter a URL above to start. Save it or press Ctrl+Enter to send and save." : "This is an unsaved draft. Save it, or press Ctrl+Enter to send and save."
                                                     : "Press Ctrl+Enter to send the request.";
-                                                color: Theme.fg-3;
+                                                color: Theme.fg-2;
                                                 font-size: Theme.fs-body;
                                                 horizontal-alignment: center;
                                             }
@@ -2385,17 +2405,17 @@ in-out property <bool> response-large: false;
         }
 
         if root.show-shortcuts : ShortcutsDialog {
-            x: 0px;
-            y: 0px;
-            width: parent.width;
-            height: parent.height;
+            x: root.shadow-margin;
+            y: root.shadow-margin;
+            width: parent.width - 2 * root.shadow-margin;
+            height: parent.height - 2 * root.shadow-margin;
             close => { root.show-shortcuts = false; }
         }
         if root.show-about : AboutDialog {
-            x: 0px;
-            y: 0px;
-            width: parent.width;
-            height: parent.height;
+            x: root.shadow-margin;
+            y: root.shadow-margin;
+            width: parent.width - 2 * root.shadow-margin;
+            height: parent.height - 2 * root.shadow-margin;
             close => { root.show-about = false; }
         }
 

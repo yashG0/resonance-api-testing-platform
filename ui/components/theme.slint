@@ -19,23 +19,25 @@ export global Theme {
     out property <length> fs-title: 22px;
 
     // Shape and rhythm — compact, consistent Adwaita-inspired geometry
-    out property <length> radius-window: 14px;
+    out property <length> radius-window: 15px;
     out property <length> radius-card: 12px;
-    out property <length> radius-control: 8px;
+    out property <length> radius-control: 9px;
     out property <length> radius-popover: 12px;
     out property <length> control-h: 34px;
 
     // ── Surfaces ────────────────────────────────────────────────────────
-    out property <color> window-bg:     dark ? #222225 : #f6f5f4;
-    out property <color> view-bg:       dark ? #242427 : #ffffff;
-    out property <color> headerbar-bg:  dark ? #29292d : #ebebeb;
-    out property <color> sidebar-bg:    dark ? #252528 : #f6f5f4;
-    out property <color> card-bg:       dark ? #2b2b2f : #ffffff;
-    out property <color> dialog-bg:     dark ? #2b2b2f : #ffffff;
-    out property <color> popover-bg:    dark ? #333337 : #ffffff;
-    out property <color> input-bg:      dark ? #1c1c1f : #ffffff;
-    out property <color> button-bg:     dark ? #353539 : #ffffff;
-    out property <color> button-border: dark ? #414145 : #d1d1d1;
+    out property <color> window-bg:     dark ? #222226 : #fafafb;
+    out property <color> view-bg:       dark ? #1d1d20 : #ffffff;
+    out property <color> headerbar-bg:  dark ? #2e2e32 : #ebebed;
+    // Flat title bar: same surface as the window, like Image Viewer / Video Player.
+    out property <color> titlebar-bg:   dark ? #222226 : #fafafb;
+    out property <color> sidebar-bg:    dark ? #2e2e32 : #ebebed;
+    out property <color> card-bg:       dark ? #2a2a2e : #ffffff;
+    out property <color> dialog-bg:     dark ? #36363a : #fafafb;
+    out property <color> popover-bg:    dark ? #36363a : #ffffff;
+    out property <color> input-bg:      dark ? #38383c : #ebebed;
+    out property <color> button-bg:     dark ? #38383c : #e8e8ea;
+    out property <color> button-border: transparent;
     out property <color> kbd-bg:        dark ? #3b3b3f : #e5e5e5;
     out property <color> overlay: #00000066;
 
@@ -48,7 +50,7 @@ export global Theme {
     out property <color> headerbar-backdrop: dark ? #252528 : #f0f0f0;
 
     // ── Foreground ──────────────────────────────────────────────────────
-    out property <color> fg:          dark ? #f5f5f5 : #241f31;
+    out property <color> fg:          dark ? #ffffff : #000000cc;
     out property <color> fg-2:        dark ? #c2c3c7 : #00000099;
     out property <color> fg-3:        dark ? #92949a : #00000073;
     out property <color> fg-disabled: dark ? #77797e : #0000005c;
@@ -58,7 +60,7 @@ export global Theme {
     out property <color> border-unfocused: dark ? #ffffff0c : #0000000e;
     out property <color> border-strong:    dark ? #ffffff30 : #00000032;
     out property <color> hover:            dark ? #ffffff0a : #00000009;
-    out property <color> active:           dark ? #ffffff14 : #00000012;
+    out property <color> active:           dark ? #ffffff1a : #00000014;
 
     // ── Accent ──────────────────────────────────────────────────────────
     out property <color> accent-fg:   #ffffff;
