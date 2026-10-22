@@ -11,6 +11,11 @@ use std::{
 use directories::ProjectDirs;
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
+use uuid::Uuid;
+
+use crate::credentials::{
+    CredentialVault, CredentialVaultError, RequestCredentials, SystemCredentialVault,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Collection {
@@ -77,11 +82,19 @@ pub enum StoreError {
     Sqlite(#[from] rusqlite::Error),
     #[error(transparent)]
     Io(#[from] std::io::Error),
+    #[error(transparent)]
+    CredentialVault(#[from] CredentialVaultError),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct RequestStore {
     database_path: PathBuf,
+    credential_vault: std::sync::Arc<dyn CredentialVault>,
+}
+
+struct StoredSavedRequest {
+    request: SavedRequest,
+    credential_ref: String,
 }
 
 impl RequestStore {
@@ -96,13 +109,23 @@ impl RequestStore {
 
     /// Opens a database at an explicit path. Useful for tests and portable setups.
     pub fn open(path: impl AsRef<Path>) -> Result<Self, StoreError> {
+        Self::open_with_vault(path, std::sync::Arc::new(SystemCredentialVault))
+    }
+
+    fn open_with_vault(
+        path: impl AsRef<Path>,
+        credential_vault: std::sync::Arc<dyn CredentialVault>,
+    ) -> Result<Self, StoreError> {
         let database_path = path.as_ref().to_path_buf();
         if let Some(parent) = database_path.parent() {
             std::fs::create_dir_all(parent)?;
         }
 
-        let store = Self { database_path };
-        let connection = store.connect()?;
+        let store = Self {
+            database_path,
+            credential_vault,
+        };
+        let mut connection = store.connect()?;
         connection.execute_batch(
             r#"
             PRAGMA journal_mode = WAL;
@@ -125,6 +148,7 @@ impl RequestStore {
                 auth_type    TEXT NOT NULL DEFAULT 'None',
                 auth_value   TEXT NOT NULL DEFAULT '',
                 auth_secret  TEXT NOT NULL DEFAULT '',
+                credential_ref TEXT NOT NULL DEFAULT '',
                 collection_id INTEGER REFERENCES collections(id) ON DELETE CASCADE,
                 created_at   TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 updated_at   TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -178,6 +202,7 @@ impl RequestStore {
             ("body_format", "TEXT NOT NULL DEFAULT 'JSON'"),
             ("auth_value", "TEXT NOT NULL DEFAULT ''"),
             ("auth_secret", "TEXT NOT NULL DEFAULT ''"),
+            ("credential_ref", "TEXT NOT NULL DEFAULT ''"),
         ] {
             let has_column = {
                 let mut statement = connection.prepare("PRAGMA table_info(saved_requests)")?;
@@ -211,14 +236,104 @@ impl RequestStore {
             [default_id],
         )?;
 
+        store.migrate_plaintext_credentials(&mut connection)?;
         Ok(store)
     }
 
     fn connect(&self) -> Result<Connection, StoreError> {
         let connection = Connection::open(&self.database_path)?;
         connection.busy_timeout(std::time::Duration::from_secs(3))?;
-        connection.execute_batch("PRAGMA foreign_keys = ON;")?;
+        connection.execute_batch("PRAGMA foreign_keys = ON; PRAGMA secure_delete = ON;")?;
         Ok(connection)
+    }
+
+    fn store_request_credentials(&self, request: &NewRequest) -> Result<String, StoreError> {
+        if request.auth_type == "None"
+            || (request.auth_value.is_empty() && request.auth_secret.is_empty())
+        {
+            return Ok(String::new());
+        }
+
+        let reference = Uuid::new_v4().to_string();
+        self.credential_vault.store(
+            &reference,
+            &RequestCredentials {
+                auth_value: request.auth_value.clone(),
+                auth_secret: request.auth_secret.clone(),
+            },
+        )?;
+        Ok(reference)
+    }
+
+    fn remove_request_credentials(&self, reference: &str) {
+        if !reference.is_empty()
+            && let Err(error) = self.credential_vault.delete(reference)
+        {
+            eprintln!("Resonance: could not remove an unused credential entry: {error}");
+        }
+    }
+
+    fn hydrate_request(&self, mut stored: StoredSavedRequest) -> Result<SavedRequest, StoreError> {
+        if !stored.credential_ref.is_empty() {
+            let credentials = self
+                .credential_vault
+                .load(&stored.credential_ref)?
+                .ok_or(CredentialVaultError::Missing)?;
+            stored.request.auth_value = credentials.auth_value;
+            stored.request.auth_secret = credentials.auth_secret;
+        }
+        Ok(stored.request)
+    }
+
+    /// Move credentials from legacy SQLite columns into the system credential
+    /// store, then scrub the old values from the database and WAL file.
+    fn migrate_plaintext_credentials(&self, connection: &mut Connection) -> Result<(), StoreError> {
+        let legacy_rows = {
+            let mut statement = connection.prepare(
+                "SELECT id, auth_value, auth_secret, credential_ref FROM saved_requests WHERE auth_value != '' OR auth_secret != ''",
+            )?;
+            let rows = statement.query_map([], |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                ))
+            })?;
+            rows.collect::<Result<Vec<_>, _>>()?
+        };
+
+        if legacy_rows.is_empty() {
+            return Ok(());
+        }
+
+        let mut migrated = Vec::with_capacity(legacy_rows.len());
+        for (id, auth_value, auth_secret, existing_ref) in legacy_rows {
+            let credential_ref = if existing_ref.is_empty() {
+                format!("legacy-request-{id}")
+            } else {
+                existing_ref
+            };
+            self.credential_vault.store(
+                &credential_ref,
+                &RequestCredentials {
+                    auth_value,
+                    auth_secret,
+                },
+            )?;
+            migrated.push((id, credential_ref));
+        }
+
+        let transaction = connection.transaction()?;
+        for (id, credential_ref) in migrated {
+            transaction.execute(
+                "UPDATE saved_requests SET auth_value = '', auth_secret = '', credential_ref = ?1 WHERE id = ?2",
+                params![credential_ref, id],
+            )?;
+        }
+        transaction.commit()?;
+        connection.execute_batch("PRAGMA wal_checkpoint(TRUNCATE); VACUUM;")?;
+        Ok(())
     }
 
     pub fn list_collections(&self) -> Result<Vec<Collection>, StoreError> {
@@ -319,10 +434,21 @@ impl RequestStore {
             ));
         }
 
+        let credential_refs = {
+            let mut statement = connection
+                .prepare("SELECT credential_ref FROM saved_requests WHERE collection_id = ?1")?;
+            let rows = statement.query_map([collection_id], |row| row.get::<_, String>(0))?;
+            rows.collect::<Result<Vec<_>, _>>()?
+        };
+
         let deleted =
             connection.execute("DELETE FROM collections WHERE id = ?1", [collection_id])?;
         if deleted == 0 {
             return Err(StoreError::Validation("collection no longer exists".into()));
+        }
+        drop(connection);
+        for reference in credential_refs {
+            self.remove_request_credentials(&reference);
         }
         Ok(true)
     }
@@ -389,11 +515,12 @@ impl RequestStore {
 
     pub fn create(&self, request: &NewRequest) -> Result<SavedRequest, StoreError> {
         validate_request(request)?;
+        let credential_ref = self.store_request_credentials(request)?;
         let connection = self.connect()?;
-        connection.execute(
+        let insert_result = connection.execute(
             r#"
-            INSERT INTO saved_requests (name, method, url, headers, query_params, body, collection_id, body_format, auth_type, auth_value, auth_secret)
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+            INSERT INTO saved_requests (name, method, url, headers, query_params, body, collection_id, body_format, auth_type, auth_value, auth_secret, credential_ref)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, '', '', ?10)
             "#,
             params![
                 request.name.trim(),
@@ -405,11 +532,16 @@ impl RequestStore {
                 request.collection_id,
                 request.body_format,
                 request.auth_type,
-                request.auth_value,
-                request.auth_secret
+                credential_ref
             ],
-        )?;
+        );
+        if let Err(error) = insert_result {
+            drop(connection);
+            self.remove_request_credentials(&credential_ref);
+            return Err(error.into());
+        }
         let id = connection.last_insert_rowid();
+        drop(connection);
         self.get(id)?.ok_or_else(|| {
             StoreError::Validation("request was inserted but could not be read back".into())
         })
@@ -419,42 +551,61 @@ impl RequestStore {
         let connection = self.connect()?;
         let mut statement = connection.prepare(
             r#"
-            SELECT id, collection_id, name, method, url, headers, query_params, body, body_format, auth_type, auth_value, auth_secret
+            SELECT id, collection_id, name, method, url, headers, query_params, body, body_format, auth_type, auth_value, auth_secret, credential_ref
             FROM saved_requests WHERE collection_id = ?1
             ORDER BY name COLLATE NOCASE ASC, id ASC
             "#,
         )?;
-        let rows = statement.query_map([collection_id], row_to_request)?;
-        rows.collect::<Result<Vec<_>, _>>()
-            .map_err(StoreError::from)
+        let rows = statement.query_map([collection_id], row_to_stored_request)?;
+        let stored = rows.collect::<Result<Vec<_>, _>>()?;
+        stored
+            .into_iter()
+            .map(|request| self.hydrate_request(request))
+            .collect()
     }
 
     pub fn get(&self, id: i64) -> Result<Option<SavedRequest>, StoreError> {
         let connection = self.connect()?;
-        connection
+        let stored = connection
             .query_row(
                 r#"
-                SELECT id, collection_id, name, method, url, headers, query_params, body, body_format, auth_type, auth_value, auth_secret
+                SELECT id, collection_id, name, method, url, headers, query_params, body, body_format, auth_type, auth_value, auth_secret, credential_ref
                 FROM saved_requests WHERE id = ?1
                 "#,
                 [id],
-                row_to_request,
+                row_to_stored_request,
             )
             .optional()
-            .map_err(StoreError::from)
+            ?;
+        stored
+            .map(|request| self.hydrate_request(request))
+            .transpose()
     }
 
     pub fn update(&self, id: i64, request: &NewRequest) -> Result<bool, StoreError> {
         validate_request(request)?;
+        let credential_ref = self.store_request_credentials(request)?;
         let connection = self.connect()?;
-        let changed = connection.execute(
+        let old_ref = connection
+            .query_row(
+                "SELECT credential_ref FROM saved_requests WHERE id = ?1",
+                [id],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()?;
+        let Some(old_ref) = old_ref else {
+            drop(connection);
+            self.remove_request_credentials(&credential_ref);
+            return Ok(false);
+        };
+        let update_result = connection.execute(
             r#"
             UPDATE saved_requests
             SET name = ?1, method = ?2, url = ?3, headers = ?4,
                 query_params = ?5, body = ?6, collection_id = ?7,
-                body_format = ?8, auth_type = ?9, auth_value = ?10, auth_secret = ?11,
-                updated_at = CURRENT_TIMESTAMP
-            WHERE id = ?12
+                body_format = ?8, auth_type = ?9, auth_value = '', auth_secret = '',
+                credential_ref = ?10, updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?11
             "#,
             params![
                 request.name.trim(),
@@ -466,17 +617,42 @@ impl RequestStore {
                 request.collection_id,
                 request.body_format,
                 request.auth_type,
-                request.auth_value,
-                request.auth_secret,
+                credential_ref,
                 id
             ],
-        )?;
-        Ok(changed == 1)
+        );
+        let changed = match update_result {
+            Ok(changed) => changed,
+            Err(error) => {
+                drop(connection);
+                self.remove_request_credentials(&credential_ref);
+                return Err(error.into());
+            }
+        };
+        drop(connection);
+        if changed == 1 {
+            self.remove_request_credentials(&old_ref);
+            Ok(true)
+        } else {
+            self.remove_request_credentials(&credential_ref);
+            Ok(false)
+        }
     }
 
     pub fn delete(&self, id: i64) -> Result<bool, StoreError> {
         let connection = self.connect()?;
+        let credential_ref = connection
+            .query_row(
+                "SELECT credential_ref FROM saved_requests WHERE id = ?1",
+                [id],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()?;
         let changed = connection.execute("DELETE FROM saved_requests WHERE id = ?1", [id])?;
+        drop(connection);
+        if let Some(reference) = credential_ref {
+            self.remove_request_credentials(&reference);
+        }
         Ok(changed == 1)
     }
 
@@ -607,26 +783,64 @@ fn validate_request(request: &NewRequest) -> Result<(), StoreError> {
     Ok(())
 }
 
-fn row_to_request(row: &rusqlite::Row<'_>) -> rusqlite::Result<SavedRequest> {
-    Ok(SavedRequest {
-        id: row.get(0)?,
-        collection_id: row.get(1)?,
-        name: row.get(2)?,
-        method: row.get(3)?,
-        url: row.get(4)?,
-        headers: row.get(5)?,
-        query_params: row.get(6)?,
-        body: row.get(7)?,
-        body_format: row.get(8)?,
-        auth_type: row.get(9)?,
-        auth_value: row.get(10)?,
-        auth_secret: row.get(11)?,
+fn row_to_stored_request(row: &rusqlite::Row<'_>) -> rusqlite::Result<StoredSavedRequest> {
+    Ok(StoredSavedRequest {
+        request: SavedRequest {
+            id: row.get(0)?,
+            collection_id: row.get(1)?,
+            name: row.get(2)?,
+            method: row.get(3)?,
+            url: row.get(4)?,
+            headers: row.get(5)?,
+            query_params: row.get(6)?,
+            body: row.get(7)?,
+            body_format: row.get(8)?,
+            auth_type: row.get(9)?,
+            auth_value: row.get(10)?,
+            auth_secret: row.get(11)?,
+        },
+        credential_ref: row.get(12)?,
     })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::{collections::HashMap, sync::Mutex};
+
+    #[derive(Default)]
+    struct MemoryVault(Mutex<HashMap<String, RequestCredentials>>);
+
+    impl CredentialVault for MemoryVault {
+        fn store(
+            &self,
+            reference: &str,
+            credentials: &RequestCredentials,
+        ) -> Result<(), CredentialVaultError> {
+            self.0
+                .lock()
+                .unwrap()
+                .insert(reference.to_owned(), credentials.clone());
+            Ok(())
+        }
+
+        fn load(
+            &self,
+            reference: &str,
+        ) -> Result<Option<RequestCredentials>, CredentialVaultError> {
+            Ok(self.0.lock().unwrap().get(reference).cloned())
+        }
+
+        fn delete(&self, reference: &str) -> Result<(), CredentialVaultError> {
+            self.0.lock().unwrap().remove(reference);
+            Ok(())
+        }
+    }
+
+    fn test_store(path: &Path) -> RequestStore {
+        RequestStore::open_with_vault(path, std::sync::Arc::new(MemoryVault::default()))
+            .expect("open store")
+    }
 
     fn sample(collection_id: i64) -> NewRequest {
         NewRequest {
@@ -647,7 +861,7 @@ mod tests {
     #[test]
     fn create_read_update_delete_round_trip() {
         let temp = tempfile::tempdir().expect("temporary directory");
-        let store = RequestStore::open(temp.path().join("test.sqlite3")).expect("open store");
+        let store = test_store(&temp.path().join("test.sqlite3"));
         let collection_id = store.list_collections().expect("collections")[0].id;
 
         let created = store
@@ -693,6 +907,95 @@ mod tests {
 
         assert!(store.delete(created.id).expect("delete"));
         assert!(store.get(created.id).expect("read deleted").is_none());
+    }
+
+    #[test]
+    fn credentials_are_kept_out_of_sqlite_and_round_trip_via_vault() {
+        let temp = tempfile::tempdir().expect("temporary directory");
+        let path = temp.path().join("credentials.sqlite3");
+        let vault = std::sync::Arc::new(MemoryVault::default());
+        let store = RequestStore::open_with_vault(&path, vault.clone()).expect("open store");
+        let collection_id = store.list_collections().expect("collections")[0].id;
+        let request = NewRequest {
+            auth_type: "Bearer".into(),
+            auth_value: "top-secret-token".into(),
+            ..sample(collection_id)
+        };
+
+        let saved = store.create(&request).expect("save credential request");
+        assert_eq!(saved.auth_value, "top-secret-token");
+        assert_eq!(
+            store
+                .get(saved.id)
+                .expect("load request")
+                .unwrap()
+                .auth_value,
+            "top-secret-token"
+        );
+
+        let connection = Connection::open(&path).expect("inspect database");
+        let (auth_value, auth_secret, reference): (String, String, String) = connection
+            .query_row(
+                "SELECT auth_value, auth_secret, credential_ref FROM saved_requests WHERE id = ?1",
+                [saved.id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .expect("read stored fields");
+        assert!(auth_value.is_empty());
+        assert!(auth_secret.is_empty());
+        assert!(!reference.is_empty());
+        assert!(vault.0.lock().unwrap().contains_key(&reference));
+    }
+
+    #[test]
+    fn migrates_legacy_plaintext_credentials_into_vault() {
+        let temp = tempfile::tempdir().expect("temporary directory");
+        let path = temp.path().join("legacy-credentials.sqlite3");
+        let connection = Connection::open(&path).expect("open legacy database");
+        connection
+            .execute_batch(
+                r#"
+            CREATE TABLE saved_requests (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                method TEXT NOT NULL,
+                url TEXT NOT NULL,
+                headers TEXT NOT NULL DEFAULT '',
+                query_params TEXT NOT NULL DEFAULT '',
+                body TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                auth_type TEXT NOT NULL DEFAULT 'None',
+                auth_value TEXT NOT NULL DEFAULT '',
+                auth_secret TEXT NOT NULL DEFAULT ''
+            );
+            INSERT INTO saved_requests (name, method, url, auth_type, auth_value, auth_secret)
+            VALUES ('Legacy auth', 'GET', 'https://example.com', 'Basic', 'alice', 'secret');
+            "#,
+            )
+            .expect("create legacy schema");
+        drop(connection);
+
+        let vault = std::sync::Arc::new(MemoryVault::default());
+        let store = RequestStore::open_with_vault(&path, vault.clone()).expect("migrate store");
+        let collection_id = store.list_collections().expect("collections")[0].id;
+        let requests = store
+            .list_for_collection(collection_id)
+            .expect("load migrated");
+        assert_eq!(requests.len(), 1);
+        assert_eq!(requests[0].auth_value, "alice");
+        assert_eq!(requests[0].auth_secret, "secret");
+
+        let connection = Connection::open(&path).expect("inspect migrated database");
+        let (value, secret): (String, String) = connection
+            .query_row(
+                "SELECT auth_value, auth_secret FROM saved_requests",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .expect("read scrubbed credentials");
+        assert!(value.is_empty() && secret.is_empty());
+        assert!(vault.0.lock().unwrap().contains_key("legacy-request-1"));
     }
 
     #[test]

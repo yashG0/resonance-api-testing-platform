@@ -23,6 +23,22 @@ export struct RequestItem {
     method: string,
     url: string,
 }
+export struct RequestTabItem {
+    key: int,
+    request-id: int,
+    collection-id: int,
+    collection-name: string,
+    name: string,
+    method: string,
+    url: string,
+    headers: [KeyValueRow],
+    params: [KeyValueRow],
+    body: string,
+    body-format: string,
+    auth-type: string,
+    auth-value: string,
+    auth-secret: string,
+}
 export struct CollectionItem {
     id: int,
     name: string,
@@ -96,12 +112,19 @@ export component AppWindow inherits Window {
     callback copy-text(string);
 
     in-out property <[RequestItem]> saved-requests: [];
+    in-out property <[RequestTabItem]> request-tabs: [];
+    in-out property <int> active-request-tab-key: -1;
+    in-out property <int> active-request-tab-index: -1;
+    in-out property <int> next-request-tab-key: 1;
+    property <bool> request-tabs-overflow:
+        root.request-tabs.length * 224px > root.width - (root.show-navigation-sidebar ? 272px : 64px) - 128px;
     in-out property <[CollectionItem]> collections: [];
     in-out property <[VariableItem]> collection-variables: [];
     in-out property <[EnvironmentItem]> environment-items: [];
     in-out property <[HistoryItem]> history-items: [];
     in-out property <int> active-request-id: -1;
     in-out property <int> selected-collection-id: -1;
+    in-out property <int> expanded-collection-id: -1;
     in-out property <int> collection-menu-id: -1;
     in-out property <int> editing-collection-id: -1;
     in-out property <string> collection-name-draft: "";
@@ -225,6 +248,17 @@ in-out property <bool> response-large: false;
         if view == "Environments" { root.load-environments(); }
     }
 
+    function begin-new-collection() {
+        root.show-navigation-sidebar = true;
+        root.show-new-collection = true;
+        root.new-collection-name = "";
+        root.variables-message = "";
+    }
+
+    public function focus-request-url() {
+        url-field.focus();
+    }
+
     function set-request-tab(tab: string) {
         root.active-view = "Request";
         root.active-tab = tab;
@@ -234,6 +268,126 @@ in-out property <bool> response-large: false;
         root.show-request-body-formatted = on;
         if on {
             root.request-body-formatted = root.format-request-body(root.request-body, root.body-format);
+        }
+    }
+
+    public function store-active-request-tab() {
+        if root.active-request-tab-index < 0 { return; }
+        let tab = root.request-tabs[root.active-request-tab-index];
+        root.request-tabs[root.active-request-tab-index] = {
+            key: tab.key,
+            request-id: root.active-request-id,
+            collection-id: root.selected-collection-id,
+            collection-name: root.selected-collection-name,
+            name: root.active-request,
+            method: root.active-method,
+            url: root.request-url,
+            headers: root.request-header-rows,
+            params: root.request-param-rows,
+            body: root.request-body,
+            body-format: root.body-format,
+            auth-type: root.auth-type,
+            auth-value: root.auth-value,
+            auth-secret: root.auth-secret,
+        };
+    }
+
+    public function activate-request-tab(index: int) {
+        root.store-active-request-tab();
+        let tab = root.request-tabs[index];
+        root.active-request-tab-index = index;
+        root.active-request-tab-key = tab.key;
+        root.active-request-id = tab.request-id;
+        root.selected-collection-id = tab.collection-id;
+        root.expanded-collection-id = tab.collection-id;
+        root.selected-collection-name = tab.collection-name;
+        root.active-request = tab.name;
+        root.request-name-draft = root.active-request;
+        root.active-method = tab.method;
+        root.request-url = tab.url;
+        root.request-headers = root.serialize-header-rows(tab.headers);
+        root.request-header-rows = tab.headers;
+        root.request-params = root.serialize-param-rows(tab.params);
+        root.request-param-rows = tab.params;
+        root.request-body = tab.body;
+        root.body-format = tab.body-format;
+        root.auth-type = tab.auth-type;
+        root.auth-value = tab.auth-value;
+        root.auth-secret = tab.auth-secret;
+        root.editing-request-name = false;
+        root.active-view = "Request";
+        root.response-status = "No response yet";
+        root.response-body = "Send a request to inspect its response.";
+        root.response-time = "---";
+        root.response-state = "idle";
+        root.response-format = "Text";
+        root.response-headers = "";
+        root.response-cookies = "";
+        root.response-header-items = [];
+        root.response-cookie-items = [];
+        root.is-loading = false;
+        root.load-requests(tab.collection-id);
+        root.load-collection-variables(tab.collection-id);
+    }
+
+    public function register-active-request-tab() {
+        let key = root.next-request-tab-key;
+        root.next-request-tab-key += 1;
+        let new-index = root.request-tabs.length;
+        let updated = root.request-tabs;
+        updated.push({
+            key: key,
+            request-id: root.active-request-id,
+            collection-id: root.selected-collection-id,
+            collection-name: root.selected-collection-name,
+            name: root.active-request,
+            method: root.active-method,
+            url: root.request-url,
+            headers: root.request-header-rows,
+            params: root.request-param-rows,
+            body: root.request-body,
+            body-format: root.body-format,
+            auth-type: root.auth-type,
+            auth-value: root.auth-value,
+            auth-secret: root.auth-secret,
+        });
+        root.active-request-tab-key = key;
+        root.active-request-tab-index = new-index;
+        root.request-tabs = updated;
+    }
+
+    function open-saved-request-tab(request-id: int) {
+        root.store-active-request-tab();
+        if root.active-request-id != request-id {
+            root.select-request(request-id);
+        }
+    }
+
+    function close-request-tab(index: int) {
+        root.store-active-request-tab();
+        let updated = root.request-tabs;
+        updated.remove(index);
+        let remaining-count = updated.length;
+        root.request-tabs = updated;
+        if root.active-request-tab-index == index {
+            if remaining-count > 0 {
+                let next-index = min(index, remaining-count - 1);
+                root.active-request-tab-index = -1;
+                root.activate-request-tab(next-index);
+            } else {
+                root.active-request-tab-index = -1;
+                root.active-request-tab-key = -1;
+                root.active-request-id = -1;
+                root.selected-collection-id = -1;
+                root.selected-collection-name = "";
+                root.active-request = "";
+                root.request-url = "";
+                root.request-header-rows = [];
+                root.request-param-rows = [];
+                root.request-body = "";
+            }
+        } else if index < root.active-request-tab-index {
+            root.active-request-tab-index -= 1;
         }
     }
 
@@ -261,7 +415,9 @@ in-out property <bool> response-large: false;
     }
 
     function start-new-request(collection-id: int, collection-name: string) {
+        root.store-active-request-tab();
         root.selected-collection-id = collection-id;
+        root.expanded-collection-id = collection-id;
         root.selected-collection-name = collection-name;
         root.active-view = "Request";
         root.active-request-id = -1;
@@ -292,12 +448,36 @@ in-out property <bool> response-large: false;
         root.auth-value = "";
         root.auth-secret = "";
         root.active-tab = "Body";
+        let key = root.next-request-tab-key;
+        root.next-request-tab-key += 1;
+        root.active-request-tab-key = key;
+        let new-index = root.request-tabs.length;
+        let updated = root.request-tabs;
+        updated.push({
+            key: key,
+            request-id: -1,
+            collection-id: collection-id,
+            collection-name: collection-name,
+            name: "New Request",
+            method: "GET",
+            url: "",
+            headers: [{ key: "Accept", value: "application/json", enabled: true }],
+            params: [],
+            body: "",
+            body-format: "JSON",
+            auth-type: "None",
+            auth-value: "",
+            auth-secret: "",
+        });
+        root.active-request-tab-index = new-index;
+        root.request-tabs = updated;
         root.collection-menu-id = -1;
         root.confirm-delete-collection-id = -1;
         if collection-id > 0 {
             root.load-requests(collection-id);
             root.load-collection-variables(collection-id);
         }
+        url-field.focus();
     }
 
     function save-current-request() {
@@ -370,7 +550,7 @@ in-out property <bool> response-large: false;
                                 clicked => { root.show-navigation-sidebar = !root.show-navigation-sidebar; }
                             }
 
-                            if root.active-view == "Request" && !root.editing-request-name : HorizontalLayout {
+                            if root.active-view == "Request" && !root.editing-request-name && (root.selected-collection-id > 0 || root.active-request-id > 0 || root.active-request-tab-index >= 0) : HorizontalLayout {
                                 horizontal-stretch: 1;
                                 spacing: 8px;
                                 padding-left: 6px;
@@ -393,7 +573,31 @@ in-out property <bool> response-large: false;
                                     overflow: elide;
                                     max-width: 260px;
                                 }
+                                if root.active-request-id <= 0 && root.selected-collection-id > 0 : Rectangle {
+                                    width: 62px;
+                                    height: 22px;
+                                    background: Theme.active;
+                                    border-radius: 11px;
+                                    Text {
+                                        text: "Unsaved";
+                                        color: Theme.fg-2;
+                                        font-size: Theme.fs-small;
+                                        font-weight: 600;
+                                        horizontal-alignment: center;
+                                        vertical-alignment: center;
+                                    }
+                                }
                                 Btn { kind: "flat"; y: 9px; icon: Icons.pencil; icon-size: 15px; accessible-name: "Rename request"; tooltip: "Rename Request"; clicked => { root.begin-rename(); } }
+                            }
+
+                            if root.active-view == "Request" && root.selected-collection-id <= 0 && root.active-request-id <= 0 && root.active-request-tab-index < 0 : Text {
+                                horizontal-stretch: 1;
+                                text: "Get started";
+                                color: Theme.fg;
+                                font-size: Theme.fs-heading;
+                                font-weight: 700;
+                                vertical-alignment: center;
+                                horizontal-alignment: center;
                             }
 
                             if root.active-view == "Request" && root.editing-request-name : HorizontalLayout {
@@ -426,7 +630,7 @@ in-out property <bool> response-large: false;
                             }
 
                             Btn { kind: "flat"; y: 9px; icon: Icons.maximize; accessible-name: "Toggle full screen"; tooltip: "Toggle Full Screen"; clicked => { root.full-screen = !root.full-screen; } }
-                            if root.active-view == "Request" : Btn {
+                            if root.active-view == "Request" && (root.selected-collection-id > 0 || root.active-request-id > 0 || root.active-request-tab-index >= 0) : Btn {
                                 y: 9px;
                                 text: "Save";
                                 icon: Icons.check;
@@ -517,7 +721,7 @@ in-out property <bool> response-large: false;
                 }
 
         HorizontalLayout {
-            width: 100%;
+            horizontal-stretch: 1;
             vertical-stretch: 1;
             spacing: 0;
 
@@ -566,7 +770,15 @@ in-out property <bool> response-large: false;
                             kind: "suggested";
                             text: "New request";
                             icon: Icons.plus;
-                            clicked => { root.start-new-request(root.selected-collection-id, root.selected-collection-name); }
+                            clicked => {
+                                if root.selected-collection-id > 0 {
+                                    root.start-new-request(root.selected-collection-id, root.selected-collection-name);
+                                } else if root.collections.length == 0 {
+                                    root.begin-new-collection();
+                                } else {
+                                    root.open-view("Collections");
+                                }
+                            }
                         }
 
                         request-search-field := AdwLineEdit {
@@ -598,9 +810,11 @@ in-out property <bool> response-large: false;
                                 icon: Icons.plus;
                                 active: root.show-new-collection;
                                 clicked => {
-                                    root.show-new-collection = !root.show-new-collection;
-                                    root.variables-message = "";
-                                    if root.show-new-collection { root.new-collection-name = ""; }
+                                    if root.show-new-collection {
+                                        root.show-new-collection = false;
+                                    } else {
+                                        root.begin-new-collection();
+                                    }
                                 }
                             }
                         }
@@ -664,7 +878,14 @@ in-out property <bool> response-large: false;
                                             : collection-touch.has-hover ? Theme.hover : transparent;
 
                                         collection-touch := TouchArea {
-                                            clicked => { root.start-new-request(collection.id, collection.name); }
+                                            clicked => {
+                                                if root.expanded-collection-id == collection.id {
+                                                    root.expanded-collection-id = -1;
+                                                } else {
+                                                    root.expanded-collection-id = collection.id;
+                                                    root.load-requests(collection.id);
+                                                }
+                                            }
                                             pointer-event(event) => {
                                                 if event.button == PointerEventButton.right && event.kind == PointerEventKind.down {
                                                     root.confirm-delete-collection-id = -1;
@@ -682,12 +903,26 @@ in-out property <bool> response-large: false;
                                             height: 30px;
                                             spacing: 6px;
 
-                                            if root.editing-collection-id != collection.id : Image {
-                                                source: root.selected-collection-id == collection.id ? Icons.chevron-down : Icons.chevron-right;
-                                                width: 14px;
-                                                height: 14px;
-                                                y: (parent.height - self.height) / 2;
-                                                colorize: Theme.fg-3;
+                                            if root.editing-collection-id != collection.id : TouchArea {
+                                                width: 20px;
+                                                height: 30px;
+                                                mouse-cursor: pointer;
+                                                clicked => {
+                                                    if root.expanded-collection-id == collection.id {
+                                                        root.expanded-collection-id = -1;
+                                                    } else {
+                                                        root.expanded-collection-id = collection.id;
+                                                        root.load-requests(collection.id);
+                                                    }
+                                                }
+                                                Image {
+                                                    source: root.expanded-collection-id == collection.id ? Icons.chevron-down : Icons.chevron-right;
+                                                    width: 14px;
+                                                    height: 14px;
+                                                    x: (parent.width - self.width) / 2;
+                                                    y: (parent.height - self.height) / 2;
+                                                    colorize: Theme.fg-3;
+                                                }
                                             }
 
                                             if root.editing-collection-id == collection.id : AdwLineEdit {
@@ -790,6 +1025,7 @@ in-out property <bool> response-large: false;
                                                         text: "Collection variables";
                                                         clicked => {
                                                             root.selected-collection-id = collection.id;
+                                                            root.expanded-collection-id = collection.id;
                                                             root.selected-collection-name = collection.name;
                                                             root.active-view = "Variables";
                                                             root.variables-message = "";
@@ -861,7 +1097,7 @@ in-out property <bool> response-large: false;
                                     }
 
                                     // Requests nest under the open collection (file-tree style).
-                                    if root.selected-collection-id == collection.id && root.saved-requests.length == 0 : VerticalLayout {
+                                    if root.expanded-collection-id == collection.id && root.saved-requests.length == 0 && !(root.active-request-id <= 0 && root.selected-collection-id == collection.id && root.request-search == "") : VerticalLayout {
                                         padding-left: 10px;
                                         padding-right: 8px;
                                         padding-top: 4px;
@@ -881,7 +1117,7 @@ in-out property <bool> response-large: false;
                                         }
                                     }
 
-                                    if root.selected-collection-id == collection.id : VerticalLayout {
+                                    if root.expanded-collection-id == collection.id : VerticalLayout {
                                         spacing: 1px;
                                         padding-left: 14px;
 
@@ -891,9 +1127,9 @@ in-out property <bool> response-large: false;
                                             background: root.active-request-id == request.id ? Theme.active
                                                 : request-touch.has-hover ? Theme.hover : transparent;
 
-                                            request-touch := TouchArea {
+                            request-touch := TouchArea {
                                                 mouse-cursor: pointer;
-                                                clicked => { root.select-request(request.id); }
+                                                clicked => { root.open-saved-request-tab(request.id); }
                                             }
 
                                             if root.active-request-id == request.id : Rectangle {
@@ -931,6 +1167,60 @@ in-out property <bool> response-large: false;
                                                     icon: Icons.trash;
                                                     icon-size: 14px;
                                                     clicked => { root.delete-request(request.id, root.selected-collection-id); }
+                                                }
+                                            }
+                                        }
+
+                                        if root.active-request-id <= 0 && root.selected-collection-id == collection.id && root.request-search == "" : Rectangle {
+                                            height: 36px;
+                                            border-radius: 8px;
+                                            background: Theme.active;
+                                            TouchArea {
+                                                mouse-cursor: pointer;
+                                                clicked => {
+                                                    root.active-view = "Request";
+                                                    url-field.focus();
+                                                }
+                                            }
+                                            Rectangle {
+                                                x: 0px;
+                                                y: 9px;
+                                                width: 3px;
+                                                height: 18px;
+                                                border-radius: 2px;
+                                                background: Theme.accent;
+                                            }
+                                            HorizontalLayout {
+                                                padding-left: 10px;
+                                                padding-right: 8px;
+                                                spacing: 7px;
+                                                MethodBadge {
+                                                    value: root.active-method;
+                                                    badge-width: 46px;
+                                                    y: (parent.height - self.height) / 2;
+                                                }
+                                                Text {
+                                                    horizontal-stretch: 1;
+                                                    text: root.active-request;
+                                                    color: Theme.fg;
+                                                    font-size: Theme.fs-body;
+                                                    font-weight: 700;
+                                                    vertical-alignment: center;
+                                                    overflow: elide;
+                                                }
+                                                Rectangle {
+                                                    width: 56px;
+                                                    height: 20px;
+                                                    background: Theme.button-bg;
+                                                    border-radius: 10px;
+                                                    Text {
+                                                        text: "Unsaved";
+                                                        color: Theme.fg-3;
+                                                        font-size: Theme.fs-caption;
+                                                        font-weight: 600;
+                                                        horizontal-alignment: center;
+                                                        vertical-alignment: center;
+                                                    }
                                                 }
                                             }
                                         }
@@ -997,13 +1287,120 @@ in-out property <bool> response-large: false;
 
             // ───────────── MAIN COLUMN ─────────────
             VerticalLayout {
+                // Let the parent allocate all remaining window width instead
+                // of inheriting the tab strip's content-based preferred size.
                 horizontal-stretch: 1;
+                preferred-width: 0px;
                 spacing: 0;
 
+                if root.active-view == "Request" && root.request-tabs.length > 0 : Rectangle {
+                    horizontal-stretch: 1;
+                    height: 46px;
+                    background: Theme.headerbar-bg;
+                    border-width: 1px;
+                    border-color: Theme.border;
+                    HorizontalLayout {
+                        cross-axis-alignment: center;
+                        padding-left: 10px;
+                        padding-right: 10px;
+                        spacing: 4px;
+                        Btn {
+                            kind: "flat";
+                            width: 30px;
+                            text: "‹";
+                            visible: root.request-tabs-overflow;
+                            accessible-name: "Scroll tabs left";
+                            tooltip: "Scroll tabs left";
+                            enabled: request-tab-scroll.content-x < 0px;
+                            clicked => {
+                                request-tab-scroll.content-x = request-tab-scroll.content-x + 224px < 0px
+                                    ? request-tab-scroll.content-x + 224px : 0px;
+                            }
+                        }
+                        request-tab-scroll := Flickable {
+                            horizontal-stretch: 1;
+                            height: 40px;
+                            content-width: root.request-tabs.length * 224px;
+                            content-height: 34px;
+                            interactive: true;
+                            tab-strip := HorizontalLayout {
+                                width: root.request-tabs.length * 224px;
+                                height: 34px;
+                                spacing: 4px;
+                                cross-axis-alignment: center;
+                                for tab[index] in root.request-tabs : Rectangle {
+                                    width: 220px;
+                                    height: 32px;
+                                    border-radius: Theme.radius-control;
+                                    background: tab.key == root.active-request-tab-key ? Theme.active
+                                        : tab-touch.has-hover ? Theme.hover : transparent;
+                                    tab-touch := TouchArea {
+                                        clicked => { root.activate-request-tab(index); }
+                                    }
+                                    HorizontalLayout {
+                                        cross-axis-alignment: center;
+                                        padding-left: 10px;
+                                        padding-right: 4px;
+                                        spacing: 6px;
+                                        Text {
+                                            horizontal-stretch: 1;
+                                            text: tab.collection-name + "  ›  " + tab.name;
+                                            color: tab.key == root.active-request-tab-key ? Theme.fg : Theme.fg-2;
+                                            font-size: Theme.fs-small;
+                                            font-weight: tab.key == root.active-request-tab-key ? 700 : 500;
+                                            vertical-alignment: center;
+                                            overflow: elide;
+                                        }
+                                        if tab.request-id <= 0 : Text {
+                                            text: "Unsaved";
+                                            color: Theme.fg-3;
+                                            font-size: Theme.fs-caption;
+                                            vertical-alignment: center;
+                                        }
+                                        Btn {
+                                            kind: "flat";
+                                            min-width: 24px;
+                                            height: 24px;
+                                            icon: Icons.x;
+                                            icon-size: 12px;
+                                            accessible-name: "Close " + tab.name;
+                                            clicked => { root.close-request-tab(index); }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        Btn {
+                            kind: "flat";
+                            width: 30px;
+                            text: "›";
+                            visible: root.request-tabs-overflow;
+                            accessible-name: "Scroll tabs right";
+                            tooltip: "Scroll tabs right";
+                            enabled: request-tab-scroll.content-x > request-tab-scroll.width - request-tab-scroll.content-width;
+                            clicked => {
+                                request-tab-scroll.content-x = request-tab-scroll.content-x - 224px > request-tab-scroll.width - request-tab-scroll.content-width
+                                    ? request-tab-scroll.content-x - 224px
+                                    : request-tab-scroll.width - request-tab-scroll.content-width;
+                            }
+                        }
+                        Btn {
+                            kind: "flat";
+                            width: 36px;
+                            height: 34px;
+                            icon: Icons.plus;
+                            accessible-name: "New request tab";
+                            tooltip: "New Request";
+                            enabled: root.selected-collection-id > 0;
+                            clicked => { root.start-new-request(root.selected-collection-id, root.selected-collection-name); }
+                        }
+                    }
+                }
 
 
                 // View area
                 Rectangle {
+                    horizontal-stretch: 1;
                     vertical-stretch: 1;
                     background: Theme.window-bg;
 
@@ -1019,7 +1416,7 @@ in-out property <bool> response-large: false;
                             HorizontalLayout {
                                 height: 40px;
                                 Text { text: "Browse your collections and open their requests."; color: Theme.fg-2; font-size: Theme.fs-label; vertical-alignment: center; horizontal-stretch: 1; }
-                                Btn { kind: "suggested"; text: "New collection"; icon: Icons.plus; clicked => { root.show-navigation-sidebar = true; root.show-new-collection = true; } }
+                                Btn { kind: "suggested"; text: "New collection"; icon: Icons.plus; clicked => { root.begin-new-collection(); } }
                             }
 
                             ScrollView {
@@ -1053,6 +1450,7 @@ in-out property <bool> response-large: false;
                                             mouse-cursor: pointer;
                                             clicked => {
                                                 root.selected-collection-id = collection.id;
+                                                root.expanded-collection-id = collection.id;
                                                 root.selected-collection-name = collection.name;
                                                 root.active-view = "Request";
                                                 root.load-requests(collection.id);
@@ -1090,6 +1488,7 @@ in-out property <bool> response-large: false;
                                                 kind: collection.id == root.selected-collection-id ? "suggested" : "default";
                                                 clicked => {
                                                     root.selected-collection-id = collection.id;
+                                                    root.expanded-collection-id = collection.id;
                                                     root.selected-collection-name = collection.name;
                                                     root.active-view = "Request";
                                                     root.load-requests(collection.id);
@@ -1173,6 +1572,7 @@ in-out property <bool> response-large: false;
                                                 text: "Manage";
                                                 clicked => {
                                                     root.selected-collection-id = item.collection-id;
+                                                    root.expanded-collection-id = item.collection-id;
                                                     root.selected-collection-name = item.collection-name;
                                                     root.load-collection-variables(item.collection-id);
                                                     root.active-view = "Variables";
@@ -1254,7 +1654,7 @@ in-out property <bool> response-large: false;
                                                 mouse-cursor: pointer;
                                                 clicked => {
                                                     root.selected-collection-name = item.collection-name;
-                                                    root.select-request(item.request-id);
+                                                    root.open-saved-request-tab(item.request-id);
                                                 }
                                             }
 
@@ -1422,14 +1822,99 @@ in-out property <bool> response-large: false;
 
                     // ───────── Request / Response workspace ─────────
                     request-workspace := Rectangle {
+                        x: 0px;
+                        y: 0px;
+                        width: parent.width;
+                        height: parent.height;
                         visible: root.active-view == "Request";
+                        if root.selected-collection-id <= 0 && root.active-request-id <= 0 && root.active-request-tab-index < 0 : Rectangle {
+                            x: 0px;
+                            y: 0px;
+                            width: parent.width;
+                            height: parent.height;
+
+                            VerticalLayout {
+                                x: (parent.width - self.width) / 2;
+                                y: (parent.height - self.height) / 2;
+                                width: min(parent.width - 64px, 560px);
+                                height: 220px;
+                                alignment: center;
+                                cross-axis-alignment: center;
+                                spacing: 12px;
+
+                                Rectangle {
+                                    width: 68px;
+                                    height: 68px;
+                                    background: Theme.active;
+                                    border-radius: 22px;
+                                    Image {
+                                        source: @image-url("../assets/logo/resonance-logo.svg");
+                                        width: 38px;
+                                        height: 38px;
+                                        x: (parent.width - self.width) / 2;
+                                        y: (parent.height - self.height) / 2;
+                                        image-fit: contain;
+                                    }
+                                }
+
+                                Text {
+                                    text: "Your workspace starts here";
+                                    color: Theme.fg;
+                                    font-size: 24px;
+                                    font-weight: 700;
+                                    horizontal-alignment: center;
+                                }
+                                Text {
+                                    text: root.collections.length == 0
+                                        ? "Create a collection to keep your API requests together. Then add a request and start testing."
+                                        : "Choose a collection from the sidebar to open a request, or create a new collection to get started.";
+                                    color: Theme.fg-2;
+                                    font-size: Theme.fs-label;
+                                    horizontal-alignment: center;
+                                    wrap: word-wrap;
+                                }
+
+                                HorizontalLayout {
+                                    spacing: 10px;
+                                    alignment: center;
+                                    Rectangle { width: 1px; height: 1px; horizontal-stretch: 1; }
+                                    Btn {
+                                        kind: "suggested";
+                                        text: root.collections.length == 0 ? "Create a collection" : "Browse collections";
+                                        icon: root.collections.length == 0 ? Icons.plus : Icons.folder;
+                                        clicked => {
+                                            if root.collections.length == 0 {
+                                                root.begin-new-collection();
+                                            } else {
+                                                root.open-view("Collections");
+                                            }
+                                        }
+                                    }
+                                    if root.collections.length > 0 : Btn {
+                                        kind: "flat";
+                                        text: "Create collection";
+                                        icon: Icons.plus;
+                                        clicked => { root.begin-new-collection(); }
+                                    }
+                                    Rectangle { width: 1px; height: 1px; horizontal-stretch: 1; }
+                                }
+                            }
+                        }
+
                         VerticalLayout {
+                        // Explicitly bind the workspace layout to the available main-pane size.
+                        // Without this, Slint can size it from its intrinsic children, leaving
+                        // unused blank space on the right at wide window sizes.
+                        width: parent.width;
+                        height: parent.height;
                         padding: 16px;
                         padding-top: 14px;
                         spacing: 12px;
 
                         // URL bar
                         Rectangle {
+                            width: parent.width;
+                            visible: root.selected-collection-id > 0 || root.active-request-id > 0 || root.active-request-tab-index >= 0;
                             height: 54px;
                             background: Theme.card-bg;
                             border-width: 1px;
@@ -1470,22 +1955,10 @@ in-out property <bool> response-large: false;
                             }
                         }
 
-                        if root.selected-collection-id <= 0 : Rectangle {
-                            height: 34px;
-                            background: Theme.warning-bg;
-                            border-radius: 8px;
-                            Text {
-                                x: 14px;
-                                width: parent.width - 28px;
-                                text: "Select or create a collection in the sidebar to send and save requests.";
-                                color: Theme.warning;
-                                font-size: Theme.fs-body;
-                                vertical-alignment: center;
-                            }
-                        }
-
                         // Request editor above the response with a draggable horizontal divider.
                         split-area := Rectangle {
+                            width: parent.width;
+                            visible: root.selected-collection-id > 0 || root.active-request-id > 0 || root.active-request-tab-index >= 0;
                             vertical-stretch: 1;
                             // Request pane
                             Rectangle {
@@ -1610,8 +2083,7 @@ in-out property <bool> response-large: false;
                                             add-label: "Add header";
                                             dark-mode: Theme.dark;
                                             changed(rows) => {
-                                                root.request-header-rows = rows;
-                                                root.request-headers = root.serialize-header-rows(root.request-header-rows);
+                                                root.request-headers = root.serialize-header-rows(rows);
                                             }
                                         }
 
@@ -1625,8 +2097,7 @@ in-out property <bool> response-large: false;
                                             add-label: "Add parameter";
                                             dark-mode: Theme.dark;
                                             changed(rows) => {
-                                                root.request-param-rows = rows;
-                                                root.request-params = root.serialize-param-rows(root.request-param-rows);
+                                                root.request-params = root.serialize-param-rows(rows);
                                             }
                                         }
 
@@ -1755,14 +2226,18 @@ in-out property <bool> response-large: false;
                                                 horizontal-alignment: center;
                                             }
                                             Text {
-                                                text: root.response-state == "loading" ? "Waiting for response" : "Your response will appear here";
+                                                text: root.response-state == "loading" ? "Waiting for response"
+                                                    : root.active-request-id <= 0 && root.selected-collection-id > 0 ? "Your new request is ready"
+                                                    : "Your response will appear here";
                                                 color: Theme.fg;
                                                 font-size: Theme.fs-label;
                                                 font-weight: 700;
                                                 horizontal-alignment: center;
                                             }
                                             Text {
-                                                text: root.response-state == "loading" ? "The request is in progress." : "Press Ctrl+Enter to send the request.";
+                                                text: root.response-state == "loading" ? "The request is in progress."
+                                                    : root.active-request-id <= 0 && root.selected-collection-id > 0 ? root.request-url == "" ? "Enter a URL above to start. Save it or press Ctrl+Enter to send and save." : "This is an unsaved draft. Save it, or press Ctrl+Enter to send and save."
+                                                    : "Press Ctrl+Enter to send the request.";
                                                 color: Theme.fg-3;
                                                 font-size: Theme.fs-body;
                                                 horizontal-alignment: center;
@@ -1926,10 +2401,7 @@ in-out property <bool> response-large: false;
         KeyBinding {
             keys: @keys(Control + Shift + N);
             activated => {
-                root.show-navigation-sidebar = true;
-                root.show-new-collection = true;
-                root.new-collection-name = "";
-                root.variables-message = "";
+                root.begin-new-collection();
             }
         }
         KeyBinding { keys: @keys(F2); activated => { root.begin-rename(); } }

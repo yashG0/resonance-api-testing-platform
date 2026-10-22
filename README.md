@@ -91,6 +91,14 @@ For me, this project is about building a useful tool while learning through prac
 - Collapse the navigation sidebar or switch to its compact icon rail.
 - Choose System, Light, or Dark theme.
 - Use the integrated GNOME/Adwaita-inspired title bar, application menu, About dialog, and keyboard shortcuts.
+- Copy response text through the native system clipboard on Linux, Windows, and macOS.
+
+### Local credential handling
+
+- Saved authentication values are stored through the operating system credential service (Secret Service on Linux, Credential Manager on Windows, and Keychain on macOS). SQLite stores only an opaque reference for those credentials.
+- Existing saved authentication values are migrated from older SQLite databases when the app starts. If the credential service is unavailable during migration, startup stops with an error and the old database values are left in place so they can be migrated later.
+- Credentials placed in request headers, URLs, bodies, query parameters, or collection variables are still ordinary local application data. Resonance does not encrypt the whole database, and local request history may include URLs. Avoid putting secrets in those fields when possible.
+- On Linux, saving authentication requires a working Secret Service provider and an unlocked keyring session.
 
 ## Version 0.1.1 Highlights
 
@@ -153,13 +161,23 @@ Run the application with:
 
 The release profile enables thin LTO, one code generation unit, and symbol stripping. Building on the target machine selects its architecture automatically. Slint's Linux package requirements are documented in its [manual setup guide](https://docs.slint.dev/latest/docs/slint/guide/tooling/manual-setup/).
 
+## Platform Support and Limits
+
+| Platform | Build target | Validation |
+|---|---|---|
+| Linux | x86-64 | Built and tested locally; clipboard support covers Wayland and X11 backends. |
+| Windows | x86-64 (MSVC) | Release build and automated tests run in GitHub Actions; interactive runtime testing is still needed. |
+| macOS | Apple Silicon (ARM64) | Release build and automated tests run in GitHub Actions; interactive runtime testing is still needed. |
+
+There is currently **no Intel Mac build** (`x86_64-apple-darwin`) configured or supported. Windows and macOS packages are compile-validated, but that does not confirm their full GUI, credential-store, or clipboard behavior on real machines.
+
 ## Local-First, Not Offline HTTP
 
 Resonance stores saved requests locally, helping keep request collections on your machine.
 
 However, sending a request to a remote API still requires network connectivity. Local APIs can be tested without an internet connection when the local server is running and reachable.
 
-Local storage is also not a complete security guarantee. Protecting sensitive data, handling credentials responsibly, and improving error handling remain important considerations as the project develops.
+Local storage is not a complete security guarantee. Authentication fields use the operating system credential service, but other request data, headers, variables, URLs, bodies, and request history are not encrypted as a whole. Protect the account and device that hold this local data.
 
 ## What's Next?
 
@@ -167,7 +185,6 @@ Resonance is in early development. Next areas of work include:
 
 - Broader runtime testing across Linux, Windows, and macOS.
 - Improving diagnostics and handling for failed or unusual requests.
-- Strengthening the handling of credentials and other sensitive local data.
 - Exploring import and export for collections and requests.
 
 ## Technology Stack
@@ -179,6 +196,8 @@ Resonance is in early development. Next areas of work include:
 | Reqwest | HTTP client |
 | Tokio | Asynchronous execution |
 | SQLite | Local persistence |
+| OS credential service | Saved authentication values |
+| arboard | Cross-platform clipboard access |
 
 ## Project Status
 

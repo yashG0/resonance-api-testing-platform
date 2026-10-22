@@ -1,0 +1,180 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1800" height="1120" viewBox="0 0 1800 1120">
+<defs>
+  <pattern id="dots" width="28" height="28" patternUnits="userSpaceOnUse"><circle cx="2" cy="2" r="1.35" fill="#dcd9d1"/></pattern>
+  <style>
+    text{font-family:"Patrick Hand","Comic Sans MS",cursive;fill:#252525}
+    .title{font-size:49px;font-weight:700}.sub{font-size:23px;fill:#67655f}
+    .cardtitle{font-size:31px;font-weight:700}.section{font-size:18px;font-weight:700;letter-spacing:1px;fill:#66635d}
+    .body{font-size:22px}.small{font-size:18px;fill:#56534d}.tiny{font-size:16px;fill:#67645e}
+    .outline{stroke:#282725;stroke-width:2.8;stroke-linecap:round;stroke-linejoin:round}
+    .echo{fill:none;stroke:#282725;stroke-width:1.35;stroke-linecap:round;stroke-linejoin:round;opacity:.28}
+    .line{fill:none;stroke:#353431;stroke-width:3.2;stroke-linecap:round;stroke-linejoin:round}
+    .echo-line{fill:none;stroke:#353431;stroke-width:1.4;stroke-linecap:round;stroke-linejoin:round;opacity:.34}
+    .blue{stroke:#3584e4}
+    .green{stroke:#14856f}
+  </style>
+</defs>
+
+<!-- paper -->
+<rect width="1800" height="1120" fill="#fbfaf6"/>
+<rect width="1800" height="1120" fill="url(#dots)" opacity=".5"/>
+
+<!-- header -->
+<g transform="translate(76 66)">
+  <path d="M2 19 C2 8 9 3 20 4 C32 3 41 11 40 22 C40 34 30 40 18 39 C7 40 0 31 2 19Z" fill="#dcecff" class="outline"/>
+  <path d="M12 13h15l8 9-8 8-6-6 5-4-5-5H12zM11 22l8 7-7 7z" fill="none" stroke="#3584e4" stroke-width="3" stroke-linejoin="round" stroke-linecap="round"/>
+</g>
+<text x="130" y="88" font-size="25" font-weight="700">Resonance</text>
+<path d="M130 96q57 3 115-1" class="echo-line"/>
+<text x="77" y="163" class="title">How a request moves through the app</text>
+<path d="M79 177q250 4 567-2" fill="none" stroke="#3584e4" stroke-width="4" stroke-linecap="round"/>
+<text x="80" y="211" class="sub">A local-first desktop API client · the request goes straight to the endpoint you choose.</text>
+<path d="M1518 76q105-5 204 2q7 1 7 9v34q-1 7-10 7q-101 4-200-1q-8-1-8-9V86q0-8 7-10Z" fill="#fff2cc" class="outline"/>
+<text x="1621" y="108" text-anchor="middle" font-size="21" font-weight="700">RELEASE  v0.1.1</text>
+
+<!-- app process boundary, hand-drawn -->
+<path d="M314 281q-1-19 22-20q426-5 852 1q139-2 282 1q20 1 21 22q5 178 1 351q4 156-2 310q-1 19-22 20q-539 5-1097-1q-22 0-22-23q-4-311 0-661Z" fill="#fffefa" fill-opacity=".81" stroke="#66717f" stroke-width="2.5" stroke-dasharray="11 9" stroke-linecap="round"/>
+<path d="M318 285q1-17 22-18q465-1 1137 0q13 1 13 19" class="echo" stroke-dasharray="7 8"/>
+<path d="M343 258q1-6 8-6h254q8 0 8 7v31q0 8-9 8H351q-8 0-8-8z" fill="#fbfaf6" stroke="#66717f" stroke-width="2.2"/>
+<text x="476" y="280" text-anchor="middle" font-size="19" font-weight="700" fill="#525c69">RUNS ON YOUR MACHINE</text>
+<path d="M1272 258q0-6 8-6h166q8 0 8 7v31q0 8-8 8h-166q-8 0-8-8z" fill="#e5f5ef" stroke="#14856f" stroke-width="2.2"/>
+<text x="1355" y="280" text-anchor="middle" font-size="19" font-weight="700" fill="#116d5d">NO APP SERVER</text>
+
+<!-- developer sketch card -->
+<path d="M54 479q2-13 18-14q94-4 186 1q15 1 16 16q4 123 0 244q0 15-16 16q-94 3-184 0q-17 0-18-16q-3-122-2-247Z" fill="#fff1c7" class="outline"/>
+<path d="M57 482q4-13 18-13q99 0 185 2q12 0 13 16q-2 110 0 237" class="echo"/>
+<!-- person doodle -->
+<circle cx="166" cy="539" r="17" fill="none" class="outline"/>
+<path d="M166 557q-2 22 0 36m-1-19q-19 6-28 20m29-20q18 3 29 18m-29 1-15 20m15-20 17 20" class="line"/>
+<path d="M137 536q-4-7 1-13m54 16q4-8-1-13" class="echo-line"/>
+<text x="166" y="647" text-anchor="middle" class="cardtitle">You</text>
+<text x="166" y="680" text-anchor="middle" class="body">edit + send</text>
+<path d="M95 704q67 3 140 0" class="echo-line"/>
+
+<!-- UI card -->
+<path d="M350 347q1-16 17-17q135-4 281 1q16 1 17 17q3 209 0 442q0 17-18 18q-140 3-281 0q-17 0-17-17q-3-222 1-444Z" fill="#dcecff" class="outline"/>
+<path d="M354 351q0-14 16-15q139 2 278 0q13 0 14 15" class="echo"/>
+<!-- handdrawn monitor icon -->
+<path d="M375 372q0-5 6-5h35q6 0 6 6v24q0 5-6 5h-35q-6 0-6-5zM392 402v8m-9 1q10 2 21 0" fill="none" class="line"/>
+<text x="435" y="390" class="section">01 · PRESENTATION</text>
+<text x="375" y="449" class="cardtitle">Slint UI</text>
+<path d="M375 459q58 2 132 0" fill="none" stroke="#3584e4" stroke-width="3" stroke-linecap="round"/>
+<text x="375" y="496" class="section">REQUEST WORKSPACE</text>
+<text x="383" y="531" class="body">•  Method, URL, query params</text>
+<text x="383" y="564" class="body">•  Headers, body, authentication</text>
+<text x="383" y="597" class="body">•  Collections + saved requests</text>
+<text x="383" y="630" class="body">•  Variables + request history</text>
+<path d="M376 652q121-2 273 1" class="echo"/>
+<text x="375" y="682" class="section">RESPONSE INSPECTOR</text>
+<text x="383" y="715" class="body">•  Pretty / Raw body</text>
+<text x="383" y="748" class="body">•  Status, headers, cookies</text>
+<text x="383" y="781" class="body">•  System / light / dark theme</text>
+
+<!-- coordinator card -->
+<path d="M711 348q1-17 19-18q128 0 274 1q15 0 16 17q4 208 1 440q0 17-17 18q-146 2-275 0q-17-1-18-17q-3-211 0-441Z" fill="#fff0c9" class="outline"/>
+<path d="M716 352q0-15 17-15q147 2 272 0q12 0 13 15M714 783q136 3 300 0" class="echo"/>
+<!-- gear / rust doodle -->
+<circle cx="744" cy="384" r="13" fill="none" class="line"/>
+<circle cx="744" cy="384" r="4" fill="none" class="line"/>
+<path d="M744 365v-5m0 43v-5m-19-14h-5m43 0h-5m-27-14-4-4m31 31-4-4m0-23 4-4m-31 31 4-4" class="echo-line"/>
+<text x="773" y="390" class="section">02 · ORCHESTRATION</text>
+<text x="735" y="449" class="cardtitle">Rust coordinator</text>
+<path d="M735 459q109 3 219 0" fill="none" stroke="#c17a13" stroke-width="3" stroke-linecap="round"/>
+<path d="M735 480q1-8 11-8q83-4 228 0q8 1 9 9v30q-1 9-10 9q-119 2-228 0q-9-1-10-9z" fill="#fff8e7" stroke="#b88c42" stroke-width="2"/>
+<text x="861" y="503" text-anchor="middle" class="body" font-weight="700">Tokio async runtime</text>
+<text x="735" y="552" class="section">WHEN YOU PRESS SEND</text>
+<circle cx="750" cy="579" r="13" fill="#fff" class="outline"/><text x="750" y="586" text-anchor="middle" class="small" font-weight="700">1</text>
+<text x="776" y="586" class="body">Save the current request</text>
+<text x="776" y="607" class="small">SQLite work off the UI thread</text>
+<circle cx="750" cy="632" r="13" fill="#fff" class="outline"/><text x="750" y="639" text-anchor="middle" class="small" font-weight="700">2</text>
+<text x="776" y="639" class="body">Load collection variables</text>
+<circle cx="750" cy="679" r="13" fill="#fff" class="outline"/><text x="750" y="686" text-anchor="middle" class="small" font-weight="700">3</text>
+<text x="776" y="686" class="body">Run the HTTP task async</text>
+<circle cx="750" cy="726" r="13" fill="#fff" class="outline"/><text x="750" y="733" text-anchor="middle" class="small" font-weight="700">4</text>
+<text x="776" y="733" class="body">Record + show the response</text>
+<text x="776" y="756" class="small">Back on the Slint event loop</text>
+
+<!-- HTTP client card -->
+<path d="M1068 356q0-16 17-17q153-3 345 1q16 0 17 17q3 104 0 221q-1 16-18 17q-187 3-344 0q-17 0-17-18q-2-107 0-221Z" fill="#f8dfe6" class="outline"/>
+<path d="M1072 360q0-15 16-15q188 0 340 1q14 1 14 15M1070 578q140 3 372 0" class="echo"/>
+<!-- network icon -->
+<circle cx="1101" cy="390" r="14" fill="none" class="line"/>
+<path d="M1087 390h28m-14-14q-10 12 0 28m0-28q10 13 0 28" class="echo-line"/>
+<text x="1127" y="396" class="section">03 · NETWORK</text>
+<text x="1094" y="449" class="cardtitle">Reqwest + rustls</text>
+<path d="M1094 459q111 2 221 0" fill="none" stroke="#d05d7b" stroke-width="3" stroke-linecap="round"/>
+<text x="1094" y="493" class="body">Build URL, query, headers, auth, body</text>
+<text x="1094" y="525" class="body">Substitute collection variables</text>
+<text x="1094" y="557" class="body">Capture status + response metadata</text>
+<path d="M1093 590q116 2 323 0" class="echo-line"/>
+<text x="1094" y="620" class="small">10s connect · 30s request · 5 MiB cap</text>
+
+<!-- storage card -->
+<path d="M1068 651q1-16 17-17q165-3 347 0q16 1 16 18q4 122 0 207q-1 16-18 17q-170 3-344 0q-17 0-18-17q-3-122 0-208Z" fill="#dff1df" class="outline"/>
+<path d="M1072 655q0-15 16-16q173 1 342 1q13 0 14 15" class="echo"/>
+<!-- database doodle -->
+<ellipse cx="1100" cy="687" rx="15" ry="6" fill="none" class="line"/>
+<path d="M1085 687v21q0 7 15 7t15-7v-21m-30 10q0 7 15 7t15-7" class="line"/>
+<text x="1127" y="696" class="section">04 · LOCAL STORAGE</text>
+<text x="1094" y="746" class="cardtitle">SQLite · rusqlite</text>
+<text x="1094" y="778" class="body">Per-user requests.sqlite3</text>
+<text x="1094" y="808" class="small">Collections · saved requests · variables · history</text>
+<path d="M1094 836q127 2 281 0" class="echo-line"/>
+<text x="1094" y="860" class="small">WAL mode · history capped at 500 entries</text>
+
+<!-- Endpoint card -->
+<path d="M1582 455q0-16 17-17q99-3 162 1q16 1 17 18q3 152 0 266q0 17-18 18q-83 3-162 0q-16 0-17-17q-3-159 1-269Z" fill="#e8e4f7" class="outline"/>
+<path d="M1586 459q1-15 17-16q85 1 158 1q13 0 13 17" class="echo"/>
+<!-- little server icon -->
+<path d="M1642 493q1-5 7-5h67q6 0 6 6v22q0 5-6 5h-67q-7 0-7-5zM1642 530q0-5 7-5h67q6 0 6 6v22q0 5-6 5h-67q-7 0-7-6z" fill="none" class="line"/>
+<circle cx="1654" cy="505" r="2.5" fill="#3584e4"/><circle cx="1654" cy="541" r="2.5" fill="#3584e4"/>
+<path d="M1664 505h43m-43 36h43" class="echo-line"/>
+<text x="1669" y="600" text-anchor="middle" class="cardtitle">Your API</text>
+<text x="1669" y="633" text-anchor="middle" class="body">local or remote</text>
+<text x="1669" y="665" text-anchor="middle" class="body">HTTP(S) endpoint</text>
+<path d="M1618 690q52 3 103 0" class="echo-line"/>
+<text x="1669" y="719" text-anchor="middle" class="small">selected by you</text>
+
+<!-- hand-drawn arrows -->
+<!-- user to UI -->
+<path d="M274 594q31-2 65 0" class="line"/>
+<path d="M276 598q28-3 61-1" class="echo-line"/>
+<path d="M337 594l-12-8m12 8-12 8" class="line"/>
+<!-- UI to coordinator -->
+<path d="M667 559q14-2 38 0" class="line"/>
+<path d="M667 563q15-2 37-1" class="echo-line"/>
+<path d="M705 559l-11-8m11 8-11 8" class="line"/>
+<!-- coordinator to HTTP -->
+<path d="M1027 496q15-1 34 0" class="line blue"/>
+<path d="M1028 500q15-2 33-1" class="echo-line blue"/>
+<path d="M1063 496l-11-8m11 8-11 8" class="line blue"/>
+<!-- coordinator to SQLite -->
+<path d="M1020 744q20-1 44 0" class="line green"/>
+<path d="M1020 748q20-1 44-1" class="echo-line green"/>
+<path d="M1064 744l-11-8m11 8-11 8" class="line green"/>
+<!-- HTTP request and response -->
+<path d="M1456 487q50-2 119 0" class="line blue"/>
+<path d="M1458 491q52-2 116 0" class="echo-line blue"/>
+<path d="M1572 487l-12-8m12 8-12 8" class="line blue"/>
+<path d="M1573 540q-51 2-117 0" class="line"/>
+<path d="M1571 544q-52 2-114 0" class="echo-line"/>
+<path d="M1456 540l12-8m-12 8 12 8" class="line"/>
+<text x="1515" y="471" text-anchor="middle" font-size="18" fill="#2869aa">request</text>
+<text x="1515" y="568" text-anchor="middle" font-size="18">response</text>
+
+<!-- bottom note: simple end-to-end read -->
+<path d="M80 946q1-13 15-14q297-5 589 1q15 1 16 15q2 76-1 92q0 14-17 14q-306 3-589 0q-15 0-15-14q-2-47 2-94Z" fill="#fff" class="outline"/>
+<text x="110" y="974" class="section">THE WHOLE FLOW</text>
+<text x="110" y="1011" font-size="25" font-weight="700">Edit → save + resolve → send → inspect</text>
+<path d="M110 1023q254 2 448 0" fill="none" stroke="#3584e4" stroke-width="3" stroke-linecap="round"/>
+<text x="110" y="1044" class="small">Network work is async; SQLite stays local.</text>
+
+<!-- legend -->
+<path d="M738 955q1-14 15-14q501-3 975 1q14 1 15 16q2 70 0 82q-1 15-15 15q-497 4-976 0q-15 0-15-15q-2-37 1-85Z" fill="#fffefa" stroke="#b9b4aa" stroke-width="2.2" stroke-dasharray="4 6" stroke-linecap="round"/>
+<text x="772" y="982" class="section">WHAT STAYS LOCAL?</text>
+<path d="M778 1001h56" class="line green"/><path d="M831 1001l-10-7m10 7-10 7" class="line green"/>
+<text x="850" y="1008" class="body">Requests, collections, variables, and history live in SQLite.</text>
+<path d="M778 1034h56" class="line blue"/><path d="M831 1034l-10-7m10 7-10 7" class="line blue"/>
+<text x="850" y="1041" class="body">HTTP traffic goes directly to your chosen API endpoint.</text>
+<text x="1734" y="1090" text-anchor="end" class="tiny">Resonance · v0.1.1 · system sketch</text>
+</svg>

@@ -58,10 +58,7 @@ export component KeyValueEditor inherits Rectangle {
                     background: transparent;
                     TouchArea {
                         clicked => {
-                            let updated = root.rows;
-                            updated.remove(index);
-                            updated.insert(index, { key: row.key, value: row.value, enabled: !row.enabled });
-                            root.rows = updated;
+                            root.rows[index] = { key: row.key, value: row.value, enabled: !row.enabled };
                             root.changed(root.rows);
                         }
                     }
@@ -79,10 +76,7 @@ export component KeyValueEditor inherits Rectangle {
                     text: row.key;
                     placeholder-text: root.key-placeholder;
                     edited(value) => {
-                        let updated = root.rows;
-                        updated.remove(index);
-                        updated.insert(index, { key: value, value: row.value, enabled: row.enabled });
-                        root.rows = updated;
+                        root.rows[index] = { key: value, value: row.value, enabled: row.enabled };
                         root.changed(root.rows);
                     }
                 }
@@ -91,10 +85,7 @@ export component KeyValueEditor inherits Rectangle {
                     text: row.value;
                     placeholder-text: root.value-placeholder;
                     edited(value) => {
-                        let updated = root.rows;
-                        updated.remove(index);
-                        updated.insert(index, { key: row.key, value: value, enabled: row.enabled });
-                        root.rows = updated;
+                        root.rows[index] = { key: row.key, value: value, enabled: row.enabled };
                         root.changed(root.rows);
                     }
                 }
@@ -105,9 +96,7 @@ export component KeyValueEditor inherits Rectangle {
                     accent-button: false;
                     destructive-button: true;
                     clicked => {
-                        let updated = root.rows;
-                        updated.remove(index);
-                        root.rows = updated;
+                        root.rows.remove(index);
                         root.changed(root.rows);
                     }
                 }
@@ -121,9 +110,7 @@ export component KeyValueEditor inherits Rectangle {
             dark-mode: root.dark-mode;
             accent-button: false;
             clicked => {
-                let updated = root.rows;
-                updated.push({ key: "", value: "", enabled: true });
-                root.rows = updated;
+                root.rows.push({ key: "", value: "", enabled: true });
                 root.changed(root.rows);
             }
         }

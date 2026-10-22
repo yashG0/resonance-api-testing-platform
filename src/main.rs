@@ -1,7 +1,13 @@
+mod credentials;
 mod http;
 mod storage;
 
-use std::{future::Future, process::Command, sync::Arc, time::Duration};
+use std::{
+    future::Future,
+    process::Command,
+    sync::{Arc, Mutex},
+    time::Duration,
+};
 
 use crate::http::HttpClient;
 use crate::storage::{
@@ -29,6 +35,84 @@ impl<T: Send + 'static> JoinHandleThen<T> for tokio::task::JoinHandle<T> {
             continuation(self.await).await;
         });
     }
+}
+
+fn copy_text_to_clipboard(
+    clipboard: &Arc<Mutex<Option<arboard::Clipboard>>>,
+    text: &str,
+) -> Result<(), String> {
+    let mut clipboard = clipboard
+        .lock()
+        .map_err(|_| "clipboard lock was poisoned".to_owned())?;
+
+    let create_error = if clipboard.is_none() {
+        match arboard::Clipboard::new() {
+            Ok(instance) => {
+                *clipboard = Some(instance);
+                None
+            }
+            Err(error) => Some(error.to_string()),
+        }
+    } else {
+        None
+    };
+
+    let native_result = match clipboard.as_mut() {
+        Some(instance) => instance.set_text(text).map_err(|error| error.to_string()),
+        None => Err(create_error.unwrap_or_else(|| "clipboard is unavailable".to_owned())),
+    };
+
+    match native_result {
+        Ok(()) => Ok(()),
+        Err(native_error) => {
+            #[cfg(target_os = "linux")]
+            {
+                return copy_text_with_linux_clipboard_tools(text)
+                    .map_err(|fallback_error| format!("{native_error}; {fallback_error}"));
+            }
+            #[cfg(not(target_os = "linux"))]
+            {
+                Err(native_error)
+            }
+        }
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn copy_text_with_linux_clipboard_tools(text: &str) -> Result<(), String> {
+    use std::io::Write;
+
+    for (program, args) in [
+        ("wl-copy", &[][..]),
+        ("xclip", &["-selection", "clipboard"][..]),
+        ("xsel", &["--clipboard", "--input"][..]),
+    ] {
+        let Ok(mut child) = Command::new(program)
+            .args(args)
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+        else {
+            continue;
+        };
+
+        let write_result = child
+            .stdin
+            .take()
+            .ok_or_else(|| "clipboard process has no input pipe".to_owned())
+            .and_then(|mut stdin| {
+                stdin
+                    .write_all(text.as_bytes())
+                    .map_err(|error| error.to_string())
+            });
+        let status = child.wait().map_err(|error| error.to_string())?;
+        if write_result.is_ok() && status.success() {
+            return Ok(());
+        }
+    }
+
+    Err("no working Linux clipboard backend was found".to_owned())
 }
 
 fn detect_system_dark_mode(fallback: bool) -> bool {
@@ -504,10 +588,14 @@ fn tokenize_response(source: &str, format: &str, dark: bool) -> ModelRc<JsonLine
 
 #[tokio::main]
 async fn main() -> Result<(), slint::PlatformError> {
-    let store = Arc::new(
-        RequestStore::open_default().expect("Failed to initialize Resonance request database"),
-    );
-    let client = Arc::new(HttpClient::new().expect("Failed to initialize Resonance HTTP client"));
+    let store = Arc::new(RequestStore::open_default().map_err(|error| {
+        slint::PlatformError::from(format!(
+            "Could not initialize Resonance local storage: {error}"
+        ))
+    })?);
+    let client = Arc::new(HttpClient::new().map_err(|error| {
+        slint::PlatformError::from(format!("Could not initialize the HTTP client: {error}"))
+    })?);
     let app = AppWindow::new()?;
     slint::set_xdg_app_id("io.github.yashG0.resonance-api-testing-platform")?;
     app.set_system_dark_mode(detect_system_dark_mode(app.get_system_dark_mode()));
@@ -573,32 +661,16 @@ async fn main() -> Result<(), slint::PlatformError> {
         highlighted.into()
     });
 
-    // Copy to the system clipboard. Tries Wayland first, then X11, so the Copy
-    // button works on GNOME without pulling in an extra clipboard dependency.
-    app.on_copy_text(|text| {
-        let text: String = text.to_string();
-        let copied = [
-            "wl-copy",
-            "xclip -selection clipboard",
-            "xsel --clipboard --input",
-        ]
-        .iter()
-        .any(|cmd| {
-            let mut parts = cmd.split_whitespace();
-            let Some(program) = parts.next() else {
-                return false;
-            };
-            Command::new(program)
-                .args(parts)
-                .arg(&text)
-                .stdout(std::process::Stdio::null())
-                .stderr(std::process::Stdio::null())
-                .status()
-                .map(|status| status.success())
-                .unwrap_or(false)
-        });
-        if !copied {
-            eprintln!("Resonance: no clipboard tool found (tried wl-copy, xclip, xsel)");
+    // Keep one clipboard owner alive for the application lifetime. This is
+    // required by X11/Wayland selection ownership and also avoids concurrent
+    // platform clipboard access from the response controls.
+    let clipboard = Arc::new(Mutex::new(None::<arboard::Clipboard>));
+    app.on_copy_text({
+        let clipboard = Arc::clone(&clipboard);
+        move |text| {
+            if let Err(error) = copy_text_to_clipboard(&clipboard, text.as_str()) {
+                eprintln!("Resonance: could not copy response: {error}");
+            }
         }
     });
 
@@ -723,7 +795,7 @@ async fn main() -> Result<(), slint::PlatformError> {
                 let persisted_name = saved_name.clone();
                 let _ = slint::invoke_from_event_loop(move || {
                     if let Some(ui) = list_handle.upgrade() {
-                        if ui.get_selected_collection_id() as i64 == collection_id {
+                        if ui.get_expanded_collection_id() as i64 == collection_id {
                             ui.set_saved_requests(to_request_model(
                                 requests,
                                 ui.get_request_search().as_str(),
@@ -734,6 +806,7 @@ async fn main() -> Result<(), slint::PlatformError> {
                                 ui.set_active_request_id(saved_id as i32);
                                 ui.set_active_request(persisted_name.clone().into());
                                 ui.set_request_name_draft(persisted_name.into());
+                                ui.invoke_store_active_request_tab();
                             }
                         }
                     }
@@ -798,7 +871,7 @@ async fn main() -> Result<(), slint::PlatformError> {
 
                 let _ = slint::invoke_from_event_loop(move || {
                     if let Some(ui) = app_handle.upgrade() {
-                        if ui.get_selected_collection_id() as i64 == collection_id
+                        if ui.get_expanded_collection_id() as i64 == collection_id
                             && ui.get_active_request_id() as i64 == saved_id
                         {
                             ui.set_response_large(result.body.len() > 256 * 1024);
@@ -1008,6 +1081,7 @@ async fn main() -> Result<(), slint::PlatformError> {
                         match result {
                             Ok(saved_id) if saved_id > 0 => {
                                 ui.set_active_request_id(saved_id as i32);
+                                ui.invoke_store_active_request_tab();
                                 ui.set_response_status(format!("Saved: {saved_name}").into());
                             }
                             Ok(_) => ui.set_response_status(
@@ -1052,6 +1126,7 @@ async fn main() -> Result<(), slint::PlatformError> {
                                     if let Some(selected) = selected {
                                         let id = selected.id as i32;
                                         ui.set_selected_collection_id(id);
+                                        ui.set_expanded_collection_id(id);
                                         ui.set_selected_collection_name(
                                             selected.name.clone().into(),
                                         );
@@ -1084,10 +1159,14 @@ async fn main() -> Result<(), slint::PlatformError> {
                     let _ = slint::invoke_from_event_loop(move || {
                         if let Some(ui) = app_handle.upgrade() {
                             match result {
-                                Ok(Ok(requests)) => ui.set_saved_requests(to_request_model(
-                                    requests,
-                                    ui.get_request_search().as_str(),
-                                )),
+                                Ok(Ok(requests)) => {
+                                    if ui.get_expanded_collection_id() == collection_id {
+                                        ui.set_saved_requests(to_request_model(
+                                            requests,
+                                            ui.get_request_search().as_str(),
+                                        ));
+                                    }
+                                }
                                 Ok(Err(error)) => {
                                     ui.set_response_status(format!("Load failed: {error}").into())
                                 }
@@ -1105,7 +1184,7 @@ async fn main() -> Result<(), slint::PlatformError> {
         let app_weak = app_weak.clone();
         move |_query| {
             if let Some(ui) = app_weak.upgrade() {
-                let collection_id = ui.get_selected_collection_id();
+                let collection_id = ui.get_expanded_collection_id();
                 if collection_id > 0 {
                     ui.invoke_load_requests(collection_id);
                 }
@@ -1218,8 +1297,10 @@ async fn main() -> Result<(), slint::PlatformError> {
                         match result {
                             Ok(Ok((created, collections))) => {
                                 let id = created.id as i32;
+                                ui.invoke_store_active_request_tab();
                                 ui.set_collections(to_collection_model(collections));
                                 ui.set_selected_collection_id(id);
+                                ui.set_expanded_collection_id(id);
                                 ui.set_selected_collection_name(created.name.into());
                                 ui.set_active_view("Request".into());
                                 ui.set_active_request_id(-1);
@@ -1249,11 +1330,13 @@ async fn main() -> Result<(), slint::PlatformError> {
                                 ui.set_response_time("---".into());
                                 ui.set_response_state("idle".into());
                                 ui.set_response_format("Text".into());
+                                ui.invoke_register_active_request_tab();
                                 ui.invoke_load_requests(id);
                                 ui.invoke_load_collection_variables(id);
                                 ui.set_variables_message("Collection created.".into());
                                 ui.set_new_collection_name("".into());
                                 ui.set_show_new_collection(false);
+                                ui.invoke_focus_request_url();
                             }
                             Ok(Err(error)) => ui.set_variables_message(
                                 format!("Could not create collection: {error}").into(),
@@ -1348,6 +1431,7 @@ async fn main() -> Result<(), slint::PlatformError> {
                                 if selection_changed {
                                     if let Some(selected_name) = selected_name {
                                         ui.set_selected_collection_id(selected_id);
+                                        ui.set_expanded_collection_id(selected_id);
                                         ui.set_selected_collection_name(selected_name.into());
                                     }
                                     ui.set_active_request_id(-1);
@@ -1480,61 +1564,90 @@ async fn main() -> Result<(), slint::PlatformError> {
             if id <= 0 {
                 return;
             }
+            if let Some(ui) = app_weak.upgrade() {
+                let tabs = ui.get_request_tabs();
+                for index in 0..tabs.row_count() {
+                    if tabs.row_data(index).is_some_and(|tab| tab.request_id == id) {
+                        ui.invoke_activate_request_tab(index as i32);
+                        return;
+                    }
+                }
+                ui.invoke_store_active_request_tab();
+            }
             let app_handle = app_weak.clone();
             let store = Arc::clone(&store);
-            tokio::task::spawn_blocking(move || store.get(id as i64)).then(
-                move |result| async move {
-                    let _ = slint::invoke_from_event_loop(move || {
-                        if let Some(ui) = app_handle.upgrade() {
-                            match result {
-                                Ok(Ok(Some(request))) => {
-                                    ui.set_active_view("Request".into());
-                                    ui.set_is_loading(false);
-                                    ui.set_active_request_id(request.id as i32);
-                                    ui.set_active_request(request.name.into());
-                                    ui.set_editing_request_name(false);
-                                    ui.set_active_method(request.method.into());
-                                    ui.set_request_url(request.url.into());
-                                    ui.set_request_header_rows(to_key_value_model(
-                                        &request.headers,
-                                        ':',
-                                    ));
-                                    ui.set_request_param_rows(to_key_value_model(
-                                        &request.query_params,
-                                        '=',
-                                    ));
-                                    ui.set_request_headers(request.headers.into());
-                                    ui.set_request_params(request.query_params.into());
-                                    ui.set_request_body(request.body.into());
-                                    ui.set_body_format(request.body_format.into());
-                                    ui.set_auth_type(request.auth_type.into());
-                                    ui.set_auth_value(request.auth_value.into());
-                                    ui.set_auth_secret(request.auth_secret.into());
-                                    ui.set_response_status("No response yet".into());
-                                    ui.set_response_body(
-                                        "Send a request to inspect its response.".into(),
-                                    );
-                                    ui.set_response_time("---".into());
-                                    ui.set_response_state("idle".into());
-                                    ui.set_response_format("Text".into());
-                                }
-                                Ok(Ok(None)) => {
-                                    ui.set_response_status(
-                                        "Request not found; refreshing list".into(),
-                                    );
-                                    ui.invoke_load_requests(ui.get_selected_collection_id());
-                                }
-                                Ok(Err(error)) => ui.set_response_status(
-                                    format!("Could not load request: {error}").into(),
-                                ),
-                                Err(error) => ui.set_response_status(
-                                    format!("Could not load request: {error}").into(),
-                                ),
+            tokio::task::spawn_blocking(move || {
+                store.get(id as i64).and_then(|request| {
+                    let Some(request) = request else {
+                        return Ok(None);
+                    };
+                    let collections = store.list_collections()?;
+                    let collection_name = collections
+                        .into_iter()
+                        .find(|collection| collection.id == request.collection_id)
+                        .map(|collection| collection.name)
+                        .unwrap_or_default();
+                    let requests = store.list_for_collection(request.collection_id)?;
+                    Ok(Some((request, collection_name, requests)))
+                })
+            })
+            .then(move |result| async move {
+                let _ = slint::invoke_from_event_loop(move || {
+                    if let Some(ui) = app_handle.upgrade() {
+                        match result {
+                            Ok(Ok(Some((request, collection_name, requests)))) => {
+                                let collection_id = request.collection_id as i32;
+                                ui.set_selected_collection_id(collection_id);
+                                ui.set_expanded_collection_id(collection_id);
+                                ui.set_selected_collection_name(collection_name.into());
+                                let search = ui.get_request_search().to_string();
+                                ui.set_saved_requests(to_request_model(requests, &search));
+                                ui.invoke_load_collection_variables(collection_id);
+                                ui.set_active_view("Request".into());
+                                ui.set_is_loading(false);
+                                ui.set_active_request_id(request.id as i32);
+                                ui.set_active_request(request.name.into());
+                                ui.set_editing_request_name(false);
+                                ui.set_active_method(request.method.into());
+                                ui.set_request_url(request.url.into());
+                                ui.set_request_header_rows(to_key_value_model(
+                                    &request.headers,
+                                    ':',
+                                ));
+                                ui.set_request_param_rows(to_key_value_model(
+                                    &request.query_params,
+                                    '=',
+                                ));
+                                ui.set_request_headers(request.headers.into());
+                                ui.set_request_params(request.query_params.into());
+                                ui.set_request_body(request.body.into());
+                                ui.set_body_format(request.body_format.into());
+                                ui.set_auth_type(request.auth_type.into());
+                                ui.set_auth_value(request.auth_value.into());
+                                ui.set_auth_secret(request.auth_secret.into());
+                                ui.set_response_status("No response yet".into());
+                                ui.set_response_body(
+                                    "Send a request to inspect its response.".into(),
+                                );
+                                ui.set_response_time("---".into());
+                                ui.set_response_state("idle".into());
+                                ui.set_response_format("Text".into());
+                                ui.invoke_register_active_request_tab();
                             }
+                            Ok(Ok(None)) => {
+                                ui.set_response_status("Request not found; refreshing list".into());
+                                ui.invoke_load_requests(ui.get_expanded_collection_id());
+                            }
+                            Ok(Err(error)) => ui.set_response_status(
+                                format!("Could not load request: {error}").into(),
+                            ),
+                            Err(error) => ui.set_response_status(
+                                format!("Could not load request: {error}").into(),
+                            ),
                         }
-                    });
-                },
-            );
+                    }
+                });
+            });
         }
     });
 
