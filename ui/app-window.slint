@@ -114,7 +114,8 @@ export component AppWindow inherits Window {
     callback create-collection(string);
     callback rename-collection(int, string);
     callback delete-collection(int);
-    callback save-collection-variable(int, string, string);
+    callback create-collection-variable(int, string, string);
+    callback update-collection-variable(int, string, string, string);
     callback delete-collection-variable(int, string);
     callback select-request(int);
     callback delete-request(int, int);
@@ -162,6 +163,11 @@ export component AppWindow inherits Window {
     in-out property <string> variable-key: "";
     in-out property <string> variable-value: "";
     in-out property <string> variables-message: "";
+    in-out property <string> editing-variable-key: "";
+    in-out property <int> editing-variable-collection-id: -1;
+    in-out property <string> editing-variable-draft-key: "";
+    in-out property <string> editing-variable-draft-value: "";
+    in-out property <string> editing-variable-message: "";
     in-out property <bool> show-variable-values: false;
     in-out property <string> theme-mode: "System";
     in-out property <bool> show-navigation-sidebar: true;
@@ -228,6 +234,11 @@ in-out property <bool> response-large: false;
         Theme.accent = root.accent;
         root.refresh-tab-overflow();
     }
+    changed active-view => {
+        if root.active-view != "Variables" {
+            root.cancel-variable-edit();
+        }
+    }
     changed dark-mode => { Theme.dark = root.dark-mode; }
     changed accent => { Theme.accent = root.accent; }
 
@@ -276,6 +287,22 @@ in-out property <bool> response-large: false;
         root.show-new-collection = true;
         root.new-collection-name = "";
         root.variables-message = "";
+    }
+
+    function begin-variable-edit(key: string, value: string) {
+        root.editing-variable-key = key;
+        root.editing-variable-collection-id = root.selected-collection-id;
+        root.editing-variable-draft-key = key;
+        root.editing-variable-draft-value = value;
+        root.editing-variable-message = "";
+    }
+
+    function cancel-variable-edit() {
+        root.editing-variable-key = "";
+        root.editing-variable-collection-id = -1;
+        root.editing-variable-draft-key = "";
+        root.editing-variable-draft-value = "";
+        root.editing-variable-message = "";
     }
 
     public function focus-request-url() {
@@ -535,6 +562,7 @@ in-out property <bool> response-large: false;
     }
 
     function start-new-request(collection-id: int, collection-name: string) {
+        root.cancel-variable-edit();
         root.store-active-request-tab();
         root.selected-collection-id = collection-id;
         root.expanded-collection-id = collection-id;
@@ -614,6 +642,7 @@ in-out property <bool> response-large: false;
     }
 
     function open-collection-request(collection-id: int, collection-name: string) {
+        root.cancel-variable-edit();
         root.store-active-request-tab();
         root.selected-collection-id = collection-id;
         root.expanded-collection-id = collection-id;
@@ -1226,6 +1255,7 @@ in-out property <bool> response-large: false;
                                                         icon: Icons.braces;
                                                         text: "Collection variables";
                                                         clicked => {
+                                                            root.cancel-variable-edit();
                                                             root.selected-collection-id = collection.id;
                                                             root.expanded-collection-id = collection.id;
                                                             root.selected-collection-name = collection.name;
@@ -1766,6 +1796,7 @@ in-out property <bool> response-large: false;
                                                 y: 6px;
                                                 text: "Manage";
                                                 clicked => {
+                                                    root.cancel-variable-edit();
                                                     root.selected-collection-id = item.collection-id;
                                                     root.expanded-collection-id = item.collection-id;
                                                     root.selected-collection-name = item.collection-name;
@@ -1915,7 +1946,13 @@ in-out property <bool> response-large: false;
                                     horizontal-stretch: 1;
                                     overflow: elide;
                                 }
-                                Btn { text: "Back to requests"; clicked => { root.active-view = "Request"; } }
+                                Btn {
+                                    text: "Back to requests";
+                                    clicked => {
+                                        root.cancel-variable-edit();
+                                        root.active-view = "Request";
+                                    }
+                                }
                             }
 
                             Rectangle {
@@ -1927,7 +1964,7 @@ in-out property <bool> response-large: false;
                                 VerticalLayout {
                                     padding: 18px;
                                     spacing: 10px;
-                                    Text { text: "Add or update a variable"; color: Theme.fg; font-size: Theme.fs-label; font-weight: 700; }
+                                    Text { text: "Add a variable"; color: Theme.fg; font-size: Theme.fs-label; font-weight: 700; }
                                     Text { text: "Use {variable_name} in a request, or {{variable_name}} for compatibility."; color: Theme.fg-2; font-size: Theme.fs-small; }
                                     HorizontalLayout {
                                         spacing: 8px;
@@ -1936,14 +1973,14 @@ in-out property <bool> response-large: false;
                                         AdwLineEdit { horizontal-stretch: 1; text: root.variable-value; placeholder-text: "Value"; edited(value) => { root.variable-value = value; } }
                                         Btn {
                                             kind: "suggested";
-                                            text: "Save variable";
+                                            text: "Add variable";
                                             enabled: root.selected-collection-id > 0 && root.variable-key != "";
-                                            clicked => { root.save-collection-variable(root.selected-collection-id, root.variable-key, root.variable-value); }
+                                            clicked => { root.create-collection-variable(root.selected-collection-id, root.variable-key, root.variable-value); }
                                         }
                                     }
                                     Text {
                                         text: root.variables-message;
-                                        color: root.variables-message == "Variable saved." || root.variables-message == "Variable deleted."
+                                        color: root.variables-message == "Variable added." || root.variables-message == "Variable deleted."
                                             ? Theme.success : root.variables-message == "" ? Theme.fg-3 : Theme.danger;
                                         font-size: Theme.fs-small;
                                     }
@@ -1977,12 +2014,67 @@ in-out property <bool> response-large: false;
                                     }
 
                                     for variable in root.collection-variables : Rectangle {
-                                        height: 58px;
+                                        property <bool> editing: root.editing-variable-key == variable.key
+                                            && root.editing-variable-collection-id == root.selected-collection-id;
+                                        height: editing ? (root.editing-variable-message == "" ? 68px : 92px) : 58px;
                                         background: Theme.view-bg;
-                                        border-width: 1px;
-                                        border-color: Theme.border;
+                                        border-width: editing ? 2px : 1px;
+                                        border-color: editing ? Theme.accent : Theme.border;
                                         border-radius: 10px;
-                                        HorizontalLayout {
+                                        if editing : Rectangle {
+                                            background: transparent;
+                                            HorizontalLayout {
+                                                x: 8px;
+                                                y: (parent.height - self.height) / 2;
+                                                width: parent.width - 16px;
+                                                height: 38px;
+                                                spacing: 8px;
+                                                cross-axis-alignment: center;
+                                                AdwLineEdit {
+                                                    width: 200px;
+                                                    text: root.editing-variable-draft-key;
+                                                    placeholder-text: "Variable name";
+                                                    edited(value) => { root.editing-variable-draft-key = value; }
+                                                }
+                                                AdwLineEdit {
+                                                    horizontal-stretch: 1;
+                                                    text: root.editing-variable-draft-value;
+                                                    placeholder-text: "Value";
+                                                    edited(value) => { root.editing-variable-draft-value = value; }
+                                                }
+                                                Btn {
+                                                    kind: "suggested";
+                                                    text: "Save";
+                                                    enabled: root.editing-variable-draft-key != "";
+                                                    clicked => {
+                                                        root.update-collection-variable(
+                                                            root.editing-variable-collection-id,
+                                                            root.editing-variable-key,
+                                                            root.editing-variable-draft-key,
+                                                            root.editing-variable-draft-value
+                                                        );
+                                                    }
+                                                }
+                                                Btn {
+                                                    kind: "flat";
+                                                    icon: Icons.x;
+                                                    accessible-name: "Cancel variable edit";
+                                                    clicked => { root.cancel-variable-edit(); }
+                                                }
+                                            }
+                                            if root.editing-variable-message != "" : Text {
+                                                x: 16px;
+                                                y: parent.height - self.height - 4px;
+                                                width: parent.width - 32px;
+                                                height: 18px;
+                                                text: root.editing-variable-message;
+                                                color: Theme.danger;
+                                                font-size: Theme.fs-small;
+                                                vertical-alignment: center;
+                                                overflow: elide;
+                                            }
+                                        }
+                                        if !editing : HorizontalLayout {
                                             padding: 10px;
                                             padding-left: 16px;
                                             spacing: 12px;
@@ -1999,13 +2091,15 @@ in-out property <bool> response-large: false;
                                             Btn {
                                                 kind: "flat";
                                                 icon: Icons.pencil;
-                                                clicked => {
-                                                    root.variable-key = variable.key;
-                                                    root.variable-value = variable.value;
-                                                    root.variables-message = "Edit the value, then save.";
-                                                }
+                                                accessible-name: "Edit " + variable.key;
+                                                clicked => { root.begin-variable-edit(variable.key, variable.value); }
                                             }
-                                            Btn { kind: "destructive"; icon: Icons.trash; clicked => { root.delete-collection-variable(root.selected-collection-id, variable.key); } }
+                                            Btn {
+                                                kind: "destructive";
+                                                icon: Icons.trash;
+                                                accessible-name: "Delete " + variable.key;
+                                                clicked => { root.delete-collection-variable(root.selected-collection-id, variable.key); }
+                                            }
                                         }
                                     }
                                 }

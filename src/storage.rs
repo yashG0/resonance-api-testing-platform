@@ -506,6 +506,7 @@ impl RequestStore {
             .collect())
     }
 
+    #[cfg(test)]
     pub fn upsert_variable(
         &self,
         collection_id: i64,
@@ -528,6 +529,87 @@ impl RequestStore {
             "#,
             params![collection_id, key, value],
         )?;
+        Ok(())
+    }
+
+    pub fn create_variable(
+        &self,
+        collection_id: i64,
+        key: &str,
+        value: &str,
+    ) -> Result<(), StoreError> {
+        let key = key.trim();
+        if !valid_variable_key(key) {
+            return Err(StoreError::Validation(
+                "variable names must start with a letter or underscore and contain only letters, numbers, or underscores".into(),
+            ));
+        }
+
+        let connection = self.connect()?;
+        let exists = connection.query_row(
+            "SELECT EXISTS(SELECT 1 FROM collection_variables WHERE collection_id = ?1 AND key = ?2)",
+            params![collection_id, key],
+            |row| row.get::<_, bool>(0),
+        )?;
+        if exists {
+            return Err(StoreError::Validation(format!(
+                "variable '{key}' already exists; edit it in the list below"
+            )));
+        }
+
+        connection.execute(
+            "INSERT INTO collection_variables (collection_id, key, value) VALUES (?1, ?2, ?3)",
+            params![collection_id, key, value],
+        )?;
+        Ok(())
+    }
+
+    pub fn update_variable(
+        &self,
+        collection_id: i64,
+        old_key: &str,
+        new_key: &str,
+        value: &str,
+    ) -> Result<(), StoreError> {
+        let old_key = old_key.trim();
+        let new_key = new_key.trim();
+        if !valid_variable_key(new_key) {
+            return Err(StoreError::Validation(
+                "variable names must start with a letter or underscore and contain only letters, numbers, or underscores".into(),
+            ));
+        }
+
+        let mut connection = self.connect()?;
+        let transaction = connection.transaction()?;
+        let old_exists = transaction.query_row(
+            "SELECT EXISTS(SELECT 1 FROM collection_variables WHERE collection_id = ?1 AND key = ?2)",
+            params![collection_id, old_key],
+            |row| row.get::<_, bool>(0),
+        )?;
+        if !old_exists {
+            return Err(StoreError::Validation(
+                "this variable no longer exists; refresh the collection and try again".into(),
+            ));
+        }
+
+        if new_key != old_key {
+            let new_exists = transaction.query_row(
+                "SELECT EXISTS(SELECT 1 FROM collection_variables WHERE collection_id = ?1 AND key = ?2)",
+                params![collection_id, new_key],
+                |row| row.get::<_, bool>(0),
+            )?;
+            if new_exists {
+                return Err(StoreError::Validation(format!(
+                    "variable '{new_key}' already exists"
+                )));
+            }
+        }
+
+        transaction.execute(
+            "UPDATE collection_variables SET key = ?1, value = ?2 WHERE collection_id = ?3 AND key = ?4",
+            params![new_key, value, collection_id, old_key],
+        )?;
+        transaction.commit()?;
         Ok(())
     }
 

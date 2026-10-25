@@ -2038,7 +2038,7 @@ async fn main() -> Result<(), slint::PlatformError> {
         }
     });
 
-    app.on_save_collection_variable({
+    app.on_create_collection_variable({
         let app_weak = app_weak.clone();
         let store = Arc::clone(&store);
         move |collection_id, key, value| {
@@ -2049,7 +2049,7 @@ async fn main() -> Result<(), slint::PlatformError> {
             let submitted_key = key.clone();
             let submitted_value = value.clone();
             tokio::task::spawn_blocking(move || {
-                store.upsert_variable(collection_id as i64, &key, &value)?;
+                store.create_variable(collection_id as i64, &key, &value)?;
                 let variables = store.list_variables(collection_id as i64)?;
                 Ok::<_, crate::storage::StoreError>(variables)
             })
@@ -2065,14 +2065,58 @@ async fn main() -> Result<(), slint::PlatformError> {
                                     ui.set_variable_key("".into());
                                     ui.set_variable_value("".into());
                                 }
-                                ui.set_variables_message("Variable saved.".into());
+                                ui.set_variables_message("Variable added.".into());
                             }
                             Ok(Err(error)) => ui.set_variables_message(
-                                format!("Could not save variable: {error}").into(),
+                                format!("Could not add variable: {error}").into(),
                             ),
                             Err(error) => ui.set_variables_message(
-                                format!("Could not save variable: {error}").into(),
+                                format!("Could not add variable: {error}").into(),
                             ),
+                        }
+                    }
+                });
+            });
+        }
+    });
+
+    app.on_update_collection_variable({
+        let app_weak = app_weak.clone();
+        let store = Arc::clone(&store);
+        move |collection_id, old_key, new_key, value| {
+            let app_handle = app_weak.clone();
+            let store = Arc::clone(&store);
+            let old_key = old_key.to_string();
+            let new_key = new_key.to_string();
+            let value = value.to_string();
+            let submitted_key = old_key.clone();
+            tokio::task::spawn_blocking(move || {
+                store.update_variable(collection_id as i64, &old_key, &new_key, &value)?;
+                store.list_variables(collection_id as i64)
+            })
+            .then(move |result| async move {
+                let _ = slint::invoke_from_event_loop(move || {
+                    if let Some(ui) = app_handle.upgrade() {
+                        let is_same_edit = ui.get_editing_variable_collection_id() == collection_id
+                            && ui.get_editing_variable_key() == submitted_key;
+                        match result {
+                            Ok(Ok(variables)) => {
+                                ui.set_collection_variables(to_variable_model(variables));
+                                if is_same_edit {
+                                    ui.set_editing_variable_key("".into());
+                                    ui.set_editing_variable_collection_id(-1);
+                                    ui.set_editing_variable_draft_key("".into());
+                                    ui.set_editing_variable_draft_value("".into());
+                                    ui.set_editing_variable_message("".into());
+                                }
+                            }
+                            Ok(Err(error)) if is_same_edit => ui.set_editing_variable_message(
+                                format!("Could not update variable: {error}").into(),
+                            ),
+                            Err(error) if is_same_edit => ui.set_editing_variable_message(
+                                format!("Could not update variable: {error}").into(),
+                            ),
+                            _ => {}
                         }
                     }
                 });
