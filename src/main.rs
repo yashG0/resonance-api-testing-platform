@@ -418,182 +418,376 @@ fn to_history_model(history: Vec<RequestHistory>) -> ModelRc<HistoryItem> {
     ModelRc::new(VecModel::from(items))
 }
 
-/// Convert formatted JSON into line/token models for the native Slint syntax viewer.
-/// Token text is kept verbatim, so copying the response never depends on rendered colors.
+#[derive(Clone, Copy)]
+struct SyntaxColors {
+    base: Color,
+    key: Color,
+    string: Color,
+    number: Color,
+    boolean: Color,
+    punctuation: Color,
+    comment: Color,
+}
 
-fn tokenize_response(source: &str, format: &str, dark: bool) -> ModelRc<JsonLine> {
-    let base = if dark {
-        Color::from_rgb_u8(0xe6, 0xe6, 0xe6)
+fn push_syntax_token(tokens: &mut Vec<JsonToken>, text: &str, color: Color) {
+    if text.is_empty() {
+        return;
+    }
+    if let Some(last) = tokens.last_mut()
+        && last.color == color
+    {
+        let mut merged = last.text.to_string();
+        merged.push_str(text);
+        last.text = merged.into();
     } else {
-        Color::from_rgb_u8(0x24, 0x1f, 0x31)
-    };
-    let key = if dark {
-        Color::from_rgb_u8(0x78, 0xae, 0xed)
-    } else {
-        Color::from_rgb_u8(0x1c, 0x71, 0xd8)
-    };
-    let string = if dark {
-        Color::from_rgb_u8(0x8f, 0xf0, 0xa4)
-    } else {
-        Color::from_rgb_u8(0x26, 0xa2, 0x69)
-    };
-    let number = if dark {
-        Color::from_rgb_u8(0xff, 0xbe, 0x6f)
-    } else {
-        Color::from_rgb_u8(0xc6, 0x46, 0x00)
-    };
-    let boolean = if dark {
-        Color::from_rgb_u8(0xdc, 0x8a, 0xdd)
-    } else {
-        Color::from_rgb_u8(0x81, 0x3d, 0x9c)
-    };
-    let punctuation = if dark {
-        Color::from_rgb_u8(0xc0, 0xbf, 0xbc)
-    } else {
-        Color::from_rgb_u8(0x5e, 0x5c, 0x64)
-    };
-    let null = if dark {
-        Color::from_rgb_u8(0xa8, 0xa8, 0xa8)
-    } else {
-        Color::from_rgb_u8(0x6c, 0x6a, 0x73)
-    };
+        tokens.push(JsonToken {
+            text: text.into(),
+            color,
+        });
+    }
+}
 
+fn tokenize_json_line(line: &str, colors: SyntaxColors) -> Vec<JsonToken> {
+    let bytes = line.as_bytes();
+    let mut tokens = Vec::new();
+    let mut i = 0;
+    while i < bytes.len() {
+        let start = i;
+        let byte = bytes[i];
+        let color;
+
+        if byte == b'"' {
+            i += 1;
+            while i < bytes.len() {
+                match bytes[i] {
+                    b'\\' => {
+                        i += 1;
+                        if i < bytes.len() {
+                            i += line[i..].chars().next().unwrap().len_utf8();
+                        }
+                    }
+                    b'"' => {
+                        i += 1;
+                        break;
+                    }
+                    _ => i += line[i..].chars().next().unwrap().len_utf8(),
+                }
+            }
+            let mut lookahead = i;
+            while lookahead < bytes.len() {
+                let character = line[lookahead..].chars().next().unwrap();
+                if !character.is_whitespace() {
+                    break;
+                }
+                lookahead += character.len_utf8();
+            }
+            color = if lookahead < bytes.len() && bytes[lookahead] == b':' {
+                colors.key
+            } else {
+                colors.string
+            };
+        } else if byte.is_ascii_digit()
+            || (byte == b'-' && bytes.get(i + 1).is_some_and(u8::is_ascii_digit))
+        {
+            i += 1;
+            while i < bytes.len()
+                && (bytes[i].is_ascii_digit()
+                    || matches!(bytes[i], b'.' | b'e' | b'E' | b'+' | b'-'))
+            {
+                i += 1;
+            }
+            color = colors.number;
+        } else if byte.is_ascii_alphabetic() {
+            i += 1;
+            while i < bytes.len() && bytes[i].is_ascii_alphabetic() {
+                i += 1;
+            }
+            color = match &line[start..i] {
+                "true" | "false" => colors.boolean,
+                "null" => colors.comment,
+                _ => colors.base,
+            };
+        } else {
+            i += line[i..].chars().next().unwrap().len_utf8();
+            color = if matches!(byte, b'{' | b'}' | b'[' | b']' | b',' | b':') {
+                colors.punctuation
+            } else {
+                colors.base
+            };
+        }
+        push_syntax_token(&mut tokens, &line[start..i], color);
+    }
+    tokens
+}
+
+fn tokenize_markup_line(line: &str, colors: SyntaxColors) -> Vec<JsonToken> {
+    let mut tokens = Vec::new();
+    let mut i = 0;
+    while i < line.len() {
+        let rest = &line[i..];
+        if rest.starts_with("<!--") {
+            let end = rest.find("-->").map(|end| end + 3).unwrap_or(rest.len());
+            push_syntax_token(&mut tokens, &rest[..end], colors.comment);
+            i += end;
+            continue;
+        }
+        if !rest.starts_with('<') {
+            let end = rest.find('<').unwrap_or(rest.len());
+            push_syntax_token(&mut tokens, &rest[..end], colors.base);
+            i += end;
+            continue;
+        }
+
+        push_syntax_token(&mut tokens, "<", colors.punctuation);
+        i += 1;
+        if i >= line.len() {
+            break;
+        }
+        if line.as_bytes()[i] == b'/' || line.as_bytes()[i] == b'!' || line.as_bytes()[i] == b'?' {
+            push_syntax_token(&mut tokens, &line[i..i + 1], colors.punctuation);
+            i += 1;
+        }
+        let tag_start = i;
+        while i < line.len() {
+            let byte = line.as_bytes()[i];
+            if byte.is_ascii_whitespace() || matches!(byte, b'/' | b'>') {
+                break;
+            }
+            i += line[i..].chars().next().unwrap().len_utf8();
+        }
+        push_syntax_token(&mut tokens, &line[tag_start..i], colors.key);
+
+        while i < line.len() {
+            let whitespace_start = i;
+            while i < line.len() && line.as_bytes()[i].is_ascii_whitespace() {
+                i += 1;
+            }
+            push_syntax_token(&mut tokens, &line[whitespace_start..i], colors.base);
+            if i >= line.len() {
+                break;
+            }
+            match line.as_bytes()[i] {
+                b'>' => {
+                    push_syntax_token(&mut tokens, ">", colors.punctuation);
+                    i += 1;
+                    break;
+                }
+                b'/' => {
+                    push_syntax_token(&mut tokens, "/", colors.punctuation);
+                    i += 1;
+                }
+                b'=' => {
+                    push_syntax_token(&mut tokens, "=", colors.punctuation);
+                    i += 1;
+                    let space_start = i;
+                    while i < line.len() && line.as_bytes()[i].is_ascii_whitespace() {
+                        i += 1;
+                    }
+                    push_syntax_token(&mut tokens, &line[space_start..i], colors.base);
+                    if i < line.len() && matches!(line.as_bytes()[i], b'\'' | b'"') {
+                        let quote = line.as_bytes()[i];
+                        let value_start = i;
+                        i += 1;
+                        while i < line.len() && line.as_bytes()[i] != quote {
+                            i += line[i..].chars().next().unwrap().len_utf8();
+                        }
+                        if i < line.len() {
+                            i += 1;
+                        }
+                        push_syntax_token(&mut tokens, &line[value_start..i], colors.string);
+                    }
+                }
+                _ => {
+                    let attr_start = i;
+                    while i < line.len()
+                        && !line.as_bytes()[i].is_ascii_whitespace()
+                        && !matches!(line.as_bytes()[i], b'=' | b'/' | b'>')
+                    {
+                        i += line[i..].chars().next().unwrap().len_utf8();
+                    }
+                    if attr_start == i {
+                        break;
+                    }
+                    push_syntax_token(&mut tokens, &line[attr_start..i], colors.boolean);
+                }
+            }
+        }
+    }
+    tokens
+}
+
+fn append_visual_line(lines: &mut Vec<JsonLine>, number: i32, tokens: Vec<JsonToken>) {
+    lines.push(JsonLine {
+        number,
+        tokens: ModelRc::new(VecModel::from(tokens)),
+    });
+}
+
+fn tokenize_response(
+    source: &str,
+    format: &str,
+    dark: bool,
+    max_columns: f32,
+) -> ModelRc<JsonLine> {
+    let colors = SyntaxColors {
+        base: if dark {
+            Color::from_rgb_u8(0xe6, 0xe6, 0xe6)
+        } else {
+            Color::from_rgb_u8(0x24, 0x1f, 0x31)
+        },
+        key: if dark {
+            Color::from_rgb_u8(0x78, 0xae, 0xed)
+        } else {
+            Color::from_rgb_u8(0x1c, 0x71, 0xd8)
+        },
+        string: if dark {
+            Color::from_rgb_u8(0x8f, 0xf0, 0xa4)
+        } else {
+            Color::from_rgb_u8(0x26, 0xa2, 0x69)
+        },
+        number: if dark {
+            Color::from_rgb_u8(0xff, 0xbe, 0x6f)
+        } else {
+            Color::from_rgb_u8(0xc6, 0x46, 0x00)
+        },
+        boolean: if dark {
+            Color::from_rgb_u8(0xdc, 0x8a, 0xdd)
+        } else {
+            Color::from_rgb_u8(0x81, 0x3d, 0x9c)
+        },
+        punctuation: if dark {
+            Color::from_rgb_u8(0xc0, 0xbf, 0xbc)
+        } else {
+            Color::from_rgb_u8(0x5e, 0x5c, 0x64)
+        },
+        comment: if dark {
+            Color::from_rgb_u8(0xa8, 0xa8, 0xa8)
+        } else {
+            Color::from_rgb_u8(0x6c, 0x6a, 0x73)
+        },
+    };
     let source_lines: Vec<&str> = if source.is_empty() {
         vec![""]
     } else {
         source.lines().collect()
     };
-
-    let mut lines = Vec::with_capacity(source_lines.len());
+    let mut lines = Vec::new();
+    let max_columns = max_columns.round().max(0.0) as usize;
 
     for (line_index, line) in source_lines.into_iter().enumerate() {
-        let mut tokens: Vec<JsonToken> = Vec::new();
-
-        if format != "JSON" {
-            tokens.push(JsonToken {
+        let tokens = match format {
+            "JSON" => tokenize_json_line(line, colors),
+            "HTML" | "XML" => tokenize_markup_line(line, colors),
+            _ => vec![JsonToken {
                 text: line.into(),
-                color: base,
-            });
-        } else {
-            let bytes = line.as_bytes();
-            let mut i = 0;
-            let mut run_start = 0;
-            let mut run_end = 0;
-            let mut run_color: Option<Color> = None;
-
-            while i < bytes.len() {
-                let start = i;
-                let byte = bytes[i];
-
-                let token_color;
-
-                if byte == b'"' {
-                    i += 1;
-
-                    while i < bytes.len() {
-                        match bytes[i] {
-                            b'\\' => {
-                                i += 1;
-
-                                if i < bytes.len() {
-                                    let character_length =
-                                        line[i..].chars().next().unwrap().len_utf8();
-                                    i += character_length;
-                                }
-                            }
-                            b'"' => {
-                                i += 1;
-                                break;
-                            }
-                            _ => {
-                                let character_length = line[i..].chars().next().unwrap().len_utf8();
-                                i += character_length;
-                            }
-                        }
-                    }
-
-                    let mut lookahead = i;
-                    while lookahead < bytes.len() {
-                        let character = line[lookahead..].chars().next().unwrap();
-                        if !character.is_whitespace() {
-                            break;
-                        }
-                        lookahead += character.len_utf8();
-                    }
-
-                    token_color = if lookahead < bytes.len() && bytes[lookahead] == b':' {
-                        key
-                    } else {
-                        string
-                    };
-                } else if byte.is_ascii_digit()
-                    || (byte == b'-' && bytes.get(i + 1).is_some_and(u8::is_ascii_digit))
-                {
-                    i += 1;
-
-                    while i < bytes.len()
-                        && (bytes[i].is_ascii_digit()
-                            || matches!(bytes[i], b'.' | b'e' | b'E' | b'+' | b'-'))
-                    {
-                        i += 1;
-                    }
-
-                    token_color = number;
-                } else if byte.is_ascii_alphabetic() {
-                    i += 1;
-
-                    while i < bytes.len() && bytes[i].is_ascii_alphabetic() {
-                        i += 1;
-                    }
-
-                    token_color = match &line[start..i] {
-                        "true" | "false" => boolean,
-                        "null" => null,
-                        _ => base,
-                    };
-                } else {
-                    let character = line[i..].chars().next().unwrap();
-                    i += character.len_utf8();
-
-                    token_color = if matches!(byte, b'{' | b'}' | b'[' | b']' | b',' | b':') {
-                        punctuation
-                    } else {
-                        base
-                    };
-                }
-
-                if let Some(current_color) = run_color {
-                    if current_color == token_color {
-                        run_end = i;
-                        continue;
-                    }
-
-                    tokens.push(JsonToken {
-                        text: line[run_start..run_end].into(),
-                        color: current_color,
-                    });
-                }
-
-                run_start = start;
-                run_end = i;
-                run_color = Some(token_color);
-            }
-
-            if let Some(color) = run_color {
-                tokens.push(JsonToken {
-                    text: line[run_start..run_end].into(),
-                    color,
-                });
-            }
+                color: colors.base,
+            }],
+        };
+        if max_columns == 0 {
+            append_visual_line(&mut lines, (line_index + 1) as i32, tokens);
+            continue;
         }
 
-        lines.push(JsonLine {
-            number: (line_index + 1) as i32,
-            tokens: ModelRc::new(VecModel::from(tokens)),
-        });
+        let mut current = Vec::new();
+        let mut column = 0usize;
+        let mut first_visual_line = true;
+        for token in tokens {
+            for character in token.text.chars() {
+                if column == max_columns {
+                    append_visual_line(
+                        &mut lines,
+                        if first_visual_line {
+                            (line_index + 1) as i32
+                        } else {
+                            0
+                        },
+                        std::mem::take(&mut current),
+                    );
+                    first_visual_line = false;
+                    column = 0;
+                }
+                push_syntax_token(&mut current, &character.to_string(), token.color);
+                column += 1;
+            }
+        }
+        append_visual_line(
+            &mut lines,
+            if first_visual_line {
+                (line_index + 1) as i32
+            } else {
+                0
+            },
+            current,
+        );
+    }
+    ModelRc::new(VecModel::from(lines))
+}
+
+#[cfg(test)]
+mod response_tokenizer_tests {
+    use super::*;
+
+    fn rendered_text(lines: &ModelRc<JsonLine>) -> String {
+        let mut output = String::new();
+        for line_index in 0..lines.row_count() {
+            if let Some(line) = lines.row_data(line_index) {
+                for token_index in 0..line.tokens.row_count() {
+                    if let Some(token) = line.tokens.row_data(token_index) {
+                        output.push_str(token.text.as_str());
+                    }
+                }
+            }
+        }
+        output
     }
 
-    ModelRc::new(VecModel::from(lines))
+    #[test]
+    fn wrapped_json_keeps_its_text_colors_and_line_numbers() {
+        let source = r#"{"message":"a long value that must wrap","ok":true}"#;
+        let lines = tokenize_response(source, "JSON", true, 12.0);
+        assert!(lines.row_count() > 1);
+        assert_eq!(rendered_text(&lines), source);
+        assert_eq!(lines.row_data(0).unwrap().number, 1);
+        assert_eq!(lines.row_data(1).unwrap().number, 0);
+
+        let first = lines.row_data(0).unwrap();
+        let mut colors = Vec::new();
+        for index in 0..first.tokens.row_count() {
+            if let Some(token) = first.tokens.row_data(index)
+                && !colors.contains(&token.color)
+            {
+                colors.push(token.color);
+            }
+        }
+        assert!(
+            colors.len() > 1,
+            "JSON keys and punctuation retain syntax colors"
+        );
+    }
+
+    #[test]
+    fn html_tokens_tags_attributes_and_text_with_optional_wrapping() {
+        let source = r#"<p class="greeting">Hello world</p>"#;
+        let lines = tokenize_response(source, "HTML", true, 10.0);
+        assert_eq!(rendered_text(&lines), source);
+        assert!(lines.row_count() > 1);
+        let mut colors = Vec::new();
+        for line_index in 0..lines.row_count() {
+            if let Some(line) = lines.row_data(line_index) {
+                for token_index in 0..line.tokens.row_count() {
+                    if let Some(token) = line.tokens.row_data(token_index)
+                        && !colors.contains(&token.color)
+                    {
+                        colors.push(token.color);
+                    }
+                }
+            }
+        }
+        assert!(
+            colors.len() >= 3,
+            "HTML syntax elements use distinct colors"
+        );
+    }
 }
 
 #[tokio::main]
@@ -647,8 +841,8 @@ async fn main() -> Result<(), slint::PlatformError> {
         highlighted.into()
     });
 
-    app.on_tokenize_response(|source, format, dark| {
-        tokenize_response(source.as_str(), format.as_str(), dark)
+    app.on_tokenize_response(|source, format, dark, max_columns| {
+        tokenize_response(source.as_str(), format.as_str(), dark, max_columns)
     });
 
     app.on_format_response_body(|body, body_format| {
@@ -661,12 +855,12 @@ async fn main() -> Result<(), slint::PlatformError> {
                         serde_json::to_string_pretty(&json).unwrap_or_else(|_| body_str.clone());
                     crate::http::client::highlight_json(&pretty)
                 }
-                Err(_) => crate::http::client::escape_html(&body_str),
+                Err(_) => body_str.clone(),
             },
             "XML" | "HTML" => {
                 crate::http::client::highlight_xml(&crate::http::client::format_html(&body_str))
             }
-            _ => crate::http::client::escape_html(&body_str),
+            _ => body_str.clone(),
         };
         highlighted.into()
     });

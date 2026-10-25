@@ -233,6 +233,7 @@ impl HttpClient {
         };
 
         let status = response.status().to_string();
+        let status_code = response.status().as_u16();
         let response_headers = format_response_headers(response.headers());
         let response_cookies = format_response_cookies(
             response
@@ -296,10 +297,24 @@ impl HttpClient {
         }
 
         let raw = String::from_utf8_lossy(&bytes).into_owned();
+        if is_binary_media_type(&content_type) {
+            return HttpResult {
+                status,
+                state: response_status_state(status_code).into(),
+                body: format!(
+                    "Received a binary response ({content_type}, {:.1} KiB). The Body viewer displays text and structured data.",
+                    bytes.len() as f64 / 1024.0
+                ),
+                headers: response_headers,
+                cookies: response_cookies,
+                format: "Binary".into(),
+                elapsed: start.elapsed(),
+            };
+        }
         let format = detect_response_format(&raw, &content_type);
 
         HttpResult {
-            state: response_status_state(response.status().as_u16()).into(),
+            state: response_status_state(status_code).into(),
             status,
             body: raw,
             headers: response_headers,
@@ -378,6 +393,12 @@ fn detect_response_format(raw: &str, content_type: &str) -> String {
     if media_type == "application/json" || media_type.ends_with("+json") {
         return "JSON".into();
     }
+    if matches!(
+        media_type.as_str(),
+        "application/x-ndjson" | "application/ndjson"
+    ) {
+        return "JSON".into();
+    }
 
     // Detect JSON responses even when the server omits the JSON content type.
     if serde_json::from_str::<serde_json::Value>(raw).is_ok() {
@@ -402,11 +423,72 @@ fn detect_response_format(raw: &str, content_type: &str) -> String {
         return "XML".into();
     }
 
+    if matches!(
+        media_type.as_str(),
+        "application/javascript" | "text/javascript" | "application/ecmascript" | "text/ecmascript"
+    ) {
+        return "JavaScript".into();
+    }
+    if media_type == "text/css" {
+        return "CSS".into();
+    }
+    if matches!(
+        media_type.as_str(),
+        "application/yaml" | "text/yaml" | "application/x-yaml"
+    ) {
+        return "YAML".into();
+    }
+    if media_type == "text/csv" || media_type == "application/csv" {
+        return "CSV".into();
+    }
+    if media_type == "application/x-www-form-urlencoded" {
+        return "Form".into();
+    }
+
     if media_type.starts_with("text/") || media_type.is_empty() {
         "Text".into()
     } else {
         media_type
     }
+}
+
+fn is_binary_media_type(media_type: &str) -> bool {
+    if media_type.starts_with("text/")
+        || media_type.ends_with("+json")
+        || media_type.ends_with("+xml")
+        || matches!(
+            media_type,
+            "application/json"
+                | "application/x-ndjson"
+                | "application/ndjson"
+                | "application/javascript"
+                | "text/javascript"
+                | "application/ecmascript"
+                | "text/ecmascript"
+                | "application/yaml"
+                | "text/yaml"
+                | "application/x-yaml"
+                | "application/x-www-form-urlencoded"
+                | "application/graphql"
+                | "application/csv"
+        )
+    {
+        return false;
+    }
+
+    media_type.starts_with("image/")
+        || media_type.starts_with("audio/")
+        || media_type.starts_with("video/")
+        || matches!(
+            media_type,
+            "application/octet-stream"
+                | "application/pdf"
+                | "application/zip"
+                | "application/gzip"
+                | "application/x-tar"
+                | "application/wasm"
+        )
+        || media_type.starts_with("application/vnd.")
 }
 
 pub(crate) fn escape_html(input: &str) -> String {
@@ -662,6 +744,21 @@ mod tests {
         assert_eq!(response_status_state(302), "success");
         assert_eq!(response_status_state(404), "http-error");
         assert_eq!(response_status_state(503), "http-error");
+    }
+
+    #[test]
+    fn detects_textual_response_formats_and_binary_media_types() {
+        assert_eq!(detect_response_format("<html></html>", "text/html"), "HTML");
+        assert_eq!(detect_response_format("<root/>", "application/xml"), "XML");
+        assert_eq!(detect_response_format("a: 1", "application/yaml"), "YAML");
+        assert_eq!(
+            detect_response_format("console.log(1)", "text/javascript"),
+            "JavaScript"
+        );
+        assert!(is_binary_media_type("image/png"));
+        assert!(is_binary_media_type("application/pdf"));
+        assert!(!is_binary_media_type("text/html"));
+        assert!(!is_binary_media_type("application/vnd.api+json"));
     }
 
     #[test]

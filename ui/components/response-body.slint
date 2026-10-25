@@ -23,22 +23,25 @@ export component ResponseBody inherits Rectangle {
     in-out property <string> mode: "Pretty";
     in-out property <bool> wrap-lines: false;
     callback copy-all(string);
-    callback tokenize-response(string, string, bool) -> [JsonLine];
+    callback tokenize-response(string, string, bool, float) -> [JsonLine];
     in property <string> format: "JSON";
     in property <bool> dark: true;
     in property <bool> large-response: false;
 
-    property <bool> has-pretty: root.pretty != "" && root.pretty != root.raw;
+    property <bool> structured-format: root.format == "JSON" || root.format == "HTML" || root.format == "XML";
+    property <bool> has-pretty: root.structured-format || (root.pretty != "" && root.pretty != root.raw);
     property <string> displayed-text: (root.has-pretty && root.mode == "Pretty") ? root.pretty : root.raw;
+    property <float> wrap-columns: max(16, (root.width - 72px) / 8px);
 
 in-out property <[JsonLine]> json-lines: [];
 
 function refresh-json-lines() {
-    if (root.format == "JSON" && root.mode == "Pretty" && !root.large-response) {
+    if (root.structured-format && root.mode == "Pretty" && !root.large-response) {
         root.json-lines = root.tokenize-response(
             root.displayed-text,
             root.format,
-            root.dark
+            root.dark,
+            root.wrap-lines ? root.wrap-columns : 0
         );
     } else {
         root.json-lines = [];
@@ -61,6 +64,14 @@ changed format => {
 }
 
 changed dark => {
+    root.refresh-json-lines();
+}
+
+changed width => {
+    root.refresh-json-lines();
+}
+
+changed wrap-lines => {
     root.refresh-json-lines();
 }
 
@@ -113,9 +124,9 @@ changed dark => {
 
         Rectangle { height: 1px; background: Theme.border; }
 
-        // Keep the syntax-colored line renderer when unwrapped. When wrapping is
-        // enabled, use the text editor so long JSON lines can flow to the next line.
-        if root.format == "JSON" && root.mode == "Pretty" && !root.large-response && !root.wrap-lines : Rectangle {
+        // Keep structured bodies in the token renderer in both wrap modes so colors
+        // and line numbers remain intact when long lines flow to the next display row.
+        if root.structured-format && root.mode == "Pretty" && !root.large-response : Rectangle {
             // ScrollView has no background property; paint the containing surface.
             vertical-stretch: 1;
             background: Theme.view-bg;
@@ -145,7 +156,7 @@ changed dark => {
                                 x: 0px;
                                 width: parent.width - 8px;
                                 height: parent.height;
-                                text: "" + line.number;
+                                text: line.number > 0 ? "" + line.number : "";
                                 color: Theme.code-line-number;
                                 font-family: Theme.font-mono;
                                 font-size: 12px;
@@ -178,7 +189,7 @@ changed dark => {
 
         // Slint conditional elements are separate siblings; use the inverse
         // condition rather than an `else` element branch.
-        if root.format != "JSON" || root.mode != "Pretty" || root.large-response || root.wrap-lines : AdwTextEdit {
+        if !root.structured-format || root.mode != "Pretty" || root.large-response : AdwTextEdit {
             vertical-stretch: 1;
             read-only: true;
             wrap: root.wrap-lines

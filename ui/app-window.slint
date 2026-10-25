@@ -120,7 +120,7 @@ export component AppWindow inherits Window {
     callback refresh-system-theme();
     callback format-request-body(string, string) -> string;
     callback format-response-body(string, string) -> string;
-    callback tokenize-response(string, string, bool) -> [JsonLine];
+    callback tokenize-response(string, string, bool, float) -> [JsonLine];
     // Implement in Rust (e.g. `arboard`). Unimplemented = Copy does nothing.
     callback copy-text(string);
 
@@ -2455,7 +2455,7 @@ in-out property <bool> response-large: false;
                                             format: root.response-format;
                                             dark: root.dark-mode;
                                             large-response: root.response-large;
-                                            tokenize-response(source, format, dark) => { root.tokenize-response(source, format, dark); }
+                                            tokenize-response(source, format, dark, max-columns) => { root.tokenize-response(source, format, dark, max-columns); }
                                             copy-all(text) => { root.copy-text(text); }
                                         }
 
