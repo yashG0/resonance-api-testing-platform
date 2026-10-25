@@ -47,6 +47,8 @@ component Heading inherits Text {
 
 export component ShortcutsDialog inherits Rectangle {
     callback close();
+    in property <string> primary-modifier: "Ctrl";
+    in property <string> alternate-modifier: "Alt";
     background: Theme.overlay;
 
     TouchArea { clicked => { root.close(); } }
@@ -80,25 +82,30 @@ export component ShortcutsDialog inherits Rectangle {
                     padding-top: 6px;
                     spacing: 0px;
                     Heading { text: "Requests"; }
-                    Row { label: "Send request"; keys: ["Ctrl", "Enter"]; }
-                    Row { label: "Save request"; keys: ["Ctrl", "S"]; }
-                    Row { label: "New request"; keys: ["Ctrl", "N"]; }
-                    Row { label: "New collection"; keys: ["Ctrl", "Shift", "N"]; }
+                    Row { label: "Send request"; keys: [root.primary-modifier, "Enter"]; }
+                    Row { label: "Save request"; keys: [root.primary-modifier, "S"]; }
+                    Row { label: "New request"; keys: [root.primary-modifier, "N"]; }
+                    Row { label: "New collection"; keys: [root.primary-modifier, "Shift", "N"]; }
                     Row { label: "Rename request"; keys: ["F2"]; }
-                    Row { label: "Focus URL bar"; keys: ["Ctrl", "L"]; }
-                    Row { label: "Search requests"; keys: ["Ctrl", "K"]; }
-                    Row { label: "Request tabs: Params, Headers, Body, Auth"; keys: ["Ctrl", "1 – 4"]; }
-                    Row { label: "Beautify / edit request body"; keys: ["Ctrl", "Shift", "F"]; }
+                    Row { label: "Focus URL bar"; keys: [root.primary-modifier, "L"]; }
+                    Row { label: "Search requests"; keys: [root.primary-modifier, "K / F"]; }
+                    Row { label: "Close current request tab"; keys: [root.primary-modifier, "W"]; }
+                    Row { label: "Next request tab"; keys: [root.primary-modifier, "Tab"]; }
+                    Row { label: "Previous request tab"; keys: [root.primary-modifier, "Shift", "Tab"]; }
+                    Row { label: "Request tabs: Params, Headers, Body, Auth"; keys: [root.primary-modifier, "1 – 4"]; }
+                    Row { label: "Beautify / edit request body"; keys: [root.primary-modifier, "Shift", "F"]; }
                     Heading { text: "Response"; }
-                    Row { label: "Response tabs: Body, Headers, Cookies"; keys: ["Alt", "1 – 3"]; }
-                    Row { label: "Copy response body"; keys: ["Ctrl", "Shift", "C"]; }
+                    Row { label: "Response tabs: Body, Headers, Cookies"; keys: [root.alternate-modifier, "1 – 3"]; }
+                    Row { label: "Copy response body"; keys: [root.primary-modifier, "Shift", "C"]; }
                     Heading { text: "Navigation and view"; }
-                    Row { label: "Collections"; keys: ["Ctrl", "Shift", "O"]; }
-                    Row { label: "History"; keys: ["Ctrl", "H"]; }
-                    Row { label: "Environments"; keys: ["Ctrl", "E"]; }
-                    Row { label: "Toggle sidebar"; keys: ["Ctrl", "B"]; }
+                    Row { label: "Collections"; keys: [root.primary-modifier, "Shift", "O"]; }
+                    Row { label: "History"; keys: [root.primary-modifier, "H"]; }
+                    Row { label: "Environments"; keys: [root.primary-modifier, "E"]; }
+                    Row { label: "Toggle sidebar"; keys: [root.primary-modifier, "B"]; }
                     Row { label: "Full screen"; keys: ["F11"]; }
+                    Row { label: "Quit Resonance"; keys: [root.primary-modifier, "Q"]; }
                     Row { label: "Show this dialog"; keys: ["F1"]; }
+                    Row { label: "Alternative help shortcut"; keys: [root.primary-modifier, "/"]; }
                     Row { label: "Close dialogs and menus"; keys: ["Esc"]; }
                 }
             }

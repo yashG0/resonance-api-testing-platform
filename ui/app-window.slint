@@ -205,6 +205,9 @@ in-out property <bool> response-large: false;
     in-out property <float> split-ratio: 0.5;
     in-out property <bool> show-shortcuts: false;
     in-out property <bool> show-about: false;
+    in-out property <string> shortcut-modifier: "Ctrl";
+    in-out property <string> shortcut-alt-modifier: "Alt";
+    property <bool> app-shortcuts-enabled: !root.show-shortcuts && !root.show-about;
     in-out property <string> history-filter: "All";   // All | Success | Failed
 
     in-out property <bool> system-dark-mode: Palette.color-scheme == ColorScheme.dark;
@@ -486,10 +489,25 @@ in-out property <bool> response-large: false;
                 root.request-header-rows = [];
                 root.request-param-rows = [];
                 root.request-body = "";
+                root.is-loading = false;
+                root.response-state = "idle";
+                root.response-status = "No response yet";
+                root.response-body = "Send a request to inspect its response.";
+                root.response-body-formatted = "";
+                root.response-time = "---";
             }
         } else if index < root.active-request-tab-index {
             root.active-request-tab-index -= 1;
         }
+    }
+
+    function cycle-request-tab(direction: int) {
+        let count = root.request-tabs.length;
+        if count < 2 || root.active-request-tab-index < 0 { return; }
+        let next = direction > 0
+            ? (root.active-request-tab-index + 1 >= count ? 0 : root.active-request-tab-index + 1)
+            : (root.active-request-tab-index == 0 ? count - 1 : root.active-request-tab-index - 1);
+        root.activate-request-tab(next);
     }
 
     function begin-rename() {
@@ -851,7 +869,7 @@ in-out property <bool> response-large: false;
                                     x: -206px;
                                     y: 36px;
                                     width: 240px;
-                                    height: 90px;
+                                    height: 136px;
                                     close-policy: close-on-click-outside;
                                     forward-focus: app-menu-focus;
                                     Rectangle {
@@ -880,6 +898,15 @@ in-out property <bool> response-large: false;
                                                 clicked => {
                                                     app-menu-popup.close();
                                                     root.show-about = true;
+                                                }
+                                            }
+                                            Rectangle { height: 1px; background: Theme.border; }
+                                            MenuItem {
+                                                icon: Icons.x;
+                                                text: "Quit Resonance";
+                                                clicked => {
+                                                    app-menu-popup.close();
+                                                    root.close();
                                                 }
                                             }
                                         }
@@ -2596,6 +2623,8 @@ in-out property <bool> response-large: false;
             y: root.shadow-margin;
             width: parent.width - 2 * root.shadow-margin;
             height: parent.height - 2 * root.shadow-margin;
+            primary-modifier: root.shortcut-modifier;
+            alternate-modifier: root.shortcut-alt-modifier;
             close => { root.show-shortcuts = false; }
         }
         if root.show-about : AboutDialog {
@@ -2607,35 +2636,40 @@ in-out property <bool> response-large: false;
         }
 
         // ───────── Keyboard shortcuts ─────────
-        KeyBinding { keys: @keys(Control + Return); enabled: root.active-view == "Request"; activated => { root.send-current-request(); } }
-        KeyBinding { keys: @keys(Control + S); enabled: root.active-view == "Request"; activated => { root.save-current-request(); } }
-        KeyBinding { keys: @keys(Control + N); enabled: root.selected-collection-id > 0; activated => { root.start-new-request(root.selected-collection-id, root.selected-collection-name); } }
+        KeyBinding { keys: @keys(Control + Return); enabled: root.app-shortcuts-enabled && root.active-view == "Request"; activated => { root.send-current-request(); } }
+        KeyBinding { keys: @keys(Control + S); enabled: root.app-shortcuts-enabled && root.active-view == "Request"; activated => { root.save-current-request(); } }
+        KeyBinding { keys: @keys(Control + N); enabled: root.app-shortcuts-enabled && root.selected-collection-id > 0; activated => { root.start-new-request(root.selected-collection-id, root.selected-collection-name); } }
         KeyBinding {
             keys: @keys(Control + Shift + N);
+            enabled: root.app-shortcuts-enabled;
             activated => {
                 root.begin-new-collection();
             }
         }
-        KeyBinding { keys: @keys(F2); activated => { root.begin-rename(); } }
-        KeyBinding { keys: @keys(Control + L); activated => { root.active-view = "Request"; url-field.focus(); } }
-        KeyBinding { keys: @keys(Control + K); activated => { root.show-navigation-sidebar = true; request-search-field.focus(); } }
-        KeyBinding { keys: @keys(Control + F); activated => { root.show-navigation-sidebar = true; request-search-field.focus(); } }
-        KeyBinding { keys: @keys(Control + B); activated => { root.show-navigation-sidebar = !root.show-navigation-sidebar; } }
-        KeyBinding { keys: @keys(Control + "1"); activated => { root.set-request-tab("Params"); } }
-        KeyBinding { keys: @keys(Control + "2"); activated => { root.set-request-tab("Headers"); } }
-        KeyBinding { keys: @keys(Control + "3"); activated => { root.set-request-tab("Body"); } }
-        KeyBinding { keys: @keys(Control + "4"); activated => { root.set-request-tab("Auth"); } }
-        KeyBinding { keys: @keys(Alt + "1"); activated => { root.response-tab = "Body"; } }
-        KeyBinding { keys: @keys(Alt + "2"); activated => { root.response-tab = "Headers"; } }
-        KeyBinding { keys: @keys(Alt + "3"); activated => { root.response-tab = "Cookies"; } }
-        KeyBinding { keys: @keys(Control + Shift + F); enabled: root.active-view == "Request" && root.active-tab == "Body"; activated => { root.set-body-formatted(!root.show-request-body-formatted); } }
-        KeyBinding { keys: @keys(Control + Shift + C); activated => { root.copy-response(); } }
-        KeyBinding { keys: @keys(Control + H); activated => { root.open-view("History"); } }
-        KeyBinding { keys: @keys(Control + E); activated => { root.open-view("Environments"); } }
-        KeyBinding { keys: @keys(Control + Shift + O); activated => { root.open-view("Collections"); } }
-        KeyBinding { keys: @keys(F11); activated => { root.full-screen = !root.full-screen; } }
+        KeyBinding { keys: @keys(F2); enabled: root.app-shortcuts-enabled && root.active-view == "Request"; activated => { root.begin-rename(); } }
+        KeyBinding { keys: @keys(Control + L); enabled: root.app-shortcuts-enabled; activated => { root.active-view = "Request"; url-field.focus(); } }
+        KeyBinding { keys: @keys(Control + K); enabled: root.app-shortcuts-enabled; activated => { root.show-navigation-sidebar = true; request-search-field.focus(); } }
+        KeyBinding { keys: @keys(Control + F); enabled: root.app-shortcuts-enabled; activated => { root.show-navigation-sidebar = true; request-search-field.focus(); } }
+        KeyBinding { keys: @keys(Control + B); enabled: root.app-shortcuts-enabled; activated => { root.show-navigation-sidebar = !root.show-navigation-sidebar; } }
+        KeyBinding { keys: @keys(Control + W); enabled: root.app-shortcuts-enabled && root.active-view == "Request" && root.active-request-tab-index >= 0; activated => { root.close-request-tab(root.active-request-tab-index); } }
+        KeyBinding { keys: @keys(Control + Tab); enabled: root.app-shortcuts-enabled && root.active-view == "Request"; activated => { root.cycle-request-tab(1); } }
+        KeyBinding { keys: @keys(Control + Shift + Tab); enabled: root.app-shortcuts-enabled && root.active-view == "Request"; activated => { root.cycle-request-tab(-1); } }
+        KeyBinding { keys: @keys(Control + Q); enabled: root.app-shortcuts-enabled; activated => { root.close(); } }
+        KeyBinding { keys: @keys(Control + Digit1); enabled: root.app-shortcuts-enabled && root.active-view == "Request"; activated => { root.set-request-tab("Params"); } }
+        KeyBinding { keys: @keys(Control + Digit2); enabled: root.app-shortcuts-enabled && root.active-view == "Request"; activated => { root.set-request-tab("Headers"); } }
+        KeyBinding { keys: @keys(Control + Digit3); enabled: root.app-shortcuts-enabled && root.active-view == "Request"; activated => { root.set-request-tab("Body"); } }
+        KeyBinding { keys: @keys(Control + Digit4); enabled: root.app-shortcuts-enabled && root.active-view == "Request"; activated => { root.set-request-tab("Auth"); } }
+        KeyBinding { keys: @keys(Alt + Digit1); enabled: root.app-shortcuts-enabled && root.active-view == "Request"; activated => { root.response-tab = "Body"; } }
+        KeyBinding { keys: @keys(Alt + Digit2); enabled: root.app-shortcuts-enabled && root.active-view == "Request"; activated => { root.response-tab = "Headers"; } }
+        KeyBinding { keys: @keys(Alt + Digit3); enabled: root.app-shortcuts-enabled && root.active-view == "Request"; activated => { root.response-tab = "Cookies"; } }
+        KeyBinding { keys: @keys(Control + Shift + F); enabled: root.app-shortcuts-enabled && root.active-view == "Request" && root.active-tab == "Body"; activated => { root.set-body-formatted(!root.show-request-body-formatted); } }
+        KeyBinding { keys: @keys(Control + Shift + C); enabled: root.app-shortcuts-enabled && root.active-view == "Request"; activated => { root.copy-response(); } }
+        KeyBinding { keys: @keys(Control + H); enabled: root.app-shortcuts-enabled; activated => { root.open-view("History"); } }
+        KeyBinding { keys: @keys(Control + E); enabled: root.app-shortcuts-enabled; activated => { root.open-view("Environments"); } }
+        KeyBinding { keys: @keys(Control + Shift + O); enabled: root.app-shortcuts-enabled; activated => { root.open-view("Collections"); } }
+        KeyBinding { keys: @keys(F11); enabled: root.app-shortcuts-enabled; activated => { root.full-screen = !root.full-screen; } }
         KeyBinding { keys: @keys(F1); activated => { root.show-shortcuts = !root.show-shortcuts; } }
-        KeyBinding { keys: @keys(Control + "/"); activated => { root.show-shortcuts = !root.show-shortcuts; } }
+        KeyBinding { keys: @keys(Control + Slash); enabled: root.app-shortcuts-enabled; activated => { root.show-shortcuts = !root.show-shortcuts; } }
         KeyBinding {
             keys: @keys(Escape);
             activated => {

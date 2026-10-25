@@ -1024,6 +1024,16 @@ async fn main() -> Result<(), slint::PlatformError> {
         slint::PlatformError::from(format!("Could not initialize the HTTP client: {error}"))
     })?);
     let app = AppWindow::new()?;
+    app.set_shortcut_modifier(if cfg!(target_os = "macos") {
+        "⌘".into()
+    } else {
+        "Ctrl".into()
+    });
+    app.set_shortcut_alt_modifier(if cfg!(target_os = "macos") {
+        "⌥".into()
+    } else {
+        "Alt".into()
+    });
     slint::set_xdg_app_id("io.github.yashG0.resonance-api-testing-platform")?;
     app.set_system_dark_mode(detect_system_dark_mode(app.get_system_dark_mode()));
     app.set_system_accent_color(detect_system_accent_color(app.get_system_accent_color()));
