@@ -2225,31 +2225,37 @@ async fn main() -> Result<(), slint::PlatformError> {
                     if let Some(ui) = app_handle.upgrade() {
                         match result {
                             Ok((Ok(true), requests)) => {
-                                if ui.get_active_request_id() == id {
-                                    ui.set_active_request_id(-1);
-                                    ui.set_active_request("".into());
-                                    ui.set_editing_request_name(false);
-                                    ui.set_active_method("GET".into());
-                                    ui.set_request_url("".into());
-                                    ui.set_request_headers("Accept: application/json".into());
-                                    ui.set_request_header_rows(to_key_value_model(
-                                        "Accept: application/json",
-                                        ':',
-                                    ));
-                                    ui.set_request_params("".into());
-                                    ui.set_request_param_rows(to_key_value_model("", '='));
-                                    ui.set_request_body("".into());
-                                    ui.set_body_format("JSON".into());
-                                    ui.set_auth_type("None".into());
-                                    ui.set_auth_value("".into());
-                                    ui.set_auth_secret("".into());
+                                let selected_collection =
+                                    ui.get_selected_collection_id() == collection_id;
+                                let selected_collection_name = ui.get_selected_collection_name();
+                                let tabs = ui.get_request_tabs();
+                                let deleted_tab_index = (0..tabs.row_count()).find(|index| {
+                                    tabs.row_data(*index)
+                                        .is_some_and(|tab| tab.request_id == id)
+                                });
+                                if let Some(index) = deleted_tab_index {
+                                    ui.invoke_close_request_tab(index as i32);
                                 }
-                                ui.set_response_status("Request deleted".into());
                                 if let Ok(requests) = requests {
                                     ui.set_saved_requests(to_request_model(
                                         requests,
                                         ui.get_request_search().as_str(),
                                     ));
+                                    if selected_collection {
+                                        if ui.get_active_request_tab_index() < 0 {
+                                            ui.set_selected_collection_id(collection_id);
+                                            ui.set_expanded_collection_id(collection_id);
+                                            ui.set_selected_collection_name(
+                                                selected_collection_name,
+                                            );
+                                            ui.invoke_show_empty_collection();
+                                        }
+                                    }
+                                } else {
+                                    ui.set_response_status(
+                                        "Request deleted, but the collection could not be refreshed"
+                                            .into(),
+                                    );
                                 }
                             }
                             Ok((Ok(false), requests)) => {

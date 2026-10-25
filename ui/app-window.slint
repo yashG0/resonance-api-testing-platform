@@ -467,7 +467,7 @@ in-out property <bool> response-large: false;
         }
     }
 
-    function close-request-tab(index: int) {
+    public function close-request-tab(index: int) {
         root.store-active-request-tab();
         let updated = root.request-tabs;
         updated.remove(index);
