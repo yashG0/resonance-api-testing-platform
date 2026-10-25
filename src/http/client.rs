@@ -15,6 +15,7 @@ const MAX_RESPONSE_BYTES: usize = 5 * 1024 * 1024;
 #[derive(Debug)]
 pub struct HttpResult {
     pub status: String,
+    pub state: String,
     pub body: String,
     pub headers: String,
     pub cookies: String,
@@ -218,13 +219,16 @@ impl HttpClient {
         let response = match request.send().await {
             Ok(response) => response,
             Err(error) => {
-                let message = if error.is_timeout() {
-                    "Request timed out.".to_owned()
-                } else {
-                    format!("Request failed: {error}")
-                };
+                let (status, state, message) = transport_error_details(
+                    error.is_timeout(),
+                    error.is_connect(),
+                    &error.to_string(),
+                );
 
-                return failure(&message, start);
+                let mut result = failure(&message, start);
+                result.status = status;
+                result.state = state;
+                return result;
             }
         };
 
@@ -260,6 +264,7 @@ impl HttpClient {
                     if chunk.len() > MAX_RESPONSE_BYTES - bytes.len() {
                         return HttpResult {
                             status,
+                            state: "error".into(),
                             body: "Response exceeds the 5 MiB display limit.".into(),
                             headers: response_headers,
                             cookies: response_cookies,
@@ -272,9 +277,15 @@ impl HttpClient {
                 }
                 Ok(None) => break,
                 Err(error) => {
+                    let (_, state, message) = transport_error_details(
+                        error.is_timeout(),
+                        error.is_connect(),
+                        &error.to_string(),
+                    );
                     return HttpResult {
                         status,
-                        body: format!("Failed to read response body: {error}"),
+                        state,
+                        body: format!("Failed to read the response body: {message}"),
                         headers: response_headers,
                         cookies: response_cookies,
                         format: "Text".into(),
@@ -288,6 +299,7 @@ impl HttpClient {
         let format = detect_response_format(&raw, &content_type);
 
         HttpResult {
+            state: response_status_state(response.status().as_u16()).into(),
             status,
             body: raw,
             headers: response_headers,
@@ -598,9 +610,76 @@ fn valid_placeholder_key(key: &str) -> bool {
         && chars.all(|character| character == '_' || character.is_ascii_alphanumeric())
 }
 
+fn response_status_state(code: u16) -> &'static str {
+    if (200..400).contains(&code) {
+        "success"
+    } else {
+        "http-error"
+    }
+}
+
+fn transport_error_details(
+    is_timeout: bool,
+    is_connect: bool,
+    detail: &str,
+) -> (String, String, String) {
+    if is_timeout {
+        (
+            "Request timed out".into(),
+            "timeout".into(),
+            format!(
+                "The request exceeded its time limit ({} seconds to connect, {} seconds overall). Check the URL, network, and server availability, then try again.",
+                CONNECT_TIMEOUT.as_secs(),
+                REQUEST_TIMEOUT.as_secs()
+            ),
+        )
+    } else if is_connect {
+        (
+            "Connection failed".into(),
+            "connection-error".into(),
+            format!(
+                "Could not connect to the server: {detail}. Check your network, hostname, port, VPN, or firewall, then try again."
+            ),
+        )
+    } else {
+        (
+            "Request failed".into(),
+            "error".into(),
+            format!(
+                "Request failed: {detail}. Check the URL and request settings, then try again."
+            ),
+        )
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn classifies_http_statuses_separately_from_transport_failures() {
+        assert_eq!(response_status_state(200), "success");
+        assert_eq!(response_status_state(302), "success");
+        assert_eq!(response_status_state(404), "http-error");
+        assert_eq!(response_status_state(503), "http-error");
+    }
+
+    #[test]
+    fn provides_distinct_actionable_timeout_and_connection_errors() {
+        let (timeout_status, timeout_state, timeout_message) =
+            transport_error_details(true, false, "deadline reached");
+        assert_eq!(timeout_status, "Request timed out");
+        assert_eq!(timeout_state, "timeout");
+        assert!(timeout_message.contains("10 seconds to connect"));
+        assert!(timeout_message.contains("30 seconds overall"));
+        assert!(timeout_message.contains("try again"));
+
+        let (connection_status, connection_state, connection_message) =
+            transport_error_details(false, true, "connection refused");
+        assert_eq!(connection_status, "Connection failed");
+        assert_eq!(connection_state, "connection-error");
+        assert!(connection_message.contains("firewall"));
+    }
 
     #[test]
     fn detects_json_html_and_plain_text_responses_by_content_type() {
@@ -671,6 +750,7 @@ mod tests {
 fn failure(message: &str, start: Instant) -> HttpResult {
     HttpResult {
         status: "Error".into(),
+        state: "error".into(),
         body: message.into(),
         headers: String::new(),
         cookies: String::new(),

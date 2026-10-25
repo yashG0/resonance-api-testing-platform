@@ -23,6 +23,15 @@ export struct RequestItem {
     method: string,
     url: string,
 }
+export struct ResponseHeaderItem {
+    name: string,
+    value: string,
+}
+export struct ResponseCookieItem {
+    name: string,
+    value: string,
+    attributes: string,
+}
 export struct RequestTabItem {
     key: int,
     request-id: int,
@@ -38,6 +47,16 @@ export struct RequestTabItem {
     auth-type: string,
     auth-value: string,
     auth-secret: string,
+    response-status: string,
+    response-body: string,
+    response-time: string,
+    response-state: string,
+    response-format: string,
+    response-headers: string,
+    response-cookies: string,
+    response-large: bool,
+    response-header-items: [ResponseHeaderItem],
+    response-cookie-items: [ResponseCookieItem],
 }
 export struct CollectionItem {
     id: int,
@@ -63,16 +82,6 @@ export struct HistoryItem {
     duration: string,
     date: string,
 }
-export struct ResponseHeaderItem {
-    name: string,
-    value: string,
-}
-export struct ResponseCookieItem {
-    name: string,
-    value: string,
-    attributes: string,
-}
-
 export component AppWindow inherits Window {
     title: "Resonance";
     no-frame: true;
@@ -88,8 +97,10 @@ export component AppWindow inherits Window {
     background: transparent;
     forward-focus: shortcut-scope;
 
-    callback send-request(string, string, string, string, string, string, string, string, string, int, int, string);
-    callback save-request(int, int, string, string, string, string, string, string, string, string, string, string);
+    callback send-request(string, string, string, string, string, string, string, string, string, int, int, string, int);
+    callback save-request(int, int, string, string, string, string, string, string, string, string, string, string, int);
+    callback suggest-request-name(int) -> string;
+    callback open-latest-request(int);
     callback serialize-param-rows([KeyValueRow]) -> string;
     callback serialize-header-rows([KeyValueRow]) -> string;
     callback load-collections();
@@ -118,6 +129,7 @@ export component AppWindow inherits Window {
     in-out property <int> active-request-tab-key: -1;
     in-out property <int> active-request-tab-index: -1;
     in-out property <int> next-request-tab-key: 1;
+    in-out property <string> active-request: "";
     // Updated from change handlers (not a binding) so the tab-bar layout can depend on it
     // without creating a layout <-> window-width binding loop.
     property <bool> request-tabs-overflow: false;
@@ -151,7 +163,6 @@ export component AppWindow inherits Window {
     in-out property <bool> show-variable-values: false;
     in-out property <string> theme-mode: "System";
     in-out property <bool> show-navigation-sidebar: true;
-    in-out property <string> active-request: "New Request";
     in-out property <bool> editing-request-name: false;
     in-out property <string> request-name-draft: "";
     in-out property <string> active-method: "GET";
@@ -303,6 +314,16 @@ in-out property <bool> response-large: false;
             auth-type: root.auth-type,
             auth-value: root.auth-value,
             auth-secret: root.auth-secret,
+            response-status: root.response-status,
+            response-body: root.response-body,
+            response-time: root.response-time,
+            response-state: root.response-state,
+            response-format: root.response-format,
+            response-headers: root.response-headers,
+            response-cookies: root.response-cookies,
+            response-large: root.response-large,
+            response-header-items: root.response-header-items,
+            response-cookie-items: root.response-cookie-items,
         };
     }
 
@@ -330,18 +351,72 @@ in-out property <bool> response-large: false;
         root.auth-secret = tab.auth-secret;
         root.editing-request-name = false;
         root.active-view = "Request";
-        root.response-status = "No response yet";
-        root.response-body = "Send a request to inspect its response.";
-        root.response-time = "---";
-        root.response-state = "idle";
-        root.response-format = "Text";
-        root.response-headers = "";
-        root.response-cookies = "";
-        root.response-header-items = [];
-        root.response-cookie-items = [];
-        root.is-loading = false;
+        root.response-status = tab.response-status;
+        root.response-body = tab.response-body;
+        root.response-time = tab.response-time;
+        let tab-loading = tab.response-state == "loading";
+        root.response-state = tab.response-state;
+        root.response-format = tab.response-format;
+        root.response-headers = tab.response-headers;
+        root.response-cookies = tab.response-cookies;
+        root.response-large = tab.response-large;
+        root.response-header-items = tab.response-header-items;
+        root.response-cookie-items = tab.response-cookie-items;
+        root.is-loading = tab-loading;
         root.load-requests(tab.collection-id);
         root.load-collection-variables(tab.collection-id);
+    }
+
+    public function set-request-tab-response(index: int, key: int, status: string, body: string, elapsed: string, state: string, format: string, headers: string, cookies: string, large: bool, header-items: [ResponseHeaderItem], cookie-items: [ResponseCookieItem]) {
+        if index >= 0 && index < root.request-tabs.length {
+            let tab = root.request-tabs[index];
+            if tab.key == key {
+                root.request-tabs[index] = {
+                    key: tab.key, request-id: tab.request-id, collection-id: tab.collection-id,
+                    collection-name: tab.collection-name, name: tab.name, method: tab.method,
+                    url: tab.url, headers: tab.headers, params: tab.params, body: tab.body,
+                    body-format: tab.body-format, auth-type: tab.auth-type, auth-value: tab.auth-value,
+                    auth-secret: tab.auth-secret, response-status: status, response-body: body,
+                    response-time: elapsed, response-state: state, response-format: format,
+                    response-headers: headers, response-cookies: cookies, response-large: large,
+                    response-header-items: header-items, response-cookie-items: cookie-items,
+                };
+                if root.active-request-tab-key == key {
+                    root.response-status = status; root.response-body = body; root.response-time = elapsed;
+                    root.response-state = state; root.response-format = format; root.response-headers = headers;
+                    root.response-cookies = cookies; root.response-large = large;
+                    root.response-header-items = header-items; root.response-cookie-items = cookie-items;
+                    root.is-loading = state == "loading";
+                }
+                return;
+            }
+        }
+    }
+
+    public function set-request-tab-identity(index: int, key: int, request-id: int, name: string) {
+        if index >= 0 && index < root.request-tabs.length {
+            let tab = root.request-tabs[index];
+            if tab.key == key {
+                root.request-tabs[index] = {
+                    key: tab.key, request-id: request-id, collection-id: tab.collection-id,
+                    collection-name: tab.collection-name, name: name, method: tab.method,
+                    url: tab.url, headers: tab.headers, params: tab.params, body: tab.body,
+                    body-format: tab.body-format, auth-type: tab.auth-type, auth-value: tab.auth-value,
+                    auth-secret: tab.auth-secret, response-status: tab.response-status,
+                    response-body: tab.response-body, response-time: tab.response-time,
+                    response-state: tab.response-state, response-format: tab.response-format,
+                    response-headers: tab.response-headers, response-cookies: tab.response-cookies,
+                    response-large: tab.response-large, response-header-items: tab.response-header-items,
+                    response-cookie-items: tab.response-cookie-items,
+                };
+                if root.active-request-tab-key == key {
+                    root.active-request-id = request-id;
+                    root.active-request = name;
+                    root.request-name-draft = name;
+                }
+                return;
+            }
+        }
     }
 
     public function register-active-request-tab() {
@@ -364,6 +439,16 @@ in-out property <bool> response-large: false;
             auth-type: root.auth-type,
             auth-value: root.auth-value,
             auth-secret: root.auth-secret,
+            response-status: root.response-status,
+            response-body: root.response-body,
+            response-time: root.response-time,
+            response-state: root.response-state,
+            response-format: root.response-format,
+            response-headers: root.response-headers,
+            response-cookies: root.response-cookies,
+            response-large: root.response-large,
+            response-header-items: root.response-header-items,
+            response-cookie-items: root.response-cookie-items,
         });
         root.active-request-tab-key = key;
         root.active-request-tab-index = new-index;
@@ -419,7 +504,8 @@ in-out property <bool> response-large: false;
             root.save-request(
                 root.active-request-id, root.selected-collection-id, root.active-request,
                 root.active-method, root.request-url, root.request-headers, root.request-params,
-                root.request-body, root.body-format, root.auth-type, root.auth-value, root.auth-secret
+                root.request-body, root.body-format, root.auth-type, root.auth-value, root.auth-secret,
+                root.active-request-tab-key
             );
         }
     }
@@ -435,8 +521,9 @@ in-out property <bool> response-large: false;
         root.selected-collection-name = collection-name;
         root.active-view = "Request";
         root.active-request-id = -1;
-        root.active-request = "New Request";
-        root.request-name-draft = "New Request";
+        let next-title = root.suggest-request-name(collection-id);
+        root.active-request = next-title;
+        root.request-name-draft = root.active-request;
         root.editing-request-name = false;
         root.is-loading = false;
         root.response-status = "No response yet";
@@ -472,7 +559,7 @@ in-out property <bool> response-large: false;
             request-id: -1,
             collection-id: collection-id,
             collection-name: collection-name,
-            name: "New Request",
+            name: root.active-request,
             method: "GET",
             url: "",
             headers: [{ key: "Accept", value: "application/json", enabled: true }],
@@ -482,6 +569,16 @@ in-out property <bool> response-large: false;
             auth-type: "None",
             auth-value: "",
             auth-secret: "",
+            response-status: "No response yet",
+            response-body: "Send a request to inspect its response.",
+            response-time: "---",
+            response-state: "idle",
+            response-format: "Text",
+            response-headers: "",
+            response-cookies: "",
+            response-large: false,
+            response-header-items: [],
+            response-cookie-items: [],
         });
         root.active-request-tab-index = new-index;
         root.request-tabs = updated;
@@ -494,12 +591,54 @@ in-out property <bool> response-large: false;
         url-field.focus();
     }
 
+    function open-collection-request(collection-id: int, collection-name: string) {
+        root.store-active-request-tab();
+        root.selected-collection-id = collection-id;
+        root.expanded-collection-id = collection-id;
+        root.selected-collection-name = collection-name;
+        root.active-view = "Request";
+        root.load-requests(collection-id);
+        root.load-collection-variables(collection-id);
+        root.open-latest-request(collection-id);
+    }
+
+    public function show-empty-collection() {
+        root.active-request-tab-index = -1;
+        root.active-request-tab-key = -1;
+        root.active-request-id = -1;
+        root.active-request = "";
+        root.request-name-draft = "";
+        root.is-loading = false;
+        root.active-method = "GET";
+        root.request-url = "";
+        root.request-params = "";
+        root.request-param-rows = [];
+        root.request-body = "";
+        root.body-format = "JSON";
+        root.request-headers = "Accept: application/json";
+        root.request-header-rows = [{ key: "Accept", value: "application/json", enabled: true }];
+        root.auth-type = "None";
+        root.auth-value = "";
+        root.auth-secret = "";
+        root.response-status = "No response yet";
+        root.response-body = "Send a request to inspect its response.";
+        root.response-time = "---";
+        root.response-state = "idle";
+        root.response-format = "Text";
+        root.response-headers = "";
+        root.response-cookies = "";
+        root.response-header-items = [];
+        root.response-cookie-items = [];
+        root.active-tab = "Body";
+    }
+
     function save-current-request() {
         if root.active-view == "Request" && root.selected-collection-id > 0 && root.request-url != "" && root.active-request != "" {
             root.save-request(
                 root.active-request-id, root.selected-collection-id, root.active-request,
                 root.active-method, root.request-url, root.request-headers, root.request-params,
-                root.request-body, root.body-format, root.auth-type, root.auth-value, root.auth-secret
+                root.request-body, root.body-format, root.auth-type, root.auth-value, root.auth-secret,
+                root.active-request-tab-key
             );
         }
     }
@@ -517,10 +656,12 @@ in-out property <bool> response-large: false;
             root.response-cookie-items = [];
             root.response-time = "---";
             root.response-tab = "Body";
+            root.store-active-request-tab();
             root.send-request(
                 root.active-method, root.request-url, root.request-body, root.request-headers,
                 root.request-params, root.body-format, root.auth-type, root.auth-value,
-                root.auth-secret, root.selected-collection-id, root.active-request-id, root.active-request
+                root.auth-secret, root.selected-collection-id, root.active-request-id, root.active-request,
+                root.active-request-tab-key
             );
         }
     }
@@ -583,7 +724,7 @@ in-out property <bool> response-large: false;
                                 }
                             }
 
-                            if root.active-view == "Request" && !root.editing-request-name && (root.selected-collection-id > 0 || root.active-request-id > 0 || root.active-request-tab-index >= 0) : HorizontalLayout {
+                            if root.active-view == "Request" && !root.editing-request-name && (root.active-request-id > 0 || root.active-request-tab-index >= 0) : HorizontalLayout {
                                 horizontal-stretch: 1;
                                 spacing: 8px;
                                 padding-left: 6px;
@@ -606,7 +747,7 @@ in-out property <bool> response-large: false;
                                     overflow: elide;
                                     max-width: 260px;
                                 }
-                                if root.active-request-id <= 0 && root.selected-collection-id > 0 : Rectangle {
+                                if root.active-request-id <= 0 && root.active-request-tab-index >= 0 : Rectangle {
                                     width: 62px;
                                     height: 22px;
                                     background: Theme.active;
@@ -623,9 +764,9 @@ in-out property <bool> response-large: false;
                                 Btn { kind: "flat"; y: 7px; icon: Icons.pencil; icon-size: 15px; accessible-name: "Rename request"; tooltip: "Rename Request"; clicked => { root.begin-rename(); } }
                             }
 
-                            if root.active-view == "Request" && root.selected-collection-id <= 0 && root.active-request-id <= 0 && root.active-request-tab-index < 0 : Text {
+                            if root.active-view == "Request" && root.active-request-id <= 0 && root.active-request-tab-index < 0 : Text {
                                 horizontal-stretch: 1;
-                                text: "Get started";
+                                text: root.selected-collection-id > 0 ? "Choose a request" : "Get started";
                                 color: Theme.fg;
                                 font-size: Theme.fs-body;
                                 font-weight: 700;
@@ -663,7 +804,7 @@ in-out property <bool> response-large: false;
                             }
 
                             Btn { kind: "flat"; y: 7px; icon: Icons.maximize; accessible-name: "Toggle full screen"; tooltip: "Toggle Full Screen"; clicked => { root.full-screen = !root.full-screen; } }
-                            if root.active-view == "Request" && (root.selected-collection-id > 0 || root.active-request-id > 0 || root.active-request-tab-index >= 0) : Btn {
+                            if root.active-view == "Request" && (root.active-request-id > 0 || root.active-request-tab-index >= 0) : Btn {
                                 y: 7px;
                                 text: "Save";
                                 icon: Icons.check;
@@ -912,12 +1053,7 @@ in-out property <bool> response-large: false;
 
                                         collection-touch := TouchArea {
                                             clicked => {
-                                                if root.expanded-collection-id == collection.id {
-                                                    root.expanded-collection-id = -1;
-                                                } else {
-                                                    root.expanded-collection-id = collection.id;
-                                                    root.load-requests(collection.id);
-                                                }
+                                                root.open-collection-request(collection.id, collection.name);
                                             }
                                             pointer-event(event) => {
                                                 if event.button == PointerEventButton.right && event.kind == PointerEventKind.down {
@@ -1130,7 +1266,7 @@ in-out property <bool> response-large: false;
                                     }
 
                                     // Requests nest under the open collection (file-tree style).
-                                    if root.expanded-collection-id == collection.id && root.saved-requests.length == 0 && !(root.active-request-id <= 0 && root.selected-collection-id == collection.id && root.request-search == "") : VerticalLayout {
+                                    if root.expanded-collection-id == collection.id && root.saved-requests.length == 0 && !(root.active-request-id <= 0 && root.active-request-tab-index >= 0 && root.selected-collection-id == collection.id && root.request-search == "") : VerticalLayout {
                                         padding-left: 10px;
                                         padding-right: 8px;
                                         padding-top: 4px;
@@ -1204,7 +1340,7 @@ in-out property <bool> response-large: false;
                                             }
                                         }
 
-                                        if root.active-request-id <= 0 && root.selected-collection-id == collection.id && root.request-search == "" : Rectangle {
+                                        if root.active-request-id <= 0 && root.active-request-tab-index >= 0 && root.selected-collection-id == collection.id && root.request-search == "" : Rectangle {
                                             height: 36px;
                                             border-radius: 8px;
                                             background: Theme.active;
@@ -1485,12 +1621,7 @@ in-out property <bool> response-large: false;
                                         open-touch := TouchArea {
                                             mouse-cursor: pointer;
                                             clicked => {
-                                                root.selected-collection-id = collection.id;
-                                                root.expanded-collection-id = collection.id;
-                                                root.selected-collection-name = collection.name;
-                                                root.active-view = "Request";
-                                                root.load-requests(collection.id);
-                                                root.load-collection-variables(collection.id);
+                                                root.open-collection-request(collection.id, collection.name);
                                             }
                                         }
 
@@ -1523,12 +1654,7 @@ in-out property <bool> response-large: false;
                                                 text: "Open";
                                                 kind: collection.id == root.selected-collection-id ? "suggested" : "default";
                                                 clicked => {
-                                                    root.selected-collection-id = collection.id;
-                                                    root.expanded-collection-id = collection.id;
-                                                    root.selected-collection-name = collection.name;
-                                                    root.active-view = "Request";
-                                                    root.load-requests(collection.id);
-                                                    root.load-collection-variables(collection.id);
+                                                    root.open-collection-request(collection.id, collection.name);
                                                 }
                                             }
                                         }
@@ -1863,7 +1989,7 @@ in-out property <bool> response-large: false;
                         width: parent.width;
                         height: parent.height;
                         visible: root.active-view == "Request";
-                        if root.selected-collection-id <= 0 && root.active-request-id <= 0 && root.active-request-tab-index < 0 : Rectangle {
+                        if root.active-request-id <= 0 && root.active-request-tab-index < 0 : Rectangle {
                             x: 0px;
                             y: 0px;
                             width: parent.width;
@@ -1886,14 +2012,16 @@ in-out property <bool> response-large: false;
                                 }
 
                                 Text {
-                                    text: "Your workspace starts here";
+                                    text: root.selected-collection-id > 0 ? "Choose a saved request" : "Your workspace starts here";
                                     color: Theme.fg;
                                     font-size: 26px;
                                     font-weight: 700;
                                     horizontal-alignment: center;
                                 }
                                 Text {
-                                    text: root.collections.length == 0
+                                    text: root.selected-collection-id > 0
+                                        ? "Select a saved request from the sidebar, or create a new request."
+                                        : root.collections.length == 0
                                         ? "Create a collection to keep your API requests together. Then add a request and start testing."
                                         : "Choose a collection from the sidebar to open a request, or create a new collection to get started.";
                                     color: Theme.fg-2;
@@ -1908,17 +2036,19 @@ in-out property <bool> response-large: false;
                                     Rectangle { width: 1px; height: 1px; horizontal-stretch: 1; }
                                     Btn {
                                         kind: "pill";
-                                        text: root.collections.length == 0 ? "Create a collection" : "Browse collections";
-                                        icon: root.collections.length == 0 ? Icons.plus : Icons.folder;
+                                        text: root.selected-collection-id > 0 ? "New request" : root.collections.length == 0 ? "Create a collection" : "Browse collections";
+                                        icon: root.selected-collection-id > 0 ? Icons.plus : root.collections.length == 0 ? Icons.plus : Icons.folder;
                                         clicked => {
-                                            if root.collections.length == 0 {
+                                            if root.selected-collection-id > 0 {
+                                                root.start-new-request(root.selected-collection-id, root.selected-collection-name);
+                                            } else if root.collections.length == 0 {
                                                 root.begin-new-collection();
                                             } else {
                                                 root.open-view("Collections");
                                             }
                                         }
                                     }
-                                    if root.collections.length > 0 : Btn {
+                                    if root.collections.length > 0 && root.selected-collection-id <= 0 : Btn {
                                         kind: "flat";
                                         text: "Create collection";
                                         icon: Icons.plus;
@@ -1936,7 +2066,7 @@ in-out property <bool> response-large: false;
 
                         // URL bar
                         Rectangle {
-                            visible: root.selected-collection-id > 0 || root.active-request-id > 0 || root.active-request-tab-index >= 0;
+                            visible: root.active-request-id > 0 || root.active-request-tab-index >= 0;
                             height: 54px;
                             background: Theme.card-bg;
                             border-width: 1px;
@@ -1979,7 +2109,7 @@ in-out property <bool> response-large: false;
 
                         // Request editor above the response with a draggable horizontal divider.
                         split-area := Rectangle {
-                            visible: root.selected-collection-id > 0 || root.active-request-id > 0 || root.active-request-tab-index >= 0;
+                            visible: root.active-request-id > 0 || root.active-request-tab-index >= 0;
                             vertical-stretch: 1;
                             // Request pane
                             Rectangle {
@@ -2239,19 +2369,67 @@ in-out property <bool> response-large: false;
 
                                         if root.response-state == "idle" || root.response-state == "loading" : VerticalLayout {
                                             alignment: center;
+                                            cross-axis-alignment: center;
                                             spacing: 8px;
-                                            Rectangle {
+                                            if root.response-state == "loading" : Rectangle {
+                                                width: 56px;
+                                                height: 56px;
+                                                background: transparent;
+                                                Rectangle {
+                                                    x: 6px;
+                                                    y: 6px;
+                                                    width: 44px;
+                                                    height: 44px;
+                                                    border-radius: 22px;
+                                                    border-width: 1px;
+                                                    border-color: Theme.accent.with-alpha(0.24);
+                                                    background: Theme.accent.with-alpha(0.035);
+                                                }
+                                                Rectangle {
+                                                    x: 25px + 20px * sin(360deg * animation-tick() / 1.35s);
+                                                    y: 25px - 20px * cos(360deg * animation-tick() / 1.35s);
+                                                    width: 6px;
+                                                    height: 6px;
+                                                    border-radius: 3px;
+                                                    background: Theme.accent;
+                                                }
+                                                Rectangle {
+                                                    x: 25px + 20px * sin(360deg * animation-tick() / 1.35s + 120deg);
+                                                    y: 25px - 20px * cos(360deg * animation-tick() / 1.35s + 120deg);
+                                                    width: 6px;
+                                                    height: 6px;
+                                                    border-radius: 3px;
+                                                    background: Theme.accent.with-alpha(0.72);
+                                                }
+                                                Rectangle {
+                                                    x: 25px + 20px * sin(360deg * animation-tick() / 1.35s + 240deg);
+                                                    y: 25px - 20px * cos(360deg * animation-tick() / 1.35s + 240deg);
+                                                    width: 6px;
+                                                    height: 6px;
+                                                    border-radius: 3px;
+                                                    background: Theme.accent.with-alpha(0.44);
+                                                }
+                                                Rectangle {
+                                                    x: 23px;
+                                                    y: 23px;
+                                                    width: 10px;
+                                                    height: 10px;
+                                                    border-radius: 5px;
+                                                    background: Theme.accent.with-alpha(0.18 + 0.22 * abs(sin(180deg * animation-tick() / 1s)));
+                                                }
+                                            }
+                                            if root.response-state == "idle" : Rectangle {
                                                 height: 64px;
                                                 Image {
                                                     source: Icons.braces;
                                                     width: 64px;
                                                     height: 64px;
                                                     x: (parent.width - self.width) / 2;
-                                                    colorize: root.response-state == "loading" ? Theme.accent-text : Theme.fg.with-alpha(0.45);
+                                                    colorize: Theme.fg.with-alpha(0.45);
                                                 }
                                             }
                                             Text {
-                                                text: root.response-state == "loading" ? "Waiting for response"
+                                                text: root.response-state == "loading" ? "Sending request…"
                                                     : root.active-request-id <= 0 && root.selected-collection-id > 0 ? "Your new request is ready"
                                                     : "Your response will appear here";
                                                 color: Theme.fg;
@@ -2260,7 +2438,7 @@ in-out property <bool> response-large: false;
                                                 horizontal-alignment: center;
                                             }
                                             Text {
-                                                text: root.response-state == "loading" ? "The request is in progress."
+                                                text: root.response-state == "loading" ? "Waiting for the server response. You can switch tabs while it continues."
                                                     : root.active-request-id <= 0 && root.selected-collection-id > 0 ? root.request-url == "" ? "Enter a URL above to start. Save it or press Ctrl+Enter to send and save." : "This is an unsaved draft. Save it, or press Ctrl+Enter to send and save."
                                                     : "Press Ctrl+Enter to send the request.";
                                                 color: Theme.fg-2;

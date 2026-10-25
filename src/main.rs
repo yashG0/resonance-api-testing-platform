@@ -3,6 +3,7 @@ mod http;
 mod storage;
 
 use std::{
+    collections::HashSet,
     future::Future,
     process::Command,
     sync::{Arc, Mutex},
@@ -35,6 +36,15 @@ impl<T: Send + 'static> JoinHandleThen<T> for tokio::task::JoinHandle<T> {
             continuation(self.await).await;
         });
     }
+}
+
+fn request_tab_index(app: &AppWindow, key: i32) -> Option<i32> {
+    let tabs = app.get_request_tabs();
+    (0..tabs.row_count()).find_map(|index| {
+        tabs.row_data(index)
+            .filter(|tab| tab.key == key)
+            .map(|_| index as i32)
+    })
 }
 
 fn copy_text_to_clipboard(
@@ -674,6 +684,35 @@ async fn main() -> Result<(), slint::PlatformError> {
         }
     });
 
+    app.on_suggest_request_name({
+        let app_weak = app_weak.clone();
+        let store = Arc::clone(&store);
+        move |collection_id| {
+            let mut names = HashSet::new();
+            if let Ok(requests) = store.list_for_collection(collection_id as i64) {
+                names.extend(requests.into_iter().map(|request| request.name));
+            }
+            if let Some(ui) = app_weak.upgrade() {
+                let tabs = ui.get_request_tabs();
+                for index in 0..tabs.row_count() {
+                    if let Some(tab) = tabs.row_data(index) {
+                        if tab.collection_id == collection_id {
+                            names.insert(tab.name.to_string());
+                        }
+                    }
+                }
+            }
+            let mut suffix = 1_u64;
+            loop {
+                let candidate = format!("New Request {suffix}");
+                if !names.contains(&candidate) {
+                    return candidate.into();
+                }
+                suffix += 1;
+            }
+        }
+    });
+
     // Load the selected collection's variables off the UI thread, then send the
     // fully resolved request without blocking Slint's event loop.
     app.on_send_request({
@@ -692,7 +731,8 @@ async fn main() -> Result<(), slint::PlatformError> {
               auth_secret,
               collection_id,
               request_id,
-              name| {
+              name,
+              tab_key| {
             let app_handle = app_weak.clone();
             let client = Arc::clone(&client);
             let store = Arc::clone(&store);
@@ -707,6 +747,7 @@ async fn main() -> Result<(), slint::PlatformError> {
             let auth_secret = auth_secret.to_string();
             let name = name.to_string();
             let collection_id = collection_id as i64;
+            let tab_key = tab_key;
 
             tokio::spawn(async move {
                 // Save first so each request is available in its collection as soon
@@ -728,20 +769,15 @@ async fn main() -> Result<(), slint::PlatformError> {
                 let save_result = tokio::task::spawn_blocking(move || {
                     // New drafts start with the same friendly title. Give each
                     // one a collection-local name before inserting it.
-                    if request_id <= 0 && request.name.trim() == "New Request" {
+                    if request_id <= 0 {
                         let existing = save_store.list_for_collection(collection_id)?;
-                        let mut suffix = 1_u64;
-                        loop {
-                            let candidate = if suffix == 1 {
-                                "New Request".to_owned()
-                            } else {
-                                format!("New Request {suffix}")
-                            };
-                            if !existing.iter().any(|item| item.name == candidate) {
-                                request.name = candidate;
-                                break;
+                        if request.name.trim().starts_with("New Request ") {
+                            let mut suffix =
+                                request.name.trim()[12..].parse::<u64>().unwrap_or(1).max(1);
+                            while existing.iter().any(|item| item.name == request.name) {
+                                suffix += 1;
+                                request.name = format!("New Request {suffix}");
                             }
-                            suffix += 1;
                         }
                     }
                     let saved_name = request.name.clone();
@@ -763,12 +799,23 @@ async fn main() -> Result<(), slint::PlatformError> {
                         let message = format!("Auto-save failed; request was not sent: {error}");
                         let _ = slint::invoke_from_event_loop(move || {
                             if let Some(ui) = app_handle.upgrade() {
-                                ui.set_response_status("Auto-save failed".into());
-                                ui.set_response_state("error".into());
-                                ui.set_response_format("Text".into());
-                                ui.set_response_body(message.into());
-                                ui.set_response_time("---".into());
-                                ui.set_is_loading(false);
+                                let Some(tab_index) = request_tab_index(&ui, tab_key) else {
+                                    return;
+                                };
+                                ui.invoke_set_request_tab_response(
+                                    tab_index,
+                                    tab_key,
+                                    "Auto-save failed".into(),
+                                    message.into(),
+                                    "---".into(),
+                                    "error".into(),
+                                    "Text".into(),
+                                    "".into(),
+                                    "".into(),
+                                    false,
+                                    ModelRc::default(),
+                                    ModelRc::default(),
+                                );
                             }
                         });
                         return;
@@ -777,12 +824,23 @@ async fn main() -> Result<(), slint::PlatformError> {
                         let message = format!("Auto-save failed; request was not sent: {error}");
                         let _ = slint::invoke_from_event_loop(move || {
                             if let Some(ui) = app_handle.upgrade() {
-                                ui.set_response_status("Auto-save failed".into());
-                                ui.set_response_state("error".into());
-                                ui.set_response_format("Text".into());
-                                ui.set_response_body(message.into());
-                                ui.set_response_time("---".into());
-                                ui.set_is_loading(false);
+                                let Some(tab_index) = request_tab_index(&ui, tab_key) else {
+                                    return;
+                                };
+                                ui.invoke_set_request_tab_response(
+                                    tab_index,
+                                    tab_key,
+                                    "Auto-save failed".into(),
+                                    message.into(),
+                                    "---".into(),
+                                    "error".into(),
+                                    "Text".into(),
+                                    "".into(),
+                                    "".into(),
+                                    false,
+                                    ModelRc::default(),
+                                    ModelRc::default(),
+                                );
                             }
                         });
                         return;
@@ -790,8 +848,6 @@ async fn main() -> Result<(), slint::PlatformError> {
                 };
 
                 let list_handle = app_handle.clone();
-                let visible_url = url.clone();
-                let visible_name = name.clone();
                 let persisted_name = saved_name.clone();
                 let _ = slint::invoke_from_event_loop(move || {
                     if let Some(ui) = list_handle.upgrade() {
@@ -800,14 +856,14 @@ async fn main() -> Result<(), slint::PlatformError> {
                                 requests,
                                 ui.get_request_search().as_str(),
                             ));
-                            if ui.get_request_url().as_str() == visible_url
-                                && ui.get_active_request().as_str() == visible_name
-                            {
-                                ui.set_active_request_id(saved_id as i32);
-                                ui.set_active_request(persisted_name.clone().into());
-                                ui.set_request_name_draft(persisted_name.into());
-                                ui.invoke_store_active_request_tab();
-                            }
+                        }
+                        if let Some(tab_index) = request_tab_index(&ui, tab_key) {
+                            ui.invoke_set_request_tab_identity(
+                                tab_index,
+                                tab_key,
+                                saved_id as i32,
+                                persisted_name.into(),
+                            );
                         }
                     }
                 });
@@ -855,39 +911,36 @@ async fn main() -> Result<(), slint::PlatformError> {
                         }
                     });
                 }
-                let response_state = result
-                    .status
-                    .split_whitespace()
-                    .next()
-                    .and_then(|code| code.parse::<u16>().ok())
-                    .map(|code| {
-                        if (200..400).contains(&code) {
-                            "success"
-                        } else {
-                            "http-error"
-                        }
-                    })
-                    .unwrap_or("error");
+                let response_state = result.state.clone();
+                let elapsed = format!("{:.2} ms", result.elapsed.as_secs_f64() * 1000.0);
+                let response_status = result.status.clone();
+                let response_body = result.body.clone();
+                let response_format = result.format.clone();
+                let response_headers = result.headers.clone();
+                let response_cookies = result.cookies.clone();
+                let response_large = result.body.len() > 256 * 1024;
 
                 let _ = slint::invoke_from_event_loop(move || {
                     if let Some(ui) = app_handle.upgrade() {
-                        if ui.get_expanded_collection_id() as i64 == collection_id
-                            && ui.get_active_request_id() as i64 == saved_id
-                        {
-                            ui.set_response_large(result.body.len() > 256 * 1024);
-                            ui.set_response_status(result.status.into());
-                            ui.set_response_state(response_state.into());
-                            ui.set_response_format(result.format.into());
-                            ui.set_response_header_items(to_response_header_model(&result.headers));
-                            ui.set_response_cookie_items(to_response_cookie_model(&result.cookies));
-                            ui.set_response_body(result.body.into());
-                            ui.set_response_headers(result.headers.into());
-                            ui.set_response_cookies(result.cookies.into());
-                            ui.set_response_time(
-                                format!("{:.2} ms", result.elapsed.as_secs_f64() * 1000.0).into(),
-                            );
-                            ui.set_is_loading(false);
-                        }
+                        let Some(tab_index) = request_tab_index(&ui, tab_key) else {
+                            return;
+                        };
+                        let header_items = to_response_header_model(&response_headers);
+                        let cookie_items = to_response_cookie_model(&response_cookies);
+                        ui.invoke_set_request_tab_response(
+                            tab_index,
+                            tab_key,
+                            response_status.into(),
+                            response_body.into(),
+                            elapsed.into(),
+                            response_state.into(),
+                            response_format.into(),
+                            response_headers.into(),
+                            response_cookies.into(),
+                            response_large,
+                            header_items,
+                            cookie_items,
+                        );
                     }
                 });
             });
@@ -1048,10 +1101,11 @@ async fn main() -> Result<(), slint::PlatformError> {
               body_format,
               auth_type,
               auth_value,
-              auth_secret| {
+              auth_secret,
+              tab_key| {
             let app_handle = app_weak.clone();
             let store = Arc::clone(&store);
-            let request = NewRequest {
+            let mut request = NewRequest {
                 collection_id: collection_id as i64,
                 name: name.to_string(),
                 method: method.to_string(),
@@ -1064,8 +1118,19 @@ async fn main() -> Result<(), slint::PlatformError> {
                 auth_value: auth_value.to_string(),
                 auth_secret: auth_secret.to_string(),
             };
+            let tab_key = tab_key;
 
             tokio::task::spawn_blocking(move || {
+                if id <= 0 && request.name.trim().starts_with("New Request ") {
+                    if let Ok(existing) = store.list_for_collection(collection_id as i64) {
+                        let mut suffix =
+                            request.name.trim()[12..].parse::<u64>().unwrap_or(1).max(1);
+                        while existing.iter().any(|item| item.name == request.name) {
+                            suffix += 1;
+                            request.name = format!("New Request {suffix}");
+                        }
+                    }
+                }
                 let saved_name = request.name.clone();
                 let result = if id > 0 {
                     store
@@ -1080,9 +1145,22 @@ async fn main() -> Result<(), slint::PlatformError> {
                     if let Some(ui) = app_handle.upgrade() {
                         match result {
                             Ok(saved_id) if saved_id > 0 => {
-                                ui.set_active_request_id(saved_id as i32);
-                                ui.invoke_store_active_request_tab();
-                                ui.set_response_status(format!("Saved: {saved_name}").into());
+                                if ui.get_active_request_tab_key() == tab_key {
+                                    ui.invoke_store_active_request_tab();
+                                }
+                                if let Some(tab_index) = request_tab_index(&ui, tab_key) {
+                                    ui.invoke_set_request_tab_identity(
+                                        tab_index,
+                                        tab_key,
+                                        saved_id as i32,
+                                        saved_name.clone().into(),
+                                    );
+                                    if ui.get_active_request_tab_key() == tab_key {
+                                        ui.set_response_status(
+                                            format!("Saved: {saved_name}").into(),
+                                        );
+                                    }
+                                }
                             }
                             Ok(_) => ui.set_response_status(
                                 "Save failed: request no longer exists".into(),
@@ -1120,7 +1198,6 @@ async fn main() -> Result<(), slint::PlatformError> {
                                         .find(|item| {
                                             item.id == ui.get_selected_collection_id() as i64
                                         })
-                                        .or_else(|| collections.first())
                                         .cloned();
                                     ui.set_collections(to_collection_model(collections));
                                     if let Some(selected) = selected {
@@ -1304,8 +1381,8 @@ async fn main() -> Result<(), slint::PlatformError> {
                                 ui.set_selected_collection_name(created.name.into());
                                 ui.set_active_view("Request".into());
                                 ui.set_active_request_id(-1);
-                                ui.set_active_request("New Request".into());
-                                ui.set_request_name_draft("New Request".into());
+                                ui.set_active_request("".into());
+                                ui.set_request_name_draft("".into());
                                 ui.set_editing_request_name(false);
                                 ui.set_is_loading(false);
                                 ui.set_active_method("GET".into());
@@ -1435,7 +1512,7 @@ async fn main() -> Result<(), slint::PlatformError> {
                                         ui.set_selected_collection_name(selected_name.into());
                                     }
                                     ui.set_active_request_id(-1);
-                                    ui.set_active_request("New Request".into());
+                                    ui.set_active_request("".into());
                                     ui.set_editing_request_name(false);
                                     ui.set_active_method("GET".into());
                                     ui.set_request_url("".into());
@@ -1672,7 +1749,7 @@ async fn main() -> Result<(), slint::PlatformError> {
                             Ok((Ok(true), requests)) => {
                                 if ui.get_active_request_id() == id {
                                     ui.set_active_request_id(-1);
-                                    ui.set_active_request("New Request".into());
+                                    ui.set_active_request("".into());
                                     ui.set_editing_request_name(false);
                                     ui.set_active_method("GET".into());
                                     ui.set_request_url("".into());
@@ -1711,6 +1788,47 @@ async fn main() -> Result<(), slint::PlatformError> {
                             }
                             Err(error) => {
                                 ui.set_response_status(format!("Delete failed: {error}").into())
+                            }
+                        }
+                    }
+                });
+            });
+        }
+    });
+
+    app.on_open_latest_request({
+        let app_weak = app_weak.clone();
+        let store = Arc::clone(&store);
+        move |collection_id| {
+            let app_handle = app_weak.clone();
+            let store = Arc::clone(&store);
+            tokio::task::spawn_blocking(move || {
+                store
+                    .list_for_collection(collection_id as i64)
+                    .map(|requests| requests.into_iter().max_by_key(|request| request.id))
+            })
+            .then(move |result| async move {
+                let _ = slint::invoke_from_event_loop(move || {
+                    if let Some(ui) = app_handle.upgrade() {
+                        if ui.get_selected_collection_id() != collection_id {
+                            return;
+                        }
+                        match result {
+                            Ok(Ok(Some(request))) => {
+                                ui.invoke_select_request(request.id as i32);
+                            }
+                            Ok(Ok(None)) => ui.invoke_show_empty_collection(),
+                            Ok(Err(error)) => {
+                                ui.invoke_show_empty_collection();
+                                ui.set_variables_message(
+                                    format!("Could not open the latest request: {error}").into(),
+                                );
+                            }
+                            Err(error) => {
+                                ui.invoke_show_empty_collection();
+                                ui.set_variables_message(
+                                    format!("Could not open the latest request: {error}").into(),
+                                );
                             }
                         }
                     }
