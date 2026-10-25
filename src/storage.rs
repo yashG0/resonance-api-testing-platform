@@ -222,15 +222,42 @@ impl RequestStore {
         connection.execute_batch(
             "CREATE INDEX IF NOT EXISTS idx_saved_requests_collection ON saved_requests(collection_id);",
         )?;
+        // Public API is the only built-in collection. Older versions also
+        // created a default "My Backend" collection; merge its contents into
+        // Public API so upgrading does not discard saved requests or variables.
         connection.execute(
-            "INSERT OR IGNORE INTO collections (name) VALUES (?1), (?2)",
-            params!["Public API", "My Backend"],
+            "INSERT OR IGNORE INTO collections (name) VALUES (?1)",
+            ["Public API"],
         )?;
         let default_id = connection.query_row(
-            "SELECT id FROM collections ORDER BY id ASC LIMIT 1",
-            [],
+            "SELECT id FROM collections WHERE name = ?1 COLLATE NOCASE",
+            ["Public API"],
             |row| row.get::<_, i64>(0),
         )?;
+
+        let legacy_default_id = connection
+            .query_row(
+                "SELECT id FROM collections WHERE name = ?1 COLLATE NOCASE",
+                ["My Backend"],
+                |row| row.get::<_, i64>(0),
+            )
+            .optional()?;
+        if let Some(legacy_id) = legacy_default_id {
+            let transaction = connection.transaction()?;
+            transaction.execute(
+                "UPDATE saved_requests SET collection_id = ?1 WHERE collection_id = ?2",
+                params![default_id, legacy_id],
+            )?;
+            // Keep existing Public API values when both collections define the
+            // same variable; otherwise carry the legacy value forward.
+            transaction.execute(
+                "INSERT OR IGNORE INTO collection_variables (collection_id, key, value)
+                 SELECT ?1, key, value FROM collection_variables WHERE collection_id = ?2",
+                params![default_id, legacy_id],
+            )?;
+            transaction.execute("DELETE FROM collections WHERE id = ?1", [legacy_id])?;
+            transaction.commit()?;
+        }
         connection.execute(
             "UPDATE saved_requests SET collection_id = ?1 WHERE collection_id IS NULL",
             [default_id],
@@ -1046,8 +1073,9 @@ mod tests {
         let temp = tempfile::tempdir().expect("temporary directory");
         let store = RequestStore::open(temp.path().join("test.sqlite3")).expect("open store");
         let initial_collections = store.list_collections().expect("collections");
+        assert_eq!(initial_collections.len(), 1);
+        assert_eq!(initial_collections[0].name, "Public API");
         let default = initial_collections[0].clone();
-        let last_seeded = initial_collections[1].clone();
         let second = store
             .create_collection("Staging")
             .expect("create collection");
@@ -1090,9 +1118,12 @@ mod tests {
             store.list_collections().expect("seeded collections").len(),
             initial_collections.len()
         );
+        let only_collection = store
+            .create_collection("Only Collection")
+            .expect("create final collection");
         assert!(store.delete_collection(default.id).expect("delete default"));
         assert!(matches!(
-            store.delete_collection(last_seeded.id),
+            store.delete_collection(only_collection.id),
             Err(StoreError::Validation(_))
         ));
     }

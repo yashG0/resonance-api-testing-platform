@@ -1660,6 +1660,12 @@ async fn main() -> Result<(), slint::PlatformError> {
                                         .find(|item| {
                                             item.id == ui.get_selected_collection_id() as i64
                                         })
+                                        .or_else(|| {
+                                            collections.iter().find(|item| {
+                                                item.name.eq_ignore_ascii_case("Public API")
+                                            })
+                                        })
+                                        .or_else(|| collections.first())
                                         .cloned();
                                     ui.set_collections(to_collection_model(collections));
                                     if let Some(selected) = selected {
