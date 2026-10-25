@@ -1,59 +1,33 @@
-# Resonance v1.0.0
+# Resonance v1.1.0
 
-**Release status: Preparation — publish only after release validation is complete.**
-
-Resonance v1.0.0 is intended to be the first stable release of the native desktop API testing client.
+Resonance v1.1.0 adds a more complete response-inspection workflow and improves responsiveness while requests are processed.
 
 ## Highlights
 
-- Native desktop interface built with Rust and Slint.
-- HTTP request configuration and response inspection.
-- Request collections, environment variables, and history.
-- Local SQLite storage.
-- Operating-system credential-store integration.
-- Light and dark themes.
+- Expandable, syntax-colored JSON Tree view, alongside Pretty and Raw views.
+- Pretty is selected by default after a response arrives.
+- HTML, XML, JSON, and other textual response formats are detected and displayed appropriately.
+- Slow requests show actionable timeout and connection errors, with an animated in-flight state.
+- Request tabs preserve their response bodies when switching between requests.
+- Opening a collection restores its most recently saved request.
+- New request names increment automatically, and fresh request editors start empty.
+- Response formatting and history updates run outside the UI thread; expanded JSON trees are capped to keep large responses responsive.
 
-## Downloads
-
-Release artifacts will be listed below once their builds and validation are complete.
+## Downloads and installation
 
 | Platform | Artifact |
 |---|---|
-| Linux x86_64 | Linux archive or package |
-| Windows x86_64 | Windows ZIP containing the executable |
-| macOS | DMG or ZIP for each supported architecture |
+| Linux x86_64 | `resonance-1.1.0-linux-x86_64.tar.gz` |
+| Windows x86_64 | `resonance-1.1.0-windows-x86_64.zip` |
+| macOS Intel | `resonance-1.1.0-macos-x86_64.zip` |
+| macOS Apple Silicon | `resonance-1.1.0-macos-aarch64.zip` |
 
-Download: https://github.com/yashG0/resonance-api-testing-platform/releases
+Linux requires the system X11 or Wayland libraries used by Slint. On Debian/Ubuntu, install `libx11-xcb1`, `libxinput1`, `libxcursor1`, `libxkbcommon-x11-0`, `libx11-6`, and the corresponding Wayland libraries if needed.
 
-## Installation
+The macOS application bundles are unsigned and not notarized. macOS may require using Finder's **Open** command once to approve the downloaded app.
 
-### Linux
+SHA-256 checksums are included as `SHA256SUMS.txt` in the release.
 
-Download the Linux artifact, extract it if necessary, and follow the included instructions. Required system libraries may vary by distribution.
+## Validation notes
 
-### Windows
-
-Download and extract the Windows package, then run the included executable. Any required runtime dependencies will be documented with the artifact.
-
-### macOS
-
-Download the package matching your Mac's architecture. Installation, signing, notarization, and first-launch instructions will be documented with the published build.
-
-## Validation
-
-Before this release is marked stable, validate:
-
-- Formatting, compilation, and automated tests.
-- Optimized builds for all supported targets.
-- Application launch and basic request workflows on each operating system.
-- Data persistence and credential-store behavior.
-- Packaged artifacts on clean environments.
-- SHA-256 checksums and installation instructions.
-
-## Known limitations
-
-Platform-specific limitations and unverified behavior will be documented here before publication.
-
-## Checksums
-
-SHA-256 checksums will be published alongside the final release artifacts.
+Linux x86_64 is built and checked locally. Windows and macOS artifacts are built on GitHub-hosted runners; the binaries have not been interactively exercised on those operating systems from this Linux environment.

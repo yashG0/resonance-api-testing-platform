@@ -1,5 +1,4 @@
-
-name: Release
+name: Build and publish release
 
 on:
   push:
@@ -7,118 +6,154 @@ on:
       - "v*"
 
 permissions:
-  contents: write
-
-env:
-  CARGO_TERM_COLOR: always
+  contents: read
 
 jobs:
+  validate:
+    name: Validate release source
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes build-essential pkg-config \
+            libx11-xcb-dev xinput libxcursor-dev libxkbcommon-x11-dev \
+            libx11-dev libxcb1-dev libxkbcommon-dev libwayland-dev \
+            libegl1-mesa-dev libfontconfig1-dev libfreetype6-dev
+      - name: Check formatting
+        run: cargo fmt --check
+      - name: Run tests
+        run: cargo test --locked
+
   build:
     name: Build ${{ matrix.name }}
-    runs-on: ${{ matrix.os }}
+    needs: validate
     strategy:
       fail-fast: false
       matrix:
         include:
-          - name: linux-x86_64
-            os: ubuntu-24.04
+          - name: Linux x86_64
+            runner: ubuntu-24.04
             target: x86_64-unknown-linux-gnu
-            binary: resonance
-          - name: windows-x86_64
-            os: windows-2025
+            platform: linux
+          - name: Windows x86_64
+            runner: windows-latest
             target: x86_64-pc-windows-msvc
-            binary: resonance.exe
-          - name: macos-aarch64
-            os: macos-15
+            platform: windows
+          - name: macOS Intel
+            runner: macos-15-intel
+            target: x86_64-apple-darwin
+            platform: macos
+            arch: x86_64
+          - name: macOS Apple Silicon
+            runner: macos-latest
             target: aarch64-apple-darwin
-            binary: resonance
-
+            platform: macos
+            arch: aarch64
+    runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
 
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: ${{ matrix.target }}
-
-      - uses: Swatinem/rust-cache@v2
-
-      - name: Install Linux dependencies
-        if: runner.os == 'Linux'
+      - name: Install Linux build dependencies
+        if: matrix.platform == 'linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y \
-            libxkbcommon-dev libxkbcommon-x11-0 \
-            libxcb-shape0-dev libxcb-xfixes0-dev \
-            libfontconfig1-dev libfreetype-dev libegl1-mesa-dev
+          sudo apt-get install --yes build-essential pkg-config \
+            libx11-xcb-dev xinput libxcursor-dev libxkbcommon-x11-dev \
+            libx11-dev libxcb1-dev libxkbcommon-dev libwayland-dev \
+            libegl1-mesa-dev libfontconfig1-dev libfreetype6-dev
 
-      - name: Check formatting
-        run: cargo fmt --check
+      - name: Add Rust target
+        shell: bash
+        run: rustup target add "${{ matrix.target }}"
 
-      - name: Test
-        run: cargo test --locked
+      - name: Build optimized executable
+        shell: bash
+        run: cargo build --locked --release --target "${{ matrix.target }}"
 
-      - name: Build
-        run: cargo build --release --locked --target ${{ matrix.target }}
-
-      - name: Package Linux
-        if: runner.os == 'Linux'
+      - name: Package Linux archive
+        if: matrix.platform == 'linux'
         shell: bash
         run: |
-          set -euo pipefail
-          mkdir -p dist/resonance-${GITHUB_REF_NAME}-linux-x86_64
-          cp target/${{ matrix.target }}/release/${{ matrix.binary }} dist/resonance-${GITHUB_REF_NAME}-linux-x86_64/
-          cp README.md RELEASE_NOTES.md LICENSE dist/resonance-${GITHUB_REF_NAME}-linux-x86_64/
-          tar -czf resonance-${GITHUB_REF_NAME}-linux-x86_64.tar.gz -C dist resonance-${GITHUB_REF_NAME}-linux-x86_64
-          sha256sum resonance-${GITHUB_REF_NAME}-linux-x86_64.tar.gz > resonance-${GITHUB_REF_NAME}-linux-x86_64.tar.gz.sha256
+          version="${GITHUB_REF_NAME#v}"
+          staging="package/resonance-${version}-linux-x86_64"
+          mkdir -p "$staging"
+          install -m 755 "target/${{ matrix.target }}/release/resonance" "$staging/resonance"
+          cp README.md LICENSE "$staging/"
+          mkdir -p dist
+          tar -czf "dist/resonance-${version}-linux-x86_64.tar.gz" -C package "$(basename "$staging")"
 
-      - name: Package macOS
-        if: runner.os == 'macOS'
-        shell: bash
-        run: |
-          set -euo pipefail
-          mkdir -p dist/resonance-${GITHUB_REF_NAME}-macos-aarch64
-          cp target/${{ matrix.target }}/release/${{ matrix.binary }} dist/resonance-${GITHUB_REF_NAME}-macos-aarch64/
-          cp README.md RELEASE_NOTES.md LICENSE dist/resonance-${GITHUB_REF_NAME}-macos-aarch64/
-          tar -czf resonance-${GITHUB_REF_NAME}-macos-aarch64.tar.gz -C dist resonance-${GITHUB_REF_NAME}-macos-aarch64
-          shasum -a 256 resonance-${GITHUB_REF_NAME}-macos-aarch64.tar.gz > resonance-${GITHUB_REF_NAME}-macos-aarch64.tar.gz.sha256
-
-      - name: Package Windows
-        if: runner.os == 'Windows'
+      - name: Package Windows archive
+        if: matrix.platform == 'windows'
         shell: pwsh
         run: |
-          $ErrorActionPreference = "Stop"
-          $name = "resonance-$env:GITHUB_REF_NAME-windows-x86_64"
-          New-Item -ItemType Directory -Force -Path "dist/$name" | Out-Null
-          Copy-Item "target/${{ matrix.target }}/release/${{ matrix.binary }}" "dist/$name/"
-          Copy-Item README.md, RELEASE_NOTES.md, LICENSE "dist/$name/"
-          Compress-Archive -Path "dist/$name/*" -DestinationPath "$name.zip"
-          $hash = (Get-FileHash "$name.zip" -Algorithm SHA256).Hash.ToLower()
-          "$hash  $name.zip" | Out-File "$name.zip.sha256" -Encoding ascii
+          $version = "${{ github.ref_name }}".TrimStart('v')
+          $staging = "$env:RUNNER_TEMP/resonance-$version-windows-x86_64"
+          New-Item -ItemType Directory -Force -Path $staging | Out-Null
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          Copy-Item "target/${{ matrix.target }}/release/resonance.exe" "$staging/resonance.exe"
+          Copy-Item README.md, LICENSE $staging
+          Compress-Archive -Path "$staging/*" -DestinationPath "dist/resonance-$version-windows-x86_64.zip"
 
-      - name: Upload build artifacts
+      - name: Package macOS application bundle
+        if: matrix.platform == 'macos'
+        shell: bash
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          app="dist/Resonance.app"
+          mkdir -p "$app/Contents/MacOS"
+          install -m 755 "target/${{ matrix.target }}/release/resonance" "$app/Contents/MacOS/resonance"
+          cat > "$app/Contents/Info.plist" <<PLIST
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>CFBundleExecutable</key><string>resonance</string>
+            <key>CFBundleIdentifier</key><string>io.github.yashG0.resonance</string>
+            <key>CFBundleName</key><string>Resonance</string>
+            <key>CFBundlePackageType</key><string>APPL</string>
+            <key>CFBundleShortVersionString</key><string>${version}</string>
+            <key>CFBundleVersion</key><string>${version}</string>
+            <key>LSMinimumSystemVersion</key><string>11.0</string>
+            <key>NSHighResolutionCapable</key><true/>
+          </dict>
+          </plist>
+          PLIST
+          ditto -c -k --sequesterRsrc --keepParent "$app" "dist/resonance-${version}-macos-${{ matrix.arch }}.zip"
+
+      - name: Upload platform package
         uses: actions/upload-artifact@v4
         with:
-          name: release-${{ matrix.name }}
-          path: |
-            resonance-${{ github.ref_name }}-*.tar.gz
-            resonance-${{ github.ref_name }}-*.zip
-            resonance-${{ github.ref_name }}-*.sha256
+          name: release-${{ matrix.platform }}-${{ matrix.target }}
+          path: dist/resonance-*
           if-no-files-found: error
           retention-days: 7
 
   publish:
-    name: Publish GitHub Release
+    name: Publish GitHub release
     needs: build
     runs-on: ubuntu-24.04
+    permissions:
+      contents: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@v4
+
+      - name: Download all platform packages
+        uses: actions/download-artifact@v4
         with:
-          path: dist
           pattern: release-*
+          path: dist
           merge-multiple: true
 
-      - name: Publish all artifacts
-        uses: softprops/action-gh-release@v2
-        with:
-          generate_release_notes: true
-          files: dist/*
+      - name: Generate SHA-256 checksums
+        run: cd dist && sha256sum resonance-* > SHA256SUMS.txt
+
+      - name: Create release and upload packages
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/resonance-* dist/SHA256SUMS.txt \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "Resonance $GITHUB_REF_NAME" \
+            --notes-file RELEASE_NOTES.md

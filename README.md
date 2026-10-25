@@ -18,12 +18,12 @@ Resonance is a desktop application for creating, sending, and inspecting HTTP re
 
 ## Download
 
-Resonance v1.0.0 binaries will be published on the GitHub Releases page for supported platforms.
+Resonance v1.1.0 binaries are available on the GitHub Releases page for supported platforms.
 
 **Platforms**
 - Linux x86_64
 - Windows x86_64
-- macOS — supported architectures will be listed with the release artifacts.
+- macOS x86_64 (Intel) and aarch64 (Apple Silicon)
 
 Download page: [GitHub Releases](https://github.com/yashG0/resonance-api-testing-platform/releases)
 
