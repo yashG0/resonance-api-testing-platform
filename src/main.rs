@@ -19,6 +19,9 @@ use slint::{Color, ComponentHandle, Model, ModelRc, VecModel};
 
 slint::include_modules!();
 
+const MAX_STRUCTURED_VIEW_BYTES: usize = 256 * 1024;
+const MAX_VISIBLE_JSON_TREE_NODES: usize = 2_000;
+
 trait JoinHandleThen<T>: Sized {
     fn then<F, Fut>(self, continuation: F)
     where
@@ -693,8 +696,17 @@ fn tokenize_response(
         let mut column = 0usize;
         let mut first_visual_line = true;
         for token in tokens {
-            for character in token.text.chars() {
+            let mut segment_start = 0;
+            let mut segment_end = 0;
+            for (offset, character) in token.text.char_indices() {
                 if column == max_columns {
+                    if segment_end > segment_start {
+                        push_syntax_token(
+                            &mut current,
+                            &token.text[segment_start..segment_end],
+                            token.color,
+                        );
+                    }
                     append_visual_line(
                         &mut lines,
                         if first_visual_line {
@@ -706,9 +718,17 @@ fn tokenize_response(
                     );
                     first_visual_line = false;
                     column = 0;
+                    segment_start = offset;
                 }
-                push_syntax_token(&mut current, &character.to_string(), token.color);
+                segment_end = offset + character.len_utf8();
                 column += 1;
+            }
+            if segment_end > segment_start {
+                push_syntax_token(
+                    &mut current,
+                    &token.text[segment_start..segment_end],
+                    token.color,
+                );
             }
         }
         append_visual_line(
@@ -751,7 +771,12 @@ fn build_json_tree(
         expanded_paths: &HashSet<String>,
         colors: SyntaxColors,
         nodes: &mut Vec<JsonTreeNode>,
+        truncated: &mut bool,
     ) {
+        if nodes.len() >= MAX_VISIBLE_JSON_TREE_NODES {
+            *truncated = true;
+            return;
+        }
         let expanded = expanded_paths.contains(&path);
         let child_count = match value {
             serde_json::Value::Object(fields) => fields.len(),
@@ -800,7 +825,12 @@ fn build_json_tree(
                         expanded_paths,
                         colors,
                         nodes,
+                        truncated,
                     );
+                    if nodes.len() >= MAX_VISIBLE_JSON_TREE_NODES {
+                        *truncated = true;
+                        break;
+                    }
                 }
             }
             serde_json::Value::Array(items) => {
@@ -813,7 +843,12 @@ fn build_json_tree(
                         expanded_paths,
                         colors,
                         nodes,
+                        truncated,
                     );
+                    if nodes.len() >= MAX_VISIBLE_JSON_TREE_NODES {
+                        *truncated = true;
+                        break;
+                    }
                 }
             }
             _ => {}
@@ -865,6 +900,7 @@ fn build_json_tree(
         },
     };
     let mut nodes = Vec::new();
+    let mut truncated = false;
     append_node(
         &value,
         "$".into(),
@@ -873,8 +909,41 @@ fn build_json_tree(
         &expanded_paths,
         colors,
         &mut nodes,
+        &mut truncated,
     );
+    if truncated && let Some(last) = nodes.last_mut() {
+        last.key_label = "".into();
+        last.preview =
+            "Display limited to 2,000 rows; use Pretty or Raw for the full response".into();
+        last.path = "$limit".into();
+        last.has_children = false;
+        last.expanded = false;
+        last.key_color = colors.comment;
+        last.value_color = colors.comment;
+    }
     ModelRc::new(VecModel::from(nodes))
+}
+
+fn format_response_body(body: &str, format: &str) -> String {
+    if body.len() > MAX_STRUCTURED_VIEW_BYTES {
+        return String::new();
+    }
+    match format {
+        "JSON" => serde_json::from_str::<serde_json::Value>(body)
+            .ok()
+            .and_then(|value| serde_json::to_string_pretty(&value).ok())
+            .filter(|pretty| pretty != body)
+            .unwrap_or_default(),
+        "HTML" | "XML" => {
+            let formatted = crate::http::client::format_html(body);
+            if formatted == body {
+                String::new()
+            } else {
+                formatted
+            }
+        }
+        _ => String::new(),
+    }
 }
 
 #[cfg(test)]
@@ -978,6 +1047,9 @@ async fn main() -> Result<(), slint::PlatformError> {
     app.on_serialize_header_rows(|rows| serialize_key_value_rows(rows, ": ").into());
 
     app.on_format_request_body(|body, body_format| {
+        if body.as_str().len() > MAX_STRUCTURED_VIEW_BYTES {
+            return body;
+        }
         let body_str: String = body.to_string();
         let format_str: String = body_format.to_string();
         let highlighted = match format_str.as_str() {
@@ -1042,26 +1114,6 @@ async fn main() -> Result<(), slint::PlatformError> {
                 }
             }
         }
-    });
-
-    app.on_format_response_body(|body, body_format| {
-        let body_str: String = body.to_string();
-        let format_str: String = body_format.to_string();
-        let highlighted = match format_str.as_str() {
-            "JSON" => match serde_json::from_str::<serde_json::Value>(&body_str) {
-                Ok(json) => {
-                    let pretty =
-                        serde_json::to_string_pretty(&json).unwrap_or_else(|_| body_str.clone());
-                    crate::http::client::highlight_json(&pretty)
-                }
-                Err(_) => body_str.clone(),
-            },
-            "XML" | "HTML" => {
-                crate::http::client::highlight_xml(&crate::http::client::format_html(&body_str))
-            }
-            _ => body_str.clone(),
-        };
-        highlighted.into()
     });
 
     // Keep one clipboard owner alive for the application lifetime. This is
@@ -1200,6 +1252,7 @@ async fn main() -> Result<(), slint::PlatformError> {
                                     tab_key,
                                     "Auto-save failed".into(),
                                     message.into(),
+                                    "".into(),
                                     "---".into(),
                                     "error".into(),
                                     "Text".into(),
@@ -1225,6 +1278,7 @@ async fn main() -> Result<(), slint::PlatformError> {
                                     tab_key,
                                     "Auto-save failed".into(),
                                     message.into(),
+                                    "".into(),
                                     "---".into(),
                                     "error".into(),
                                     "Text".into(),
@@ -1281,7 +1335,8 @@ async fn main() -> Result<(), slint::PlatformError> {
                 let history_url = url.clone();
                 let history_name = saved_name.clone();
                 let elapsed_ms = (result.elapsed.as_secs_f64() * 1000.0) as i64;
-                let history_result = tokio::task::spawn_blocking(move || {
+                let history_handle = app_handle.clone();
+                tokio::task::spawn_blocking(move || {
                     history_store.record_history(
                         saved_id,
                         collection_id,
@@ -1293,25 +1348,38 @@ async fn main() -> Result<(), slint::PlatformError> {
                     )?;
                     history_store.list_history()
                 })
-                .await;
-                if let Ok(Ok(history)) = history_result {
-                    let history_handle = app_handle.clone();
-                    let _ = slint::invoke_from_event_loop(move || {
-                        if let Some(ui) = history_handle.upgrade() {
-                            if ui.get_active_view() == "History" {
-                                ui.set_history_items(to_history_model(history));
+                .then(move |history_result| async move {
+                    if let Ok(Ok(history)) = history_result {
+                        let _ = slint::invoke_from_event_loop(move || {
+                            if let Some(ui) = history_handle.upgrade() {
+                                if ui.get_active_view() == "History" {
+                                    ui.set_history_items(to_history_model(history));
+                                }
                             }
-                        }
-                    });
-                }
+                        });
+                    }
+                });
                 let response_state = result.state.clone();
                 let elapsed = format!("{:.2} ms", result.elapsed.as_secs_f64() * 1000.0);
                 let response_status = result.status.clone();
-                let response_body = result.body.clone();
+                let response_body = result.body;
                 let response_format = result.format.clone();
                 let response_headers = result.headers.clone();
                 let response_cookies = result.cookies.clone();
-                let response_large = result.body.len() > 256 * 1024;
+                let response_large = response_body.len() > MAX_STRUCTURED_VIEW_BYTES;
+                let response_body_formatted = if response_large
+                    || !matches!(response_format.as_str(), "JSON" | "HTML" | "XML")
+                {
+                    String::new()
+                } else {
+                    let formatted_body_source = response_body.clone();
+                    let formatted_body_format = response_format.clone();
+                    tokio::task::spawn_blocking(move || {
+                        format_response_body(&formatted_body_source, &formatted_body_format)
+                    })
+                    .await
+                    .unwrap_or_default()
+                };
 
                 let _ = slint::invoke_from_event_loop(move || {
                     if let Some(ui) = app_handle.upgrade() {
@@ -1325,6 +1393,7 @@ async fn main() -> Result<(), slint::PlatformError> {
                             tab_key,
                             response_status.into(),
                             response_body.into(),
+                            response_body_formatted.into(),
                             elapsed.into(),
                             response_state.into(),
                             response_format.into(),

@@ -49,6 +49,7 @@ export struct RequestTabItem {
     auth-secret: string,
     response-status: string,
     response-body: string,
+    response-body-formatted: string,
     response-time: string,
     response-state: string,
     response-format: string,
@@ -119,7 +120,6 @@ export component AppWindow inherits Window {
     callback delete-request(int, int);
     callback refresh-system-theme();
     callback format-request-body(string, string) -> string;
-    callback format-response-body(string, string) -> string;
     callback tokenize-response(string, string, bool, float) -> [JsonLine];
     callback build-json-tree(string, string, bool) -> [JsonTreeNode];
     callback toggle-json-tree-node(string, string);
@@ -228,13 +228,6 @@ in-out property <bool> response-large: false;
     changed dark-mode => { Theme.dark = root.dark-mode; }
     changed accent => { Theme.accent = root.accent; }
 
-    changed response-body => {
-        root.response-body-formatted = root.format-response-body(root.response-body, root.response-format);
-    }
-    changed response-format => {
-        root.response-body-formatted = root.format-response-body(root.response-body, root.response-format);
-    }
-
     changed theme-mode => {
         if (root.previous-theme-mode == "System" && root.theme-mode != "System") {
             root.system-dark-mode = Palette.color-scheme == ColorScheme.dark;
@@ -318,6 +311,7 @@ in-out property <bool> response-large: false;
             auth-secret: root.auth-secret,
             response-status: root.response-status,
             response-body: root.response-body,
+            response-body-formatted: root.response-body-formatted,
             response-time: root.response-time,
             response-state: root.response-state,
             response-format: root.response-format,
@@ -355,6 +349,7 @@ in-out property <bool> response-large: false;
         root.active-view = "Request";
         root.response-status = tab.response-status;
         root.response-body = tab.response-body;
+        root.response-body-formatted = tab.response-body-formatted;
         root.response-time = tab.response-time;
         let tab-loading = tab.response-state == "loading";
         root.response-state = tab.response-state;
@@ -369,7 +364,7 @@ in-out property <bool> response-large: false;
         root.load-collection-variables(tab.collection-id);
     }
 
-    public function set-request-tab-response(index: int, key: int, status: string, body: string, elapsed: string, state: string, format: string, headers: string, cookies: string, large: bool, header-items: [ResponseHeaderItem], cookie-items: [ResponseCookieItem]) {
+    public function set-request-tab-response(index: int, key: int, status: string, body: string, formatted-body: string, elapsed: string, state: string, format: string, headers: string, cookies: string, large: bool, header-items: [ResponseHeaderItem], cookie-items: [ResponseCookieItem]) {
         if index >= 0 && index < root.request-tabs.length {
             let tab = root.request-tabs[index];
             if tab.key == key {
@@ -379,12 +374,14 @@ in-out property <bool> response-large: false;
                     url: tab.url, headers: tab.headers, params: tab.params, body: tab.body,
                     body-format: tab.body-format, auth-type: tab.auth-type, auth-value: tab.auth-value,
                     auth-secret: tab.auth-secret, response-status: status, response-body: body,
+                    response-body-formatted: formatted-body,
                     response-time: elapsed, response-state: state, response-format: format,
                     response-headers: headers, response-cookies: cookies, response-large: large,
                     response-header-items: header-items, response-cookie-items: cookie-items,
                 };
                 if root.active-request-tab-key == key {
-                    root.response-status = status; root.response-body = body; root.response-time = elapsed;
+                    root.response-status = status; root.response-body = body;
+                    root.response-body-formatted = formatted-body; root.response-time = elapsed;
                     root.response-state = state; root.response-format = format; root.response-headers = headers;
                     root.response-cookies = cookies; root.response-large = large;
                     root.response-header-items = header-items; root.response-cookie-items = cookie-items;
@@ -405,7 +402,9 @@ in-out property <bool> response-large: false;
                     url: tab.url, headers: tab.headers, params: tab.params, body: tab.body,
                     body-format: tab.body-format, auth-type: tab.auth-type, auth-value: tab.auth-value,
                     auth-secret: tab.auth-secret, response-status: tab.response-status,
-                    response-body: tab.response-body, response-time: tab.response-time,
+                    response-body: tab.response-body,
+                    response-body-formatted: tab.response-body-formatted,
+                    response-time: tab.response-time,
                     response-state: tab.response-state, response-format: tab.response-format,
                     response-headers: tab.response-headers, response-cookies: tab.response-cookies,
                     response-large: tab.response-large, response-header-items: tab.response-header-items,
@@ -443,6 +442,7 @@ in-out property <bool> response-large: false;
             auth-secret: root.auth-secret,
             response-status: root.response-status,
             response-body: root.response-body,
+            response-body-formatted: root.response-body-formatted,
             response-time: root.response-time,
             response-state: root.response-state,
             response-format: root.response-format,
@@ -532,6 +532,7 @@ in-out property <bool> response-large: false;
         root.response-state = "idle";
         root.response-format = "Text";
         root.response-body = "Send a request to inspect its response.";
+        root.response-body-formatted = "";
         root.response-headers = "";
         root.response-cookies = "";
         root.response-header-items = [];
@@ -573,6 +574,7 @@ in-out property <bool> response-large: false;
             auth-secret: "",
             response-status: "No response yet",
             response-body: "Send a request to inspect its response.",
+            response-body-formatted: "",
             response-time: "---",
             response-state: "idle",
             response-format: "Text",
@@ -624,6 +626,7 @@ in-out property <bool> response-large: false;
         root.auth-secret = "";
         root.response-status = "No response yet";
         root.response-body = "Send a request to inspect its response.";
+        root.response-body-formatted = "";
         root.response-time = "---";
         root.response-state = "idle";
         root.response-format = "Text";
@@ -652,6 +655,7 @@ in-out property <bool> response-large: false;
             root.response-state = "loading";
             root.response-format = "Text";
             root.response-body = "Waiting for response...";
+            root.response-body-formatted = "";
             root.response-headers = "";
             root.response-cookies = "";
             root.response-header-items = [];

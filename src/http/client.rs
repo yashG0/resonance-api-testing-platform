@@ -296,7 +296,6 @@ impl HttpClient {
             }
         }
 
-        let raw = String::from_utf8_lossy(&bytes).into_owned();
         if is_binary_media_type(&content_type) {
             return HttpResult {
                 status,
@@ -311,6 +310,7 @@ impl HttpClient {
                 elapsed: start.elapsed(),
             };
         }
+        let raw = String::from_utf8_lossy(&bytes).into_owned();
         let format = detect_response_format(&raw, &content_type);
 
         HttpResult {

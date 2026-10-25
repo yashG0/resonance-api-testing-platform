@@ -43,7 +43,7 @@ export component ResponseBody inherits Rectangle {
 
     property <bool> structured-format: root.format == "JSON" || root.format == "HTML" || root.format == "XML";
     property <bool> has-pretty: root.structured-format || (root.pretty != "" && root.pretty != root.raw);
-    property <string> displayed-text: (root.has-pretty && root.mode == "Pretty") ? root.pretty : root.raw;
+    property <string> displayed-text: (root.has-pretty && root.mode == "Pretty" && root.pretty != "") ? root.pretty : root.raw;
     in property <string> tree-scope;
     in-out property <[JsonTreeNode]> tree-nodes: [];
     property <float> wrap-columns: max(16, (root.width - 72px) / 8px);
