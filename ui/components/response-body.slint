@@ -15,6 +15,17 @@ export struct JsonLine {
     tokens: [JsonToken],
 }
 
+export struct JsonTreeNode {
+    depth: int,
+    key-label: string,
+    preview: string,
+    path: string,
+    has-children: bool,
+    expanded: bool,
+    key-color: color,
+    value-color: color,
+}
+
 // Selectable, copyable response body with a slim toolbar (Pretty/Raw only when a distinct
 // pretty version exists, line wrapping, Copy). Emoji render via the renderer's font fallback.
 export component ResponseBody inherits Rectangle {
@@ -24,6 +35,8 @@ export component ResponseBody inherits Rectangle {
     in-out property <bool> wrap-lines: false;
     callback copy-all(string);
     callback tokenize-response(string, string, bool, float) -> [JsonLine];
+    callback build-json-tree(string, string, bool) -> [JsonTreeNode];
+    callback toggle-json-tree-node(string, string);
     in property <string> format: "JSON";
     in property <bool> dark: true;
     in property <bool> large-response: false;
@@ -31,6 +44,8 @@ export component ResponseBody inherits Rectangle {
     property <bool> structured-format: root.format == "JSON" || root.format == "HTML" || root.format == "XML";
     property <bool> has-pretty: root.structured-format || (root.pretty != "" && root.pretty != root.raw);
     property <string> displayed-text: (root.has-pretty && root.mode == "Pretty") ? root.pretty : root.raw;
+    in property <string> tree-scope;
+    in-out property <[JsonTreeNode]> tree-nodes: [];
     property <float> wrap-columns: max(16, (root.width - 72px) / 8px);
 
 in-out property <[JsonLine]> json-lines: [];
@@ -47,12 +62,27 @@ function refresh-json-lines() {
         root.json-lines = [];
     }
 }
+
+function refresh-tree() {
+    if (root.format == "JSON" && root.mode == "Tree" && !root.large-response) {
+        root.tree-nodes = root.build-json-tree(root.tree-scope, root.raw, root.dark);
+    } else {
+        root.tree-nodes = [];
+    }
+}
+
+function toggle-tree-node(path: string) {
+    root.toggle-json-tree-node(root.tree-scope, path);
+    root.refresh-tree();
+}
     background: Theme.view-bg;
     border-radius: Theme.radius-card;
     clip: true;
 
     init => {
+    root.mode = "Pretty";
     root.refresh-json-lines();
+    root.refresh-tree();
 }
 
 changed displayed-text => {
@@ -60,11 +90,31 @@ changed displayed-text => {
 }
 
 changed format => {
+    if root.mode == "Tree" && root.format != "JSON" { root.mode = "Pretty"; }
     root.refresh-json-lines();
+    root.refresh-tree();
+}
+
+changed raw => {
+    root.refresh-tree();
+}
+
+changed mode => {
+    root.refresh-json-lines();
+    root.refresh-tree();
+}
+
+changed tree-scope => {
+    root.refresh-tree();
+}
+
+changed large-response => {
+    root.refresh-tree();
 }
 
 changed dark => {
     root.refresh-json-lines();
+    root.refresh-tree();
 }
 
 changed width => {
@@ -91,13 +141,13 @@ changed wrap-lines => {
                 TabBar {
                     style: "pill";
                     height: 30px;
-                    tabs: ["Pretty", "Raw"];
+                    tabs: root.format == "JSON" ? ["Tree", "Pretty", "Raw"] : ["Pretty", "Raw"];
                     current: root.mode;
                     selected(m) => { root.mode = m; }
                 }
             }
             Rectangle { horizontal-stretch: 1; }
-            VerticalLayout {
+            if root.mode != "Tree" : VerticalLayout {
                 height: 44px;
                 alignment: center;
                 Btn {
@@ -123,6 +173,79 @@ changed wrap-lines => {
         }
 
         Rectangle { height: 1px; background: Theme.border; }
+
+        if root.format == "JSON" && root.mode == "Tree" && !root.large-response : Rectangle {
+            vertical-stretch: 1;
+            background: Theme.view-bg;
+            clip: true;
+            ScrollView {
+                width: parent.width;
+                height: parent.height;
+                content-width: self.width;
+                content-height: max(self.height, root.tree-nodes.length * 28px + 12px);
+                VerticalLayout {
+                    x: 6px;
+                    y: 6px;
+                    width: parent.width - 12px;
+                    spacing: 0px;
+                    for node in root.tree-nodes : Rectangle {
+                        height: 27px;
+                        border-radius: 4px;
+                        background: tree-row.has-hover ? Theme.hover : transparent;
+                        tree-row := TouchArea {
+                            mouse-cursor: node.has-children ? pointer : default;
+                            clicked => { if node.has-children { root.toggle-tree-node(node.path); } }
+                        }
+                        HorizontalLayout {
+                            spacing: 0px;
+                            Rectangle {
+                                width: 20px + node.depth * 18px;
+                                height: parent.height;
+                                Text {
+                                    x: 0px;
+                                    width: 20px;
+                                    height: parent.height;
+                                    text: node.has-children ? (node.expanded ? "▾" : "▸") : "";
+                                    color: Theme.accent-text;
+                                    font-size: 13px;
+                                    horizontal-alignment: center;
+                                    vertical-alignment: center;
+                                }
+                            }
+                            Text {
+                                text: node.key-label;
+                                color: node.key-color;
+                                font-family: Theme.font-mono;
+                                font-size: 12px;
+                                vertical-alignment: center;
+                            }
+                            Text {
+                                text: node.preview;
+                                color: node.value-color;
+                                font-family: Theme.font-mono;
+                                font-size: 12px;
+                                horizontal-stretch: 1;
+                                vertical-alignment: center;
+                                overflow: elide;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if root.format == "JSON" && root.mode == "Tree" && root.large-response : Rectangle {
+            vertical-stretch: 1;
+            background: Theme.view-bg;
+            Text {
+                text: "Tree view is unavailable for large responses. Switch to Pretty or Raw to inspect the body.";
+                color: Theme.fg-3;
+                font-size: Theme.fs-body;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+                wrap: word-wrap;
+            }
+        }
 
         // Keep structured bodies in the token renderer in both wrap modes so colors
         // and line numbers remain intact when long lines flow to the next display row.
@@ -189,7 +312,7 @@ changed wrap-lines => {
 
         // Slint conditional elements are separate siblings; use the inverse
         // condition rather than an `else` element branch.
-        if !root.structured-format || root.mode != "Pretty" || root.large-response : AdwTextEdit {
+        if (!root.structured-format || root.mode == "Raw" || root.large-response) && !(root.format == "JSON" && root.mode == "Tree") : AdwTextEdit {
             vertical-stretch: 1;
             read-only: true;
             wrap: root.wrap-lines

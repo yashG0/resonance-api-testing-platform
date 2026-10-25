@@ -3,8 +3,9 @@ mod http;
 mod storage;
 
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     future::Future,
+    hash::{Hash, Hasher},
     process::Command,
     sync::{Arc, Mutex},
     time::Duration,
@@ -723,6 +724,159 @@ fn tokenize_response(
     ModelRc::new(VecModel::from(lines))
 }
 
+fn build_json_tree(
+    source: &str,
+    expanded_paths: &[slint::SharedString],
+    dark: bool,
+) -> ModelRc<JsonTreeNode> {
+    fn truncate(value: String, max_chars: usize) -> String {
+        let mut chars = value.chars();
+        let prefix = chars.by_ref().take(max_chars).collect::<String>();
+        if chars.next().is_some() {
+            format!("{prefix}…")
+        } else {
+            prefix
+        }
+    }
+
+    fn escaped_pointer_segment(value: &str) -> String {
+        value.replace('~', "~0").replace('/', "~1")
+    }
+
+    fn append_node(
+        value: &serde_json::Value,
+        path: String,
+        depth: usize,
+        key_label: String,
+        expanded_paths: &HashSet<String>,
+        colors: SyntaxColors,
+        nodes: &mut Vec<JsonTreeNode>,
+    ) {
+        let expanded = expanded_paths.contains(&path);
+        let child_count = match value {
+            serde_json::Value::Object(fields) => fields.len(),
+            serde_json::Value::Array(items) => items.len(),
+            _ => 0,
+        };
+        let has_children = child_count > 0;
+        let (preview, value_color) = match value {
+            serde_json::Value::Object(fields) => {
+                (format!("object {{{}}}", fields.len()), colors.punctuation)
+            }
+            serde_json::Value::Array(items) => {
+                (format!("array [{}]", items.len()), colors.punctuation)
+            }
+            serde_json::Value::String(_) => (
+                truncate(serde_json::to_string(value).unwrap_or_default(), 120),
+                colors.string,
+            ),
+            serde_json::Value::Number(_) => (value.to_string(), colors.number),
+            serde_json::Value::Bool(_) => (value.to_string(), colors.boolean),
+            serde_json::Value::Null => ("null".to_owned(), colors.comment),
+        };
+        nodes.push(JsonTreeNode {
+            depth: depth as i32,
+            key_label: key_label.into(),
+            preview: preview.into(),
+            path: path.clone().into(),
+            has_children,
+            expanded,
+            key_color: if depth == 0 { colors.base } else { colors.key },
+            value_color,
+        });
+
+        if !expanded {
+            return;
+        }
+        match value {
+            serde_json::Value::Object(fields) => {
+                for (key, child) in fields {
+                    let key_json = serde_json::to_string(key).unwrap_or_else(|_| "\"\"".into());
+                    append_node(
+                        child,
+                        format!("{path}/{}", escaped_pointer_segment(key)),
+                        depth + 1,
+                        format!("{key_json}: "),
+                        expanded_paths,
+                        colors,
+                        nodes,
+                    );
+                }
+            }
+            serde_json::Value::Array(items) => {
+                for (index, child) in items.iter().enumerate() {
+                    append_node(
+                        child,
+                        format!("{path}/{index}"),
+                        depth + 1,
+                        format!("[{index}] "),
+                        expanded_paths,
+                        colors,
+                        nodes,
+                    );
+                }
+            }
+            _ => {}
+        }
+    }
+
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(source) else {
+        return ModelRc::new(VecModel::from(Vec::new()));
+    };
+    let expanded_paths = expanded_paths
+        .iter()
+        .map(ToString::to_string)
+        .collect::<HashSet<_>>();
+    let colors = SyntaxColors {
+        base: if dark {
+            Color::from_rgb_u8(0xe6, 0xe6, 0xe6)
+        } else {
+            Color::from_rgb_u8(0x24, 0x1f, 0x31)
+        },
+        key: if dark {
+            Color::from_rgb_u8(0x78, 0xae, 0xed)
+        } else {
+            Color::from_rgb_u8(0x1c, 0x71, 0xd8)
+        },
+        string: if dark {
+            Color::from_rgb_u8(0x8f, 0xf0, 0xa4)
+        } else {
+            Color::from_rgb_u8(0x26, 0xa2, 0x69)
+        },
+        number: if dark {
+            Color::from_rgb_u8(0xff, 0xbe, 0x6f)
+        } else {
+            Color::from_rgb_u8(0xc6, 0x46, 0x00)
+        },
+        boolean: if dark {
+            Color::from_rgb_u8(0xdc, 0x8a, 0xdd)
+        } else {
+            Color::from_rgb_u8(0x81, 0x3d, 0x9c)
+        },
+        punctuation: if dark {
+            Color::from_rgb_u8(0xc0, 0xbf, 0xbc)
+        } else {
+            Color::from_rgb_u8(0x5e, 0x5c, 0x64)
+        },
+        comment: if dark {
+            Color::from_rgb_u8(0xa8, 0xa8, 0xa8)
+        } else {
+            Color::from_rgb_u8(0x6c, 0x6a, 0x73)
+        },
+    };
+    let mut nodes = Vec::new();
+    append_node(
+        &value,
+        "$".into(),
+        0,
+        String::new(),
+        &expanded_paths,
+        colors,
+        &mut nodes,
+    );
+    ModelRc::new(VecModel::from(nodes))
+}
+
 #[cfg(test)]
 mod response_tokenizer_tests {
     use super::*;
@@ -805,6 +959,8 @@ async fn main() -> Result<(), slint::PlatformError> {
     app.set_system_dark_mode(detect_system_dark_mode(app.get_system_dark_mode()));
     app.set_system_accent_color(detect_system_accent_color(app.get_system_accent_color()));
     let app_weak = app.as_weak();
+    let tree_expansion_state =
+        Arc::new(Mutex::new(HashMap::<String, (u64, HashSet<String>)>::new()));
 
     app.on_refresh_system_theme({
         let app_weak = app_weak.clone();
@@ -843,6 +999,49 @@ async fn main() -> Result<(), slint::PlatformError> {
 
     app.on_tokenize_response(|source, format, dark, max_columns| {
         tokenize_response(source.as_str(), format.as_str(), dark, max_columns)
+    });
+
+    app.on_build_json_tree({
+        let tree_expansion_state = Arc::clone(&tree_expansion_state);
+        move |scope, source, dark| {
+            let source_text = source.to_string();
+            let scope = scope.to_string();
+            let mut hasher = std::collections::hash_map::DefaultHasher::new();
+            source_text.hash(&mut hasher);
+            let source_hash = hasher.finish();
+            let expanded_paths = if let Ok(mut state) = tree_expansion_state.lock() {
+                let entry = state
+                    .entry(scope)
+                    .or_insert_with(|| (source_hash, HashSet::new()));
+                if entry.0 != source_hash {
+                    entry.0 = source_hash;
+                    entry.1.clear();
+                }
+                entry
+                    .1
+                    .iter()
+                    .map(slint::SharedString::from)
+                    .collect::<Vec<_>>()
+            } else {
+                Vec::new()
+            };
+            build_json_tree(source_text.as_str(), &expanded_paths, dark)
+        }
+    });
+
+    app.on_toggle_json_tree_node({
+        let tree_expansion_state = Arc::clone(&tree_expansion_state);
+        move |scope, path| {
+            if let Ok(mut state) = tree_expansion_state.lock() {
+                let expanded = state
+                    .entry(scope.to_string())
+                    .or_insert_with(|| (0, HashSet::new()));
+                let path = path.to_string();
+                if !expanded.1.remove(&path) {
+                    expanded.1.insert(path);
+                }
+            }
+        }
     });
 
     app.on_format_response_body(|body, body_format| {

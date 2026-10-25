@@ -11,7 +11,7 @@ import { MethodBadge } from "components/method-badge.slint";
 import { StatusPill } from "components/status-pill.slint";
 import { NavRow } from "components/nav-row.slint";
 import { MenuItem } from "components/menu-item.slint";
-import { ResponseBody, JsonLine } from "components/response-body.slint";
+import { ResponseBody, JsonLine, JsonTreeNode } from "components/response-body.slint";
 import { ShortcutsDialog } from "components/shortcuts-dialog.slint";
 import { AboutDialog } from "components/about-dialog.slint";
 
@@ -121,6 +121,8 @@ export component AppWindow inherits Window {
     callback format-request-body(string, string) -> string;
     callback format-response-body(string, string) -> string;
     callback tokenize-response(string, string, bool, float) -> [JsonLine];
+    callback build-json-tree(string, string, bool) -> [JsonTreeNode];
+    callback toggle-json-tree-node(string, string);
     // Implement in Rust (e.g. `arboard`). Unimplemented = Copy does nothing.
     callback copy-text(string);
 
@@ -2455,7 +2457,10 @@ in-out property <bool> response-large: false;
                                             format: root.response-format;
                                             dark: root.dark-mode;
                                             large-response: root.response-large;
+                                            tree-scope: "" + root.active-request-tab-key;
                                             tokenize-response(source, format, dark, max-columns) => { root.tokenize-response(source, format, dark, max-columns); }
+                                            build-json-tree(scope, source, dark) => { root.build-json-tree(scope, source, dark); }
+                                            toggle-json-tree-node(scope, path) => { root.toggle-json-tree-node(scope, path); }
                                             copy-all(text) => { root.copy-text(text); }
                                         }
 
