@@ -18,7 +18,7 @@ Resonance is a desktop application for creating, sending, and inspecting HTTP re
 
 ## Download
 
-Resonance v1.1.0 binaries are available on the GitHub Releases page for supported platforms.
+Resonance v1.2.0 binaries are available on the GitHub Releases page for supported platforms.
 
 **Platforms**
 - Linux x86_64

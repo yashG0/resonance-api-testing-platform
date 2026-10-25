@@ -77,12 +77,13 @@ jobs:
         shell: bash
         run: |
           version="${GITHUB_REF_NAME#v}"
-          staging="package/resonance-${version}-linux-x86_64"
+          staging="$RUNNER_TEMP/resonance-${version}-linux-x86_64"
+          output="release-dist/resonance-${version}-linux-x86_64.tar.gz"
           mkdir -p "$staging"
           install -m 755 "target/${{ matrix.target }}/release/resonance" "$staging/resonance"
           cp README.md LICENSE "$staging/"
-          mkdir -p dist
-          tar -czf "dist/resonance-${version}-linux-x86_64.tar.gz" -C package "$(basename "$staging")"
+          mkdir -p release-dist
+          tar -czf "$output" -C "$RUNNER_TEMP" "$(basename "$staging")"
 
       - name: Package Windows archive
         if: matrix.platform == 'windows'
@@ -90,18 +91,20 @@ jobs:
         run: |
           $version = "${{ github.ref_name }}".TrimStart('v')
           $staging = "$env:RUNNER_TEMP/resonance-$version-windows-x86_64"
+          $archive = "release-dist/resonance-$version-windows-x86_64.zip"
           New-Item -ItemType Directory -Force -Path $staging | Out-Null
-          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          New-Item -ItemType Directory -Force -Path release-dist | Out-Null
           Copy-Item "target/${{ matrix.target }}/release/resonance.exe" "$staging/resonance.exe"
           Copy-Item README.md, LICENSE $staging
-          Compress-Archive -Path "$staging/*" -DestinationPath "dist/resonance-$version-windows-x86_64.zip"
+          Compress-Archive -Path "$staging/*" -DestinationPath $archive
 
       - name: Package macOS application bundle
         if: matrix.platform == 'macos'
         shell: bash
         run: |
           version="${GITHUB_REF_NAME#v}"
-          app="dist/Resonance.app"
+          app="$RUNNER_TEMP/Resonance.app"
+          mkdir -p release-dist
           mkdir -p "$app/Contents/MacOS"
           install -m 755 "target/${{ matrix.target }}/release/resonance" "$app/Contents/MacOS/resonance"
           cat > "$app/Contents/Info.plist" <<PLIST
@@ -120,13 +123,13 @@ jobs:
           </dict>
           </plist>
           PLIST
-          ditto -c -k --sequesterRsrc --keepParent "$app" "dist/resonance-${version}-macos-${{ matrix.arch }}.zip"
+          ditto -c -k --sequesterRsrc --keepParent "$app" "release-dist/resonance-${version}-macos-${{ matrix.arch }}.zip"
 
       - name: Upload platform package
         uses: actions/upload-artifact@v4
         with:
           name: release-${{ matrix.platform }}-${{ matrix.target }}
-          path: dist/resonance-*
+          path: release-dist/resonance-*
           if-no-files-found: error
           retention-days: 7
 
@@ -143,17 +146,17 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           pattern: release-*
-          path: dist
+          path: release-downloads
           merge-multiple: true
 
       - name: Generate SHA-256 checksums
-        run: cd dist && sha256sum resonance-* > SHA256SUMS.txt
+        run: cd release-downloads && sha256sum resonance-* > SHA256SUMS.txt
 
       - name: Create release and upload packages
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "$GITHUB_REF_NAME" dist/resonance-* dist/SHA256SUMS.txt \
+          gh release create "$GITHUB_REF_NAME" release-downloads/resonance-* release-downloads/SHA256SUMS.txt \
             --repo "$GITHUB_REPOSITORY" \
             --title "Resonance $GITHUB_REF_NAME" \
             --notes-file RELEASE_NOTES.md
