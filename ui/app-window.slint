@@ -2,7 +2,7 @@ import { ThemedButton } from "components/themed-button.slint";
 import { ChoiceDropdown } from "components/choice-dropdown.slint";
 import { KeyValueEditor, KeyValueRow } from "components/key-value-editor.slint";
 import { ScrollView, Palette } from "std-widgets.slint";
-import { AdwLineEdit, AdwTextEdit } from "components/adw-inputs.slint";
+import { AdwLineEdit, AdwTextEdit, AdwSelectableText } from "components/adw-inputs.slint";
 import { Theme } from "components/theme.slint";
 import { Icons } from "components/icons.slint";
 import { Btn } from "components/btn.slint";
@@ -2618,23 +2618,21 @@ in-out property <bool> response-large: false;
                                                         padding-left: 10px;
                                                         padding-right: 10px;
                                                         spacing: 16px;
-                                                        Text {
+                                                        AdwSelectableText {
                                                             width: 200px;
                                                             text: item.name;
-                                                            color: Theme.accent-text;
+                                                            text-color: Theme.accent-text;
                                                             font-family: Theme.font-mono;
                                                             font-size: Theme.fs-small;
                                                             font-weight: 700;
-                                                            vertical-alignment: center;
                                                             wrap: word-wrap;
                                                         }
-                                                        Text {
+                                                        AdwSelectableText {
                                                             horizontal-stretch: 1;
                                                             text: item.value;
-                                                            color: Theme.fg;
+                                                            text-color: Theme.fg;
                                                             font-family: Theme.font-mono;
                                                             font-size: Theme.fs-small;
-                                                            vertical-alignment: center;
                                                             wrap: char-wrap;
                                                         }
                                                     }

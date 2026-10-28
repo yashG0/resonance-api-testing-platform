@@ -213,3 +213,49 @@ export component AdwTextEdit inherits Rectangle {
         wrap: word-wrap;
     }
 }
+
+// Read-only text that keeps native TextInput selection and clipboard behavior
+// without drawing an input background or border. Used for response metadata.
+export component AdwSelectableText inherits Rectangle {
+    in property <string> text;
+    in property <color> text-color: Theme.fg;
+    in property <TextWrap> wrap: TextWrap.word-wrap;
+    in property <length> font-size: Theme.fs-body;
+    in property <string> font-family: Theme.font-mono;
+    in property <int> font-weight: 400;
+
+    background: transparent;
+    forward-focus: input;
+
+    ContextMenuArea {
+        Menu {
+            MenuItem {
+                title: "Copy";
+                enabled: !input.text.is-empty;
+                activated => { input.copy(); }
+            }
+            MenuItem {
+                title: "Select All";
+                enabled: !input.text.is-empty;
+                activated => { input.select-all(); }
+            }
+        }
+
+        input := TextInput {
+            width: parent.width;
+            height: parent.height;
+            text: root.text;
+            read-only: true;
+            single-line: false;
+            wrap: root.wrap;
+            font-size: root.font-size;
+            font-family: root.font-family;
+            font-weight: root.font-weight;
+            color: root.text-color;
+            selection-background-color: Theme.accent;
+            selection-foreground-color: Theme.accent-fg;
+            horizontal-alignment: left;
+            vertical-alignment: center;
+        }
+    }
+}
