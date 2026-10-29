@@ -627,6 +627,245 @@ fn append_visual_line(lines: &mut Vec<JsonLine>, number: i32, tokens: Vec<JsonTo
     });
 }
 
+fn clamp_char_boundary(text: &str, offset: i32) -> usize {
+    let mut offset = (offset.max(0) as usize).min(text.len());
+    while !text.is_char_boundary(offset) {
+        offset -= 1;
+    }
+    offset
+}
+
+fn inside_json_string(text: &str) -> bool {
+    let mut in_string = false;
+    let mut escaped = false;
+    for ch in text.chars() {
+        if in_string && escaped {
+            escaped = false;
+        } else if in_string && ch == '\\' {
+            escaped = true;
+        } else if ch == '"' {
+            in_string = !in_string;
+        }
+    }
+    in_string
+}
+
+fn auto_pair_request_body(
+    text: &str,
+    cursor: i32,
+    anchor: i32,
+    key: &str,
+    format: &str,
+) -> AutoPairAction {
+    let cursor = clamp_char_boundary(text, cursor);
+    let anchor = clamp_char_boundary(text, anchor);
+    let start = cursor.min(anchor);
+    let end = cursor.max(anchor);
+    let selection = &text[start..end];
+
+    if key == "Enter" {
+        let line_start = text[..start].rfind('\n').map_or(0, |index| index + 1);
+        let line_prefix = &text[line_start..start];
+        let mut indent: String = line_prefix
+            .chars()
+            .take_while(|ch| matches!(ch, ' ' | '\t'))
+            .collect();
+        if format == "JSON" && matches!(line_prefix.trim_end().chars().last(), Some('{' | '[')) {
+            indent.push_str("    ");
+        }
+        let mut updated = String::with_capacity(text.len() + 1 + indent.len());
+        updated.push_str(&text[..start]);
+        updated.push('\n');
+        updated.push_str(&indent);
+        updated.push_str(&text[end..]);
+        let next_cursor = start + 1 + indent.len();
+        return AutoPairAction {
+            handled: true,
+            text: updated.into(),
+            anchor: next_cursor as i32,
+            cursor: next_cursor as i32,
+        };
+    }
+
+    if key == "Tab" {
+        if start != end {
+            return AutoPairAction {
+                handled: false,
+                text: text.into(),
+                anchor: anchor as i32,
+                cursor: cursor as i32,
+            };
+        }
+        let mut updated = String::with_capacity(text.len() + 4);
+        updated.push_str(&text[..start]);
+        updated.push_str("    ");
+        updated.push_str(&text[start..]);
+        let next_cursor = start + 4;
+        return AutoPairAction {
+            handled: true,
+            text: updated.into(),
+            anchor: next_cursor as i32,
+            cursor: next_cursor as i32,
+        };
+    }
+
+    if start == end && matches!(key, "}" | "]" | ")" | ">" | "\"" | "'") {
+        let next_closer = if matches!(key, "\"" | "'") {
+            text[start..]
+                .chars()
+                .next()
+                .filter(|next| Some(*next) == key.chars().next())
+                .map(|next| (0, next))
+        } else {
+            text[start..]
+                .char_indices()
+                .find(|(_, ch)| !ch.is_whitespace())
+                .filter(|(_, next)| Some(*next) == key.chars().next())
+        };
+        if let Some((relative_offset, next)) = next_closer {
+            let next_cursor = start + relative_offset + next.len_utf8();
+            return AutoPairAction {
+                handled: true,
+                text: text.into(),
+                anchor: next_cursor as i32,
+                cursor: next_cursor as i32,
+            };
+        }
+    }
+
+    let (opener, closer) = match key {
+        "{" => ("{", "}"),
+        "[" => ("[", "]"),
+        "(" if format != "JSON" => ("(", ")"),
+        "\"" => ("\"", "\""),
+        "'" if format != "JSON" => ("'", "'"),
+        "<" if matches!(format, "HTML" | "XML") => ("<", ">"),
+        _ => {
+            return AutoPairAction {
+                handled: false,
+                text: text.into(),
+                anchor: anchor as i32,
+                cursor: cursor as i32,
+            };
+        }
+    };
+
+    if format == "JSON" && opener != "\"" && inside_json_string(&text[..start]) {
+        return AutoPairAction {
+            handled: false,
+            text: text.into(),
+            anchor: anchor as i32,
+            cursor: cursor as i32,
+        };
+    }
+    if format == "JSON" && opener == "\"" && inside_json_string(&text[..start]) {
+        return AutoPairAction {
+            handled: false,
+            text: text.into(),
+            anchor: anchor as i32,
+            cursor: cursor as i32,
+        };
+    }
+
+    let (updated, selection_start, selection_end) =
+        if start == end && format == "JSON" && matches!(opener, "{" | "[") {
+            let line_start = text[..start].rfind('\n').map_or(0, |index| index + 1);
+            let line_prefix = &text[line_start..start];
+            let base_indent: String = line_prefix
+                .chars()
+                .take_while(|ch| matches!(ch, ' ' | '\t'))
+                .collect();
+            let inner_indent = format!("{base_indent}    ");
+            let insertion = format!("{opener}\n{inner_indent}\n{base_indent}{closer}");
+            let new_cursor = start + opener.len() + 1 + inner_indent.len();
+            let mut updated = String::with_capacity(text.len() + insertion.len());
+            updated.push_str(&text[..start]);
+            updated.push_str(&insertion);
+            updated.push_str(&text[end..]);
+            (updated, new_cursor, new_cursor)
+        } else {
+            let mut updated = String::with_capacity(text.len() + opener.len() + closer.len());
+            updated.push_str(&text[..start]);
+            updated.push_str(opener);
+            updated.push_str(selection);
+            updated.push_str(closer);
+            updated.push_str(&text[end..]);
+            let selected_start = start + opener.len();
+            (updated, selected_start, selected_start + selection.len())
+        };
+
+    AutoPairAction {
+        handled: true,
+        text: updated.into(),
+        anchor: selection_start as i32,
+        cursor: selection_end as i32,
+    }
+}
+
+#[cfg(test)]
+mod auto_pair_tests {
+    use super::auto_pair_request_body;
+
+    #[test]
+    fn json_object_opener_places_caret_on_indented_middle_line() {
+        let action = auto_pair_request_body("", 0, 0, "{", "JSON");
+        assert!(action.handled);
+        assert_eq!(action.text, "{\n    \n}");
+        assert_eq!(action.cursor, 6);
+        assert_eq!(action.anchor, action.cursor);
+    }
+
+    #[test]
+    fn opening_bracket_wraps_a_selection() {
+        let action = auto_pair_request_body("name", 4, 0, "[", "JSON");
+        assert!(action.handled);
+        assert_eq!(action.text, "[name]");
+        assert_eq!((action.anchor, action.cursor), (1, 5));
+    }
+
+    #[test]
+    fn quote_inside_json_string_is_not_auto_paired() {
+        let action = auto_pair_request_body("\"name", 5, 5, "\"", "JSON");
+        assert!(!action.handled);
+    }
+
+    #[test]
+    fn closer_skips_existing_close_after_blank_inner_line() {
+        let text = "{\n    \n}";
+        let action = auto_pair_request_body(text, 6, 6, "}", "JSON");
+        assert!(action.handled);
+        assert_eq!(action.text, text);
+        assert_eq!((action.anchor, action.cursor), (8, 8));
+    }
+
+    #[test]
+    fn tab_inserts_four_spaces_and_advances_the_cursor() {
+        let action = auto_pair_request_body("{}", 1, 1, "Tab", "JSON");
+        assert!(action.handled);
+        assert_eq!(action.text, "{    }");
+        assert_eq!((action.anchor, action.cursor), (5, 5));
+    }
+
+    #[test]
+    fn enter_keeps_the_existing_property_indent() {
+        let text = "    \"name\": \"yash\",";
+        let action =
+            auto_pair_request_body(text, text.len() as i32, text.len() as i32, "Enter", "JSON");
+        assert!(action.handled);
+        assert_eq!(action.text, "    \"name\": \"yash\",\n    ");
+        assert_eq!(action.cursor, action.text.len() as i32);
+    }
+
+    #[test]
+    fn enter_increases_indent_after_an_open_json_bracket() {
+        let text = "    {";
+        let action =
+            auto_pair_request_body(text, text.len() as i32, text.len() as i32, "Enter", "JSON");
+        assert_eq!(action.text, "    {\n        ");
+        assert_eq!(action.cursor, action.text.len() as i32);
+    }
+}
+
 fn tokenize_response(
     source: &str,
     format: &str,
@@ -1056,27 +1295,8 @@ async fn main() -> Result<(), slint::PlatformError> {
     app.on_serialize_param_rows(|rows| serialize_key_value_rows(rows, "=").into());
     app.on_serialize_header_rows(|rows| serialize_key_value_rows(rows, ": ").into());
 
-    app.on_format_request_body(|body, body_format| {
-        if body.as_str().len() > MAX_STRUCTURED_VIEW_BYTES {
-            return body;
-        }
-        let body_str: String = body.to_string();
-        let format_str: String = body_format.to_string();
-        let highlighted = match format_str.as_str() {
-            "JSON" => match serde_json::from_str::<serde_json::Value>(&body_str) {
-                Ok(json) => {
-                    let pretty =
-                        serde_json::to_string_pretty(&json).unwrap_or_else(|_| body_str.clone());
-                    crate::http::client::highlight_json(&pretty)
-                }
-                Err(_) => crate::http::client::escape_html(&body_str),
-            },
-            "XML" | "HTML" => {
-                crate::http::client::highlight_xml(&crate::http::client::format_html(&body_str))
-            }
-            _ => crate::http::client::escape_html(&body_str),
-        };
-        highlighted.into()
+    app.on_auto_pair_request_body(|text, cursor, anchor, key, format| {
+        auto_pair_request_body(text.as_str(), cursor, anchor, key.as_str(), format.as_str())
     });
 
     app.on_tokenize_response(|source, format, dark, max_columns| {

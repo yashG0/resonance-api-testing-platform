@@ -1,5 +1,12 @@
 import { Theme } from "theme.slint";
 
+export struct AutoPairAction {
+    handled: bool,
+    text: string,
+    anchor: int,
+    cursor: int,
+}
+
 // Adwaita-style text inputs.
 //
 // Slint's std-widgets LineEdit/TextEdit are painted with the Fluent palette:
@@ -119,11 +126,15 @@ export component AdwTextEdit inherits Rectangle {
     in property <length> font-size: Theme.fs-body;
     in property <string> font-family: Theme.font-mono;
     in property <length> text-padding: 12px;
+    in property <bool> auto-complete: false;
+    in property <string> language: "JSON";
 
     callback edited(string);
+    callback auto-pair-key(string, int, int, string, string) -> AutoPairAction;
 
     background: transparent;
     forward-focus: input;
+    private property <Point> caret-position: { x: 0px, y: 0px };
 
     ContextMenuArea {
         enabled: root.enabled;
@@ -156,13 +167,16 @@ export component AdwTextEdit inherits Rectangle {
             y: 0px;
             width: parent.width;
             height: parent.height;
-            interactive: true;
+            // The request editor's TextInput must own drag gestures for text
+            // selection. Its caret callback still scrolls as the cursor moves.
+            interactive: !root.auto-complete;
             content-width: root.wrap == TextWrap.word-wrap
                 ? self.width
                 : max(self.width, input.preferred-width + 2 * root.text-padding);
             content-height: max(self.height, input.preferred-height + 2 * root.text-padding);
 
             input := TextInput {
+                z: 0;
                 x: root.text-padding;
                 y: root.text-padding;
                 width: root.wrap == TextWrap.word-wrap
@@ -176,17 +190,58 @@ export component AdwTextEdit inherits Rectangle {
                 wrap: root.wrap;
                 font-size: root.font-size;
                 font-family: root.font-family;
+                // Let the native editor paint text and selection together. A
+                // duplicate text layer can cover the native selection highlight.
                 color: Theme.fg;
                 selection-background-color: Theme.accent;
                 selection-foreground-color: Theme.accent-fg;
+                // Suppress the native blinking caret; the steady caret is
+                // drawn below instead.
+                text-cursor-width: 0.01px;
                 read-only: root.read-only;
                 enabled: root.enabled;
                 horizontal-alignment: left;
                 vertical-alignment: top;
                 edited => { root.edited(self.text); }
+                key-pressed(event) => {
+                    if root.auto-complete && !root.read-only {
+                        let key = event.text;
+                        if (event.modifiers.control || event.modifiers.meta) && (key == "a" || key == "A") {
+                            self.select-all();
+                            return accept;
+                        }
+                        if !event.modifiers.control && !event.modifiers.meta && !event.modifiers.alt && key == Key.Tab {
+                            let action = root.auto-pair-key(self.text, self.cursor-position-byte-offset, self.anchor-position-byte-offset, "Tab", root.language);
+                            if action.handled {
+                                self.text = action.text;
+                                root.edited(self.text);
+                                self.set-selection-offsets(action.anchor, action.cursor);
+                                return accept;
+                            }
+                        } else if !event.modifiers.control && !event.modifiers.meta && !event.modifiers.alt && (key == Key.Return || key == "\n") {
+                            let action = root.auto-pair-key(self.text, self.cursor-position-byte-offset, self.anchor-position-byte-offset, "Enter", root.language);
+                            if action.handled {
+                                self.text = action.text;
+                                root.edited(self.text);
+                                self.set-selection-offsets(action.anchor, action.cursor);
+                                return accept;
+                            }
+                        } else if !event.modifiers.control && !event.modifiers.meta && !event.modifiers.alt && (key == "{" || key == "}" || key == "[" || key == "]" || key == "(" || key == ")" || key == "\"" || key == "'" || key == "<" || key == ">") {
+                            let action = root.auto-pair-key(self.text, self.cursor-position-byte-offset, self.anchor-position-byte-offset, key, root.language);
+                            if action.handled {
+                                self.text = action.text;
+                                root.edited(self.text);
+                                self.set-selection-offsets(action.anchor, action.cursor);
+                                return accept;
+                            }
+                        }
+                    }
+                    return reject;
+                }
 
                 // Keep the caret inside the viewport while typing or moving it.
                 cursor-position-changed(cpos) => {
+                    root.caret-position = cpos;
                     if (cpos.x + flick.content-x < 0px) {
                         flick.content-x = min(0px, max(flick.width - self.width, -cpos.x));
                     } else if (cpos.x + flick.content-x > flick.width - 20px) {
@@ -198,6 +253,18 @@ export component AdwTextEdit inherits Rectangle {
                         flick.content-y = min(0px, max(flick.height - self.height, flick.height - cpos.y - 20px));
                     }
                 }
+            }
+
+            caret := Rectangle {
+                z: 1;
+                x: input.x + root.caret-position.x;
+                y: input.y + root.caret-position.y;
+                // Keep the steady overlay caret hairline-thin; a wider bar
+                // reads like a block cursor beside monospace glyphs.
+                width: 0.75px;
+                height: max(16px, root.font-size * 1.25);
+                background: Theme.fg;
+                visible: input.has-focus && !root.read-only && input.cursor-position-byte-offset == input.anchor-position-byte-offset;
             }
         }
     }

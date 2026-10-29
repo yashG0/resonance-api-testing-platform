@@ -491,34 +491,6 @@ fn is_binary_media_type(media_type: &str) -> bool {
         || media_type.starts_with("application/vnd.")
 }
 
-pub(crate) fn escape_html(input: &str) -> String {
-    let mut escaped = String::with_capacity(input.len());
-    for c in input.chars() {
-        match c {
-            '<' => escaped.push_str("&lt;"),
-            '>' => escaped.push_str("&gt;"),
-            '&' => escaped.push_str("&amp;"),
-            '"' => escaped.push_str("&quot;"),
-            '\'' => escaped.push_str("&#39;"),
-            _ => escaped.push(c),
-        }
-    }
-    escaped
-}
-
-pub(crate) fn highlight_json(input: &str) -> String {
-    // Slint's Text widget does not render HTML <span> tags as rich text.
-    // Return clean, pretty-printed JSON instead — it displays professionally
-    // in monospace font without broken HTML tags showing as literal text.
-    input.to_owned()
-}
-
-pub(crate) fn highlight_xml(input: &str) -> String {
-    // Slint's Text widget does not render HTML <span> tags as rich text.
-    // Return clean, formatted XML/HTML instead.
-    input.to_owned()
-}
-
 /// Adds indentation and line breaks to HTML while preserving tag contents.
 /// Script and style contents are kept as one raw-text block so their `<` and `>`
 /// characters aren't mistaken for HTML tags.

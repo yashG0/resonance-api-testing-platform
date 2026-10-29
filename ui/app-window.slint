@@ -2,7 +2,7 @@ import { ThemedButton } from "components/themed-button.slint";
 import { ChoiceDropdown } from "components/choice-dropdown.slint";
 import { KeyValueEditor, KeyValueRow } from "components/key-value-editor.slint";
 import { ScrollView, Palette } from "std-widgets.slint";
-import { AdwLineEdit, AdwTextEdit, AdwSelectableText } from "components/adw-inputs.slint";
+import { AdwLineEdit, AdwTextEdit, AdwSelectableText, AutoPairAction } from "components/adw-inputs.slint";
 import { Theme } from "components/theme.slint";
 import { Icons } from "components/icons.slint";
 import { Btn } from "components/btn.slint";
@@ -120,7 +120,7 @@ export component AppWindow inherits Window {
     callback select-request(int);
     callback delete-request(int, int);
     callback refresh-system-theme();
-    callback format-request-body(string, string) -> string;
+    callback auto-pair-request-body(string, int, int, string, string) -> AutoPairAction;
     callback tokenize-response(string, string, bool, float) -> [JsonLine];
     callback build-json-tree(string, string, bool) -> [JsonTreeNode];
     callback toggle-json-tree-node(string, string);
@@ -181,8 +181,6 @@ export component AppWindow inherits Window {
     in-out property <[KeyValueRow]> request-param-rows: [];
     in-out property <string> request-body: "";
     in-out property <string> body-format: "JSON";
-    in-out property <bool> show-request-body-formatted: false;
-    in-out property <string> request-body-formatted: "";
 
     in-out property <string> request-headers: "Accept: application/json";
     in-out property <[KeyValueRow]> request-header-rows: [{ key: "Accept", value: "application/json", enabled: true }];
@@ -241,7 +239,6 @@ in-out property <bool> response-large: false;
     }
     changed dark-mode => { Theme.dark = root.dark-mode; }
     changed accent => { Theme.accent = root.accent; }
-
     changed theme-mode => {
         if (root.previous-theme-mode == "System" && root.theme-mode != "System") {
             root.system-dark-mode = Palette.color-scheme == ColorScheme.dark;
@@ -312,13 +309,6 @@ in-out property <bool> response-large: false;
     function set-request-tab(tab: string) {
         root.active-view = "Request";
         root.active-tab = tab;
-    }
-
-    function set-body-formatted(on: bool) {
-        root.show-request-body-formatted = on;
-        if on {
-            root.request-body-formatted = root.format-request-body(root.request-body, root.body-format);
-        }
     }
 
     public function store-active-request-tab() {
@@ -589,8 +579,6 @@ in-out property <bool> response-large: false;
         root.request-params = "";
         root.request-param-rows = [];
         root.request-body = "";
-        root.show-request-body-formatted = false;
-        root.request-body-formatted = "";
         root.body-format = "JSON";
         root.request-headers = "Accept: application/json";
         root.request-header-rows = [{ key: "Accept", value: "application/json", enabled: true }];
@@ -2279,17 +2267,6 @@ in-out property <bool> response-large: false;
                                         if root.active-tab == "Body" : VerticalLayout {
                                             height: 48px;
                                             alignment: center;
-                                            TabBar {
-                                                style: "pill";
-                                                height: 30px;
-                                                tabs: ["Edit", "Formatted"];
-                                                current: root.show-request-body-formatted ? "Formatted" : "Edit";
-                                                selected(t) => { root.set-body-formatted(t == "Formatted"); }
-                                            }
-                                        }
-                                        if root.active-tab == "Body" : VerticalLayout {
-                                            height: 48px;
-                                            alignment: center;
                                             ChoiceDropdown {
                                                 accent-color: root.accent;
                                                 width: 96px;
@@ -2321,7 +2298,7 @@ in-out property <bool> response-large: false;
                                         vertical-stretch: 1;
                                         background: Theme.view-bg;
 
-                                        if root.active-tab == "Body" && !root.show-request-body-formatted : AdwTextEdit {
+                                        if root.active-tab == "Body" : AdwTextEdit {
                                             width: parent.width;
                                             height: parent.height;
                                             text: root.request-body;
@@ -2329,26 +2306,10 @@ in-out property <bool> response-large: false;
                                             font-family: Theme.font-mono;
                                             font-size: 13px;
                                             wrap: word-wrap;
+                                            auto-complete: true;
+                                            language: root.body-format;
+                                            auto-pair-key(text, cursor, anchor, key, language) => { root.auto-pair-request-body(text, cursor, anchor, key, language) }
                                             edited(value) => { root.request-body = value; }
-                                        }
-
-                                        if root.active-tab == "Body" && root.show-request-body-formatted : ScrollView {
-                                            width: parent.width;
-                                            height: parent.height;
-                                            content-width: self.width;
-                                            content-height: request-body-formatted-text.height + 28px;
-
-                                            request-body-formatted-text := Text {
-                                                x: 14px;
-                                                y: 14px;
-                                                width: parent.width - 28px;
-                                                text: root.request-body-formatted;
-                                                color: Theme.fg;
-                                                font-family: Theme.font-mono;
-                                                font-size: 13px;
-                                                line-height-factor: 1.45;
-                                                wrap: word-wrap;
-                                            }
                                         }
 
                                         if root.active-tab == "Headers" : KeyValueEditor {
@@ -2754,7 +2715,6 @@ in-out property <bool> response-large: false;
         KeyBinding { keys: @keys(Alt + Digit1); enabled: root.app-shortcuts-enabled && root.active-view == "Request"; activated => { root.response-tab = "Body"; } }
         KeyBinding { keys: @keys(Alt + Digit2); enabled: root.app-shortcuts-enabled && root.active-view == "Request"; activated => { root.response-tab = "Headers"; } }
         KeyBinding { keys: @keys(Alt + Digit3); enabled: root.app-shortcuts-enabled && root.active-view == "Request"; activated => { root.response-tab = "Cookies"; } }
-        KeyBinding { keys: @keys(Control + Shift + F); enabled: root.app-shortcuts-enabled && root.active-view == "Request" && root.active-tab == "Body"; activated => { root.set-body-formatted(!root.show-request-body-formatted); } }
         KeyBinding { keys: @keys(Control + Shift + C); enabled: root.app-shortcuts-enabled && root.active-view == "Request"; activated => { root.copy-response(); } }
         KeyBinding { keys: @keys(Control + H); enabled: root.app-shortcuts-enabled; activated => { root.open-view("History"); } }
         KeyBinding { keys: @keys(Control + E); enabled: root.app-shortcuts-enabled; activated => { root.open-view("Environments"); } }
