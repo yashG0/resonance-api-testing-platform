@@ -136,6 +136,7 @@ export component AppWindow inherits Window {
     callback copy-text(string);
 
     in-out property <[RequestItem]> saved-requests: [];
+    in-out property <[RequestItem]> all-saved-requests: [];
     in-out property <[RequestTabItem]> request-tabs: [];
     in-out property <int> active-request-tab-key: -1;
     in-out property <int> active-request-tab-index: -1;

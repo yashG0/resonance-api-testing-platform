@@ -498,6 +498,28 @@ impl RequestStore {
             .map_err(StoreError::from)
     }
 
+    pub fn list_all_variables(&self) -> Result<Vec<(i64, String, CollectionVariable)>, StoreError> {
+        let connection = self.connect()?;
+        let mut statement = connection.prepare(
+            "SELECT c.id, c.name, v.key, v.value
+             FROM collection_variables AS v
+             JOIN collections AS c ON c.id = v.collection_id
+             ORDER BY c.name COLLATE NOCASE ASC, v.key COLLATE NOCASE ASC",
+        )?;
+        let rows = statement.query_map([], |row| {
+            Ok((
+                row.get(0)?,
+                row.get(1)?,
+                CollectionVariable {
+                    key: row.get(2)?,
+                    value: row.get(3)?,
+                },
+            ))
+        })?;
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(StoreError::from)
+    }
+
     pub fn variables_map(&self, collection_id: i64) -> Result<HashMap<String, String>, StoreError> {
         Ok(self
             .list_variables(collection_id)?
@@ -1137,6 +1159,14 @@ mod tests {
                 .expect("other collection vars")["base_url"],
             "https://stage.example.com"
         );
+        let all_variables = store.list_all_variables().expect("list all variables");
+        assert_eq!(all_variables.len(), 2);
+        assert!(all_variables.iter().any(|(id, name, variable)| {
+            *id == first && name == "Public API" && variable.value == "https://staging.example.com"
+        }));
+        assert!(all_variables.iter().any(|(id, name, variable)| {
+            *id == second.id && name == "Staging" && variable.value == "https://stage.example.com"
+        }));
         assert!(
             store
                 .delete_variable(first, "base_url")

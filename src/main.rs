@@ -274,16 +274,9 @@ fn detect_system_accent_color(fallback: Color) -> Color {
     fallback
 }
 
-fn to_request_model(requests: Vec<SavedRequest>, query: &str) -> ModelRc<RequestItem> {
-    let query = query.trim().to_ascii_lowercase();
+fn to_request_model(requests: Vec<SavedRequest>) -> ModelRc<RequestItem> {
     let items = requests
         .into_iter()
-        .filter(|request| {
-            query.is_empty()
-                || request.name.to_ascii_lowercase().contains(&query)
-                || request.method.to_ascii_lowercase().contains(&query)
-                || request.url.to_ascii_lowercase().contains(&query)
-        })
         .map(|request| RequestItem {
             id: request.id as i32,
             name: request.name.into(),
@@ -292,6 +285,36 @@ fn to_request_model(requests: Vec<SavedRequest>, query: &str) -> ModelRc<Request
         })
         .collect::<Vec<_>>();
     ModelRc::new(VecModel::from(items))
+}
+
+fn contains_ascii_case_insensitive(value: &str, query: &str) -> bool {
+    let query = query.as_bytes();
+    !query.is_empty()
+        && value
+            .as_bytes()
+            .windows(query.len())
+            .any(|window| window.eq_ignore_ascii_case(query))
+}
+
+fn filter_request_model(requests: &ModelRc<RequestItem>, query: &str) -> ModelRc<RequestItem> {
+    let query = query.trim().to_ascii_lowercase();
+    let items = (0..requests.row_count())
+        .filter_map(|index| requests.row_data(index))
+        .filter(|request| {
+            query.is_empty()
+                || contains_ascii_case_insensitive(request.name.as_str(), &query)
+                || contains_ascii_case_insensitive(request.method.as_str(), &query)
+                || contains_ascii_case_insensitive(request.url.as_str(), &query)
+        })
+        .collect::<Vec<_>>();
+    ModelRc::new(VecModel::from(items))
+}
+
+fn replace_saved_request_models(ui: &AppWindow, requests: Vec<SavedRequest>) {
+    let all_requests = to_request_model(requests);
+    let filtered_requests = filter_request_model(&all_requests, ui.get_request_search().as_str());
+    ui.set_all_saved_requests(all_requests);
+    ui.set_saved_requests(filtered_requests);
 }
 
 fn to_collection_model(collections: Vec<Collection>) -> ModelRc<CollectionItem> {
@@ -891,6 +914,10 @@ mod auto_pair_tests {
     }
 }
 
+fn is_wrap_boundary(character: char) -> bool {
+    character.is_whitespace() || matches!(character, ',' | ':' | '/' | '-' | '+' | '.')
+}
+
 fn tokenize_response(
     source: &str,
     format: &str,
@@ -960,14 +987,20 @@ fn tokenize_response(
         let mut column = 0usize;
         let mut first_visual_line = true;
         for token in tokens {
+            // For every position, the previous implementation rescanned the
+            // remaining token to discover whether a wrap boundary followed.
+            // Finding the final boundary once makes this pass linear in token
+            // length, including large unbroken strings and URLs.
+            let last_boundary = token
+                .text
+                .char_indices()
+                .rev()
+                .find_map(|(offset, character)| is_wrap_boundary(character).then_some(offset));
             let mut segment_start = 0;
             let mut segment_end = 0;
             for (offset, character) in token.text.char_indices() {
-                let boundary = character.is_whitespace()
-                    || matches!(character, ',' | ':' | '/' | '-' | '+' | '.');
-                let has_later_boundary = token.text[offset..].chars().any(|ch| {
-                    ch.is_whitespace() || matches!(ch, ',' | ':' | '/' | '-' | '+' | '.')
-                });
+                let boundary = is_wrap_boundary(character);
+                let has_later_boundary = last_boundary.is_some_and(|boundary| boundary >= offset);
 
                 if column >= max_columns && boundary {
                     segment_end = offset + character.len_utf8();
@@ -1283,6 +1316,38 @@ mod response_tokenizer_tests {
     }
 
     #[test]
+    fn long_unbroken_response_wraps_without_losing_text() {
+        let source = "x".repeat(64 * 1024);
+        let lines = tokenize_response(&source, "Text", true, 120.0);
+
+        assert!(lines.row_count() > 500);
+        assert_eq!(rendered_text(&lines), source);
+    }
+
+    #[test]
+    fn request_search_filters_the_display_model_without_mutating_the_source() {
+        let all = ModelRc::new(VecModel::from(vec![
+            RequestItem {
+                id: 1,
+                name: "Health check".into(),
+                method: "GET".into(),
+                url: "https://api.example.test/health".into(),
+            },
+            RequestItem {
+                id: 2,
+                name: "Create item".into(),
+                method: "POST".into(),
+                url: "https://api.example.test/items".into(),
+            },
+        ]));
+
+        let filtered = filter_request_model(&all, "ITEMS");
+        assert_eq!(filtered.row_count(), 1);
+        assert_eq!(filtered.row_data(0).unwrap().id, 2);
+        assert_eq!(all.row_count(), 2);
+    }
+
+    #[test]
     fn html_tokens_tags_attributes_and_text_with_optional_wrapping() {
         let source = r#"<p class="greeting">Hello world</p>"#;
         let lines = tokenize_response(source, "HTML", true, 10.0);
@@ -1586,10 +1651,7 @@ async fn main() -> Result<(), slint::PlatformError> {
                 let _ = slint::invoke_from_event_loop(move || {
                     if let Some(ui) = list_handle.upgrade() {
                         if ui.get_expanded_collection_id() as i64 == collection_id {
-                            ui.set_saved_requests(to_request_model(
-                                requests,
-                                ui.get_request_search().as_str(),
-                            ));
+                            replace_saved_request_models(&ui, requests);
                         }
                         if let Some(tab_index) = request_tab_index(&ui, tab_key) {
                             ui.invoke_set_request_tab_identity(
@@ -1778,7 +1840,6 @@ async fn main() -> Result<(), slint::PlatformError> {
 
                 let mut passed = 0usize;
                 let mut failed = 0usize;
-                let mut results = Vec::<CollectionRunResult>::new();
                 let mut history_entries: Vec<(i64, i64, String, String, String, String, i64)> =
                     Vec::new();
 
@@ -1803,8 +1864,20 @@ async fn main() -> Result<(), slint::PlatformError> {
                     } else {
                         failed += 1;
                     }
-                    let formatted_body = format_response_body(&result.body, &result.format);
-                    results.push(CollectionRunResult {
+                    let formatted_body = if result.body.len() <= MAX_STRUCTURED_VIEW_BYTES
+                        && matches!(result.format.as_str(), "JSON" | "HTML" | "XML")
+                    {
+                        let body_for_formatting = result.body.clone();
+                        let format_for_formatting = result.format.clone();
+                        tokio::task::spawn_blocking(move || {
+                            format_response_body(&body_for_formatting, &format_for_formatting)
+                        })
+                        .await
+                        .unwrap_or_default()
+                    } else {
+                        String::new()
+                    };
+                    let result_item = CollectionRunResult {
                         method: request.method.clone().into(),
                         name: request.name.clone().into(),
                         url: request.url.clone().into(),
@@ -1816,18 +1889,21 @@ async fn main() -> Result<(), slint::PlatformError> {
                         format: result.format.clone().into(),
                         large: result.body.len() > MAX_STRUCTURED_VIEW_BYTES,
                         headers: result.headers.clone().into(),
-                    });
+                    };
                     let progress_handle = app_handle.clone();
-                    let progress_results = results.clone();
                     let completed = passed + failed;
                     let _ = slint::invoke_from_event_loop(move || {
                         if let Some(ui) = progress_handle.upgrade() {
                             ui.set_collection_run_completed(completed as i32);
                             ui.set_collection_run_passed(passed as i32);
                             ui.set_collection_run_failed(failed as i32);
-                            ui.set_collection_run_results(ModelRc::new(VecModel::from(
-                                progress_results,
-                            )));
+                            let results = ui.get_collection_run_results();
+                            if let Some(results) = results
+                                .as_any()
+                                .downcast_ref::<VecModel<CollectionRunResult>>()
+                            {
+                                results.push(result_item);
+                            }
                             if ui.get_collection_run_selected() < 0 {
                                 ui.set_collection_run_selected(0);
                             }
@@ -1955,11 +2031,10 @@ async fn main() -> Result<(), slint::PlatformError> {
                                 ui.set_response_status(format!("Save failed: {error}").into())
                             }
                         }
-                        if let Ok(requests) = list_result {
-                            ui.set_saved_requests(to_request_model(
-                                requests,
-                                ui.get_request_search().as_str(),
-                            ));
+                        if ui.get_expanded_collection_id() as i64 == collection_id as i64
+                            && let Ok(requests) = list_result
+                        {
+                            replace_saved_request_models(&ui, requests);
                         }
                     }
                 });
@@ -2030,10 +2105,7 @@ async fn main() -> Result<(), slint::PlatformError> {
                             match result {
                                 Ok(Ok(requests)) => {
                                     if ui.get_expanded_collection_id() == collection_id {
-                                        ui.set_saved_requests(to_request_model(
-                                            requests,
-                                            ui.get_request_search().as_str(),
-                                        ));
+                                        replace_saved_request_models(&ui, requests);
                                     }
                                 }
                                 Ok(Err(error)) => {
@@ -2051,12 +2123,12 @@ async fn main() -> Result<(), slint::PlatformError> {
 
     app.on_search_requests({
         let app_weak = app_weak.clone();
-        move |_query| {
+        move |query| {
             if let Some(ui) = app_weak.upgrade() {
-                let collection_id = ui.get_expanded_collection_id();
-                if collection_id > 0 {
-                    ui.invoke_load_requests(collection_id);
-                }
+                ui.set_saved_requests(filter_request_model(
+                    &ui.get_all_saved_requests(),
+                    query.as_str(),
+                ));
             }
         }
     });
@@ -2141,13 +2213,14 @@ async fn main() -> Result<(), slint::PlatformError> {
             let app_handle = app_weak.clone();
             let store = Arc::clone(&store);
             tokio::task::spawn_blocking(move || {
-                let mut items = Vec::new();
-                for collection in store.list_collections()? {
-                    for variable in store.list_variables(collection.id)? {
-                        items.push((collection.id as i32, collection.name.clone(), variable));
-                    }
-                }
-                Ok::<_, crate::storage::StoreError>(items)
+                store.list_all_variables().map(|items| {
+                    items
+                        .into_iter()
+                        .map(|(collection_id, name, variable)| {
+                            (collection_id as i32, name, variable)
+                        })
+                        .collect::<Vec<_>>()
+                })
             })
             .then(move |result| async move {
                 let _ = slint::invoke_from_event_loop(move || {
@@ -2561,8 +2634,7 @@ async fn main() -> Result<(), slint::PlatformError> {
                                 ui.set_selected_collection_id(collection_id);
                                 ui.set_expanded_collection_id(collection_id);
                                 ui.set_selected_collection_name(collection_name.into());
-                                let search = ui.get_request_search().to_string();
-                                ui.set_saved_requests(to_request_model(requests, &search));
+                                replace_saved_request_models(&ui, requests);
                                 ui.invoke_load_collection_variables(collection_id);
                                 ui.set_active_view("Request".into());
                                 ui.set_is_loading(false);
@@ -2642,11 +2714,10 @@ async fn main() -> Result<(), slint::PlatformError> {
                                 if let Some(index) = deleted_tab_index {
                                     ui.invoke_close_request_tab(index as i32);
                                 }
-                                if let Ok(requests) = requests {
-                                    ui.set_saved_requests(to_request_model(
-                                        requests,
-                                        ui.get_request_search().as_str(),
-                                    ));
+                                if ui.get_expanded_collection_id() == collection_id
+                                    && let Ok(requests) = requests
+                                {
+                                    replace_saved_request_models(&ui, requests);
                                     if selected_collection {
                                         if ui.get_active_request_tab_index() < 0 {
                                             ui.set_selected_collection_id(collection_id);
@@ -2666,11 +2737,10 @@ async fn main() -> Result<(), slint::PlatformError> {
                             }
                             Ok((Ok(false), requests)) => {
                                 ui.set_response_status("Request was already deleted".into());
-                                if let Ok(requests) = requests {
-                                    ui.set_saved_requests(to_request_model(
-                                        requests,
-                                        ui.get_request_search().as_str(),
-                                    ));
+                                if ui.get_expanded_collection_id() == collection_id
+                                    && let Ok(requests) = requests
+                                {
+                                    replace_saved_request_models(&ui, requests);
                                 }
                             }
                             Ok((Err(error), _)) => {
