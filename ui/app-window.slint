@@ -1,7 +1,7 @@
 import { ThemedButton } from "components/themed-button.slint";
 import { ChoiceDropdown } from "components/choice-dropdown.slint";
 import { KeyValueEditor, KeyValueRow } from "components/key-value-editor.slint";
-import { ScrollView, Palette } from "std-widgets.slint";
+import { ScrollView, ListView, Palette } from "std-widgets.slint";
 import { AdwLineEdit, AdwTextEdit, AdwSelectableText, AutoPairAction } from "components/adw-inputs.slint";
 import { Theme } from "components/theme.slint";
 import { Icons } from "components/icons.slint";
@@ -73,6 +73,11 @@ export struct EnvironmentItem {
     key: string,
     value: string,
 }
+export struct CollectionRunResult {
+    method: string, name: string, url: string, status: string, elapsed: string,
+    state: string, body: string, pretty-body: string, format: string, large: bool,
+    headers: string,
+}
 export struct HistoryItem {
     request-id: int,
     request-name: string,
@@ -108,6 +113,8 @@ export component AppWindow inherits Window {
     callback load-requests(int);
     callback search-requests(string);
     callback load-history(string);
+    callback filter-history(string) -> [HistoryItem];
+    callback paginate-history(int, int) -> [HistoryItem];
     callback load-environments();
     callback run-collection(int);
     callback load-collection-variables(int);
@@ -123,6 +130,7 @@ export component AppWindow inherits Window {
     callback auto-pair-request-body(string, int, int, string, string) -> AutoPairAction;
     callback tokenize-response(string, string, bool, float) -> [JsonLine];
     callback build-json-tree(string, string, bool) -> [JsonTreeNode];
+    callback parse-response-headers(string) -> [ResponseHeaderItem];
     callback toggle-json-tree-node(string, string);
     // Implement in Rust (e.g. `arboard`). Unimplemented = Copy does nothing.
     callback copy-text(string);
@@ -147,6 +155,26 @@ export component AppWindow inherits Window {
     in-out property <[VariableItem]> collection-variables: [];
     in-out property <[EnvironmentItem]> environment-items: [];
     in-out property <[HistoryItem]> history-items: [];
+    in-out property <[HistoryItem]> history-visible-items: [];
+    in-out property <[HistoryItem]> history-page-items: [];
+    in-out property <bool> history-loading: false;
+    in-out property <string> history-load-error: "";
+    in-out property <int> history-page: 1;
+    in-out property <int> history-page-size: 20;
+    property <int> history-page-count: max(1, (root.history-visible-items.length + root.history-page-size - 1) / root.history-page-size);
+    in-out property <[CollectionRunResult]> collection-run-results: [];
+    in-out property <string> collection-run-name: "";
+    in-out property <string> collection-run-state: "idle";
+    in-out property <string> collection-run-duration: "";
+    in-out property <string> collection-run-error: "";
+    in-out property <int> collection-run-total: 0;
+    in-out property <int> collection-run-completed: 0;
+    in-out property <int> collection-run-passed: 0;
+    in-out property <int> collection-run-failed: 0;
+    in-out property <int> collection-run-skipped: 0;
+    in-out property <int> collection-run-selected: -1;
+    in-out property <string> collection-run-response-tab: "Body";
+    in-out property <[ResponseHeaderItem]> collection-run-header-items: [];
     in-out property <int> active-request-id: -1;
     in-out property <int> selected-collection-id: -1;
     in-out property <int> expanded-collection-id: -1;
@@ -275,8 +303,18 @@ in-out property <bool> response-large: false;
     function open-view(view: string) {
         root.active-view = view;
         root.collection-menu-id = -1;
-        if view == "History" { root.load-history(root.history-sort); }
+        if view == "History" {
+            root.history-loading = true;
+            root.history-load-error = "";
+            root.history-page = 1;
+            root.load-history(root.history-sort);
+        }
         if view == "Environments" { root.load-environments(); }
+    }
+
+    function refresh-history-page() {
+        root.history-page = min(root.history-page, root.history-page-count);
+        root.history-page-items = root.paginate-history(root.history-page, root.history-page-size);
     }
 
     function begin-new-collection() {
@@ -836,7 +874,8 @@ in-out property <bool> response-large: false;
                                 horizontal-stretch: 1;
                                 text: root.active-view == "Collections" ? "Collections"
                                     : root.active-view == "History" ? "History"
-                                    : root.active-view == "Environments" ? "Environments" : "Collection variables";
+                                    : root.active-view == "Environments" ? "Environments"
+                                    : root.active-view == "Regression" ? "Regression run" : "Collection variables";
                                 color: Theme.fg;
                                 font-size: Theme.fs-body;
                                 font-weight: 700;
@@ -1017,6 +1056,7 @@ in-out property <bool> response-large: false;
                         Rectangle { height: 4px; }
 
                         NavRow { icon: Icons.folder; text: "Collections"; active: root.active-view == "Collections"; clicked => { root.open-view("Collections"); } }
+                        NavRow { icon: Icons.play; text: "Regression run"; active: root.active-view == "Regression"; clicked => { if root.collection-run-name != "" { root.active-view = "Regression"; } } }
                         NavRow { icon: Icons.history; text: "History"; active: root.active-view == "History"; clicked => { root.open-view("History"); } }
                         NavRow { icon: Icons.globe; text: "Environments"; active: root.active-view == "Environments" || root.active-view == "Variables"; clicked => { root.open-view("Environments"); } }
 
@@ -1713,7 +1753,150 @@ in-out property <bool> response-large: false;
                                 }
                             }
                         }
+
                         Rectangle { horizontal-stretch: 1; }
+                    }
+
+                    if root.active-view == "Regression" : VerticalLayout {
+                        padding: 24px;
+                        spacing: 16px;
+                        HorizontalLayout {
+                            height: 54px;
+                            spacing: 12px;
+                            Rectangle { width: 42px; height: 42px; border-radius: 12px; background: Theme.active;
+                                Image { source: Icons.play; width: 20px; height: 20px; x: 11px; y: 11px; colorize: Theme.accent; }
+                            }
+                            VerticalLayout { cross-axis-alignment: start; spacing: 2px;
+                                Text { text: "COLLECTION REGRESSION"; color: Theme.accent-text; font-size: Theme.fs-caption; font-weight: 700; }
+                                Text { text: root.collection-run-name; color: Theme.fg; font-size: Theme.fs-heading; font-weight: 700; }
+                            }
+                            Rectangle { horizontal-stretch: 1; }
+                            Text { text: root.collection-run-state == "running" ? "Running · " + root.collection-run-completed + " of " + root.collection-run-total : root.collection-run-state == "completed" ? "Completed in " + root.collection-run-duration : root.collection-run-state; color: root.collection-run-failed > 0 ? Theme.danger : Theme.fg-2; font-size: Theme.fs-label; vertical-alignment: center; }
+                        }
+                        Rectangle { height: 1px; background: Theme.border; }
+                        HorizontalLayout { height: 74px; spacing: 10px;
+                            for metric in [{title: "TOTAL", value: root.collection-run-total, tint: Theme.fg}, {title: "PASSED", value: root.collection-run-passed, tint: Theme.success}, {title: "FAILED", value: root.collection-run-failed, tint: Theme.danger}, {title: "SKIPPED", value: root.collection-run-skipped, tint: Theme.fg-2}] : Rectangle {
+                                horizontal-stretch: 1; border-radius: 10px; background: Theme.view-bg; border-width: 1px; border-color: Theme.border;
+                                VerticalLayout { padding: 12px; spacing: 3px;
+                                    Text { text: metric.title; color: Theme.fg-3; font-size: Theme.fs-caption; font-weight: 700; }
+                                    Text { text: "" + metric.value; color: metric.tint; font-size: 22px; font-weight: 700; }
+                                }
+                            }
+                        }
+                        if root.collection-run-state == "running" : Rectangle {
+                            height: 3px; background: Theme.border; border-radius: 2px;
+                            Rectangle { width: root.collection-run-total > 0 ? parent.width * root.collection-run-completed / root.collection-run-total : 0px; height: parent.height; background: Theme.accent; border-radius: 2px; animate width { duration: 180ms; } }
+                        }
+                        HorizontalLayout { vertical-stretch: 1; spacing: 14px;
+                            Rectangle { horizontal-stretch: 2; min-width: 280px; border-radius: 10px; background: Theme.view-bg; border-width: 1px; border-color: Theme.border;
+                                VerticalLayout { padding: 12px; spacing: 6px;
+                                    Text { text: "Request results"; color: Theme.fg; font-size: Theme.fs-label; font-weight: 700; }
+                                    if root.collection-run-results.length == 0 : Text { text: root.collection-run-state == "running" ? "Preparing collection run…" : root.collection-run-state == "error" ? root.collection-run-error : "No saved requests in this collection."; color: root.collection-run-state == "error" ? Theme.danger : Theme.fg-3; font-size: Theme.fs-label; vertical-alignment: center; vertical-stretch: 1; horizontal-alignment: center; wrap: word-wrap; }
+                                    ScrollView { vertical-stretch: 1; VerticalLayout { spacing: 4px;
+                                        for result[index] in root.collection-run-results : Rectangle {
+                                            height: 58px; border-radius: 7px;
+                                            background: root.collection-run-selected == index ? Theme.active : row-touch.has-hover ? Theme.hover : transparent;
+                                            border-width: root.collection-run-selected == index ? 1px : 0px; border-color: Theme.accent;
+                                            row-touch := TouchArea { clicked => { root.collection-run-selected = index; root.collection-run-response-tab = "Body"; root.collection-run-header-items = root.parse-response-headers(result.headers); } }
+                                            HorizontalLayout { padding: 8px; spacing: 8px; cross-axis-alignment: center;
+                                                MethodBadge { value: result.method; }
+                                                VerticalLayout { horizontal-stretch: 1; min-width: 0px; preferred-width: 0px; max-width: 100000px; vertical-stretch: 1; spacing: 2px;
+                                                    Text { horizontal-stretch: 1; min-width: 0px; preferred-width: 0px; text: result.name; color: Theme.fg; font-size: Theme.fs-small; font-weight: 600; overflow: elide; }
+                                                    Text { horizontal-stretch: 1; min-width: 0px; preferred-width: 0px; text: result.url; color: Theme.fg-3; font-size: Theme.fs-caption; overflow: elide; }
+                                                }
+                                            Text { width: 112px; text: result.status; color: result.state == "success" ? Theme.success : Theme.danger; font-size: Theme.fs-small; font-weight: 700; horizontal-alignment: right; overflow: elide; }
+                                            }
+                                        }
+                                    } }
+                                }
+                            }
+                            Rectangle { horizontal-stretch: 3; min-width: 320px; border-radius: 10px; background: Theme.view-bg; border-width: 1px; border-color: Theme.border;
+                                VerticalLayout { padding: 14px; spacing: 10px;
+                                    if root.collection-run-selected < 0 || root.collection-run-selected >= root.collection-run-results.length : VerticalLayout {
+                                        vertical-stretch: 1; alignment: center; spacing: 6px;
+                                        Text { text: "Select a request result"; color: Theme.fg; font-size: Theme.fs-heading; font-weight: 700; horizontal-alignment: center; }
+                                        Text { text: "Inspect the response, headers, and timing for each request in this run."; color: Theme.fg-2; font-size: Theme.fs-label; horizontal-alignment: center; wrap: word-wrap; }
+                                    }
+                                    if root.collection-run-selected >= 0 && root.collection-run-selected < root.collection-run-results.length : VerticalLayout {
+                                        vertical-stretch: 1;
+                                        spacing: 8px;
+                                        HorizontalLayout { height: 32px; spacing: 8px;
+                                            Text { text: root.collection-run-results[root.collection-run-selected].name; color: Theme.fg; font-size: Theme.fs-label; font-weight: 700; vertical-alignment: center; horizontal-stretch: 1; overflow: elide; }
+                                            Text { text: root.collection-run-results[root.collection-run-selected].status + " · " + root.collection-run-results[root.collection-run-selected].elapsed; color: root.collection-run-results[root.collection-run-selected].state == "success" ? Theme.success : Theme.danger; font-size: Theme.fs-small; vertical-alignment: center; }
+                                        }
+                                        Text { horizontal-stretch: 1; min-width: 0px; preferred-width: 0px; text: root.collection-run-results[root.collection-run-selected].url; color: Theme.fg-3; font-size: Theme.fs-small; overflow: elide; }
+                                        TabBar {
+                                            tabs: ["Body", "Headers"];
+                                            counts: ["", "" + root.collection-run-header-items.length];
+                                            current: root.collection-run-response-tab;
+                                            style: "underline";
+                                            selected(tab) => { root.collection-run-response-tab = tab; }
+                                        }
+                                        if root.collection-run-response-tab == "Body" : ResponseBody {
+                                            vertical-stretch: 1;
+                                            raw: root.collection-run-results[root.collection-run-selected].body;
+                                            pretty: root.collection-run-results[root.collection-run-selected].pretty-body;
+                                            format: root.collection-run-results[root.collection-run-selected].format;
+                                            dark: root.dark-mode;
+                                            wrap-lines: true;
+                                            large-response: root.collection-run-results[root.collection-run-selected].large;
+                                            show-toolbar: false;
+                                            selectable-text: true;
+                                            tree-scope: "collection-run-" + root.collection-run-selected;
+                                            tokenize-response(source, format, dark, max-columns) => { root.tokenize-response(source, format, dark, max-columns); }
+                                            build-json-tree(scope, source, dark) => { root.build-json-tree(scope, source, dark); }
+                                            toggle-json-tree-node(scope, path) => { root.toggle-json-tree-node(scope, path); }
+                                            copy-all(text) => { root.copy-text(text); }
+                                        }
+                                        if root.collection-run-response-tab == "Headers" && root.collection-run-header-items.length == 0 : VerticalLayout {
+                                            vertical-stretch: 1; alignment: center; spacing: 6px;
+                                            Text { text: "No response headers"; color: Theme.fg; font-size: Theme.fs-label; font-weight: 700; horizontal-alignment: center; }
+                                            Text { text: "This response did not include any headers."; color: Theme.fg-3; font-size: Theme.fs-small; horizontal-alignment: center; }
+                                        }
+                                        if root.collection-run-response-tab == "Headers" && root.collection-run-header-items.length > 0 : ScrollView {
+                                            vertical-stretch: 1;
+                                            content-width: self.width;
+                                            content-height: max(self.height, root.collection-run-header-items.length * 76px + 20px);
+                                            VerticalLayout {
+                                                x: 10px; y: 10px;
+                                                width: parent.width - 20px;
+                                                spacing: 6px;
+                                                for header in root.collection-run-header-items : Rectangle {
+                                                    height: 70px;
+                                                    border-radius: 8px;
+                                                    background: Theme.view-bg;
+                                                    border-width: 1px;
+                                                    border-color: Theme.border;
+                                                    VerticalLayout {
+                                                        padding: 8px;
+                                                        spacing: 3px;
+                                                        AdwSelectableText {
+                                                            height: 17px;
+                                                            text: header.name;
+                                                            text-color: Theme.accent-text;
+                                                            font-family: Theme.font-mono;
+                                                            font-size: Theme.fs-caption;
+                                                            font-weight: 700;
+                                                            vertical-alignment: TextVerticalAlignment.top;
+                                                            wrap: char-wrap;
+                                                        }
+                                                        AdwSelectableText {
+                                                            vertical-stretch: 1;
+                                                            text: header.value;
+                                                            text-color: Theme.fg;
+                                                            font-family: Theme.font-mono;
+                                                            font-size: Theme.fs-small;
+                                                            vertical-alignment: TextVerticalAlignment.top;
+                                                            wrap: char-wrap;
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
                     }
 
                     // ───────── Environments ─────────
@@ -1818,9 +2001,31 @@ in-out property <bool> response-large: false;
                                     y: 3px;
                                     tabs: ["All", "Success", "Failed"];
                                     current: root.history-filter;
-                                    selected(t) => { root.history-filter = t; }
+                                    selected(t) => {
+                                        root.history-filter = t;
+                                        root.history-visible-items = root.filter-history(t);
+                                        root.history-page = 1;
+                                        root.refresh-history-page();
+                                    }
                                 }
-                                Text { text: "Last 500 sent requests"; color: Theme.fg-3; font-size: Theme.fs-small; vertical-alignment: center; horizontal-stretch: 1; horizontal-alignment: right; }
+                                Text {
+                                    text: "" + root.history-visible-items.length + " matching";
+                                    color: Theme.fg-3; font-size: Theme.fs-small; vertical-alignment: center;
+                                    horizontal-stretch: 1; horizontal-alignment: right;
+                                }
+                                Text { text: "Per page"; color: Theme.fg-3; font-size: Theme.fs-small; vertical-alignment: center; }
+                                ChoiceDropdown {
+                                    accent-color: root.accent;
+                                    width: 92px;
+                                    options: ["10", "20", "50", "100"];
+                                    current-value: "" + root.history-page-size;
+                                    dark-mode: Theme.dark;
+                                    selected(value) => {
+                                        root.history-page-size = value == "10" ? 10 : value == "50" ? 50 : value == "100" ? 100 : 20;
+                                        root.history-page = 1;
+                                        root.refresh-history-page();
+                                    }
+                                }
                                 ChoiceDropdown {
                                     accent-color: root.accent;
                                     width: 150px;
@@ -1829,12 +2034,100 @@ in-out property <bool> response-large: false;
                                     dark-mode: Theme.dark;
                                     selected(value) => {
                                         root.history-sort = value;
+                                        root.history-loading = true;
+                                        root.history-load-error = "";
+                                        root.history-page = 1;
                                         root.load-history(value);
                                     }
                                 }
                             }
 
-                            if root.history-items.length == 0 : Rectangle {
+                            if root.history-loading : Rectangle {
+                                vertical-stretch: 1;
+                                background: Theme.view-bg;
+                                border-width: 1px;
+                                border-color: Theme.border;
+                                border-radius: Theme.radius-card;
+                                VerticalLayout {
+                                    alignment: center;
+                                    cross-axis-alignment: center;
+                                    spacing: 8px;
+                                    Rectangle {
+                                        width: 56px;
+                                        height: 56px;
+                                        background: transparent;
+                                        Rectangle {
+                                            x: 6px;
+                                            y: 6px;
+                                            width: 44px;
+                                            height: 44px;
+                                            border-radius: 22px;
+                                            border-width: 1px;
+                                            border-color: Theme.accent.with-alpha(0.24);
+                                            background: Theme.accent.with-alpha(0.035);
+                                        }
+                                        Rectangle {
+                                            x: 25px + 20px * sin(360deg * animation-tick() / 1.35s);
+                                            y: 25px - 20px * cos(360deg * animation-tick() / 1.35s);
+                                            width: 6px;
+                                            height: 6px;
+                                            border-radius: 3px;
+                                            background: Theme.accent;
+                                        }
+                                        Rectangle {
+                                            x: 25px + 20px * sin(360deg * animation-tick() / 1.35s + 120deg);
+                                            y: 25px - 20px * cos(360deg * animation-tick() / 1.35s + 120deg);
+                                            width: 6px;
+                                            height: 6px;
+                                            border-radius: 3px;
+                                            background: Theme.accent.with-alpha(0.72);
+                                        }
+                                        Rectangle {
+                                            x: 25px + 20px * sin(360deg * animation-tick() / 1.35s + 240deg);
+                                            y: 25px - 20px * cos(360deg * animation-tick() / 1.35s + 240deg);
+                                            width: 6px;
+                                            height: 6px;
+                                            border-radius: 3px;
+                                            background: Theme.accent.with-alpha(0.44);
+                                        }
+                                        Rectangle {
+                                            x: 23px;
+                                            y: 23px;
+                                            width: 10px;
+                                            height: 10px;
+                                            border-radius: 5px;
+                                            background: Theme.accent.with-alpha(0.18 + 0.22 * abs(sin(180deg * animation-tick() / 1s)));
+                                        }
+                                    }
+                                    Text { text: "Loading request history…"; color: Theme.fg; font-size: 20px; font-weight: 700; horizontal-alignment: center; }
+                                    Text { text: "Fetching your recent requests. You can switch tabs while it loads."; color: Theme.fg-2; font-size: Theme.fs-body; horizontal-alignment: center; }
+                                }
+                            }
+
+                            if !root.history-loading && root.history-load-error != "" : Rectangle {
+                                vertical-stretch: 1;
+                                background: Theme.view-bg;
+                                border-width: 1px;
+                                border-color: Theme.border;
+                                border-radius: Theme.radius-card;
+                                VerticalLayout {
+                                    alignment: center;
+                                    spacing: 10px;
+                                    Text { text: "History could not be loaded"; color: Theme.fg; font-size: Theme.fs-heading; font-weight: 700; horizontal-alignment: center; }
+                                    Text { text: root.history-load-error; color: Theme.fg-2; font-size: Theme.fs-body; horizontal-alignment: center; }
+                                    Btn {
+                                        text: "Try again";
+                                        kind: "suggested";
+                                        clicked => {
+                                            root.history-loading = true;
+                                            root.history-load-error = "";
+                                            root.load-history(root.history-sort);
+                                        }
+                                    }
+                                }
+                            }
+
+                            if !root.history-loading && root.history-load-error == "" && root.history-items.length == 0 : Rectangle {
                                 vertical-stretch: 1;
                                 background: Theme.view-bg;
                                 border-width: 1px;
@@ -1848,65 +2141,112 @@ in-out property <bool> response-large: false;
                                 }
                             }
 
-                            if root.history-items.length > 0 : ScrollView {
+                            if !root.history-loading && root.history-load-error == "" && root.history-items.length > 0 && root.history-visible-items.length == 0 : Rectangle {
                                 vertical-stretch: 1;
+                                background: Theme.view-bg;
+                                border-width: 1px;
+                                border-color: Theme.border;
+                                border-radius: Theme.radius-card;
                                 VerticalLayout {
-                                    alignment: start;
+                                    alignment: center;
                                     spacing: 8px;
+                                    Text { text: "No matching requests"; color: Theme.fg; font-size: Theme.fs-heading; font-weight: 700; horizontal-alignment: center; }
+                                    Text { text: "Try another history filter to see more results."; color: Theme.fg-2; font-size: Theme.fs-body; horizontal-alignment: center; }
+                                }
+                            }
 
-                                    for item in root.history-items : VerticalLayout {
-                                        if root.history-filter == "All"
-                                            || (root.history-filter == "Success" && item.status.starts-with("2"))
-                                            || (root.history-filter == "Failed" && !item.status.starts-with("2")) : Rectangle {
-                                            height: 64px;
-                                            background: history-touch.has-hover ? Theme.hover : Theme.view-bg;
-                                            border-width: 1px;
-                                            border-color: Theme.border;
-                                            border-radius: 10px;
+                            if !root.history-loading && root.history-load-error == "" && root.history-page-items.length > 0 : ListView {
+                                vertical-stretch: 1;
+                                for item in root.history-page-items : Rectangle {
+                                    height: 72px;
+                                    Rectangle {
+                                        y: 4px;
+                                        width: parent.width;
+                                        height: 64px;
+                                        background: history-touch.has-hover ? Theme.hover : Theme.view-bg;
+                                        border-width: 1px;
+                                        border-color: Theme.border;
+                                        border-radius: 10px;
 
-                                            history-touch := TouchArea {
-                                                mouse-cursor: pointer;
-                                                clicked => {
-                                                    root.selected-collection-name = item.collection-name;
-                                                    root.open-saved-request-tab(item.request-id);
+                                        history-touch := TouchArea {
+                                            mouse-cursor: pointer;
+                                            clicked => {
+                                                root.selected-collection-name = item.collection-name;
+                                                root.open-saved-request-tab(item.request-id);
+                                            }
+                                        }
+
+                                        HorizontalLayout {
+                                            padding: 12px;
+                                            padding-left: 14px;
+                                            spacing: 14px;
+                                            MethodBadge { value: item.method; y: (parent.height - self.height) / 2; }
+                                            VerticalLayout {
+                                                horizontal-stretch: 1;
+                                                alignment: center;
+                                                spacing: 3px;
+                                                Text { text: item.request-name; color: Theme.fg; font-size: Theme.fs-body; font-weight: 700; overflow: elide; }
+                                                Text { text: item.collection-name + " · " + item.url; color: Theme.fg-3; font-size: Theme.fs-small; overflow: elide; }
+                                            }
+                                            Rectangle {
+                                                width: status-text.preferred-width + 20px;
+                                                height: 24px;
+                                                y: (parent.height - self.height) / 2;
+                                                border-radius: 12px;
+                                                background: item.status.starts-with("2") || item.status.starts-with("3") ? Theme.success-bg : Theme.danger-bg;
+                                                status-text := Text {
+                                                    text: item.status;
+                                                    color: item.status.starts-with("2") || item.status.starts-with("3") ? Theme.success : Theme.danger;
+                                                    font-size: Theme.fs-small;
+                                                    font-weight: 700;
+                                                    horizontal-alignment: center;
+                                                    vertical-alignment: center;
                                                 }
                                             }
-
-                                            HorizontalLayout {
-                                                padding: 12px;
-                                                padding-left: 14px;
-                                                spacing: 14px;
-                                                MethodBadge { value: item.method; y: (parent.height - self.height) / 2; }
-                                                VerticalLayout {
-                                                    horizontal-stretch: 1;
-                                                    alignment: center;
-                                                    spacing: 3px;
-                                                    Text { text: item.request-name; color: Theme.fg; font-size: Theme.fs-body; font-weight: 700; overflow: elide; }
-                                                    Text { text: item.collection-name + " · " + item.url; color: Theme.fg-3; font-size: Theme.fs-small; overflow: elide; }
-                                                }
-                                                Rectangle {
-                                                    width: status-text.preferred-width + 20px;
-                                                    height: 24px;
-                                                    y: (parent.height - self.height) / 2;
-                                                    border-radius: 12px;
-                                                    background: item.status.starts-with("2") ? Theme.success-bg : Theme.danger-bg;
-                                                    status-text := Text {
-                                                        text: item.status;
-                                                        color: item.status.starts-with("2") ? Theme.success : Theme.danger;
-                                                        font-size: Theme.fs-small;
-                                                        font-weight: 700;
-                                                        horizontal-alignment: center;
-                                                        vertical-alignment: center;
-                                                    }
-                                                }
-                                                VerticalLayout {
-                                                    width: 130px;
-                                                    alignment: center;
-                                                    spacing: 3px;
-                                                    Text { text: item.duration; color: Theme.fg-2; font-size: Theme.fs-small; font-weight: 600; horizontal-alignment: right; }
-                                                    Text { text: item.date; color: Theme.fg-3; font-size: Theme.fs-caption; horizontal-alignment: right; }
-                                                }
+                                            VerticalLayout {
+                                                width: 130px;
+                                                alignment: center;
+                                                spacing: 3px;
+                                                Text { text: item.duration; color: Theme.fg-2; font-size: Theme.fs-small; font-weight: 600; horizontal-alignment: right; }
+                                                Text { text: item.date; color: Theme.fg-3; font-size: Theme.fs-caption; horizontal-alignment: right; }
                                             }
+                                        }
+                                    }
+                                }
+                            }
+
+                            if !root.history-loading && root.history-load-error == "" && root.history-visible-items.length > 0 : Rectangle {
+                                height: 40px;
+                                background: Theme.view-bg;
+                                HorizontalLayout {
+                                    y: 0px;
+                                    height: 40px;
+                                    width: parent.width;
+                                    spacing: 8px;
+                                    Text {
+                                        text: "Showing " + ((root.history-page - 1) * root.history-page-size + 1) + "–" + min(root.history-page * root.history-page-size, root.history-visible-items.length) + " of " + root.history-visible-items.length;
+                                        color: Theme.fg-3; font-size: Theme.fs-small; vertical-alignment: center; horizontal-stretch: 1;
+                                    }
+                                    Btn {
+                                        text: "Previous";
+                                        kind: "flat";
+                                        enabled: root.history-page > 1;
+                                        clicked => {
+                                            root.history-page -= 1;
+                                            root.refresh-history-page();
+                                        }
+                                    }
+                                    Text {
+                                        text: "Page " + root.history-page + " of " + root.history-page-count;
+                                        color: Theme.fg-2; font-size: Theme.fs-small; vertical-alignment: center;
+                                    }
+                                    Btn {
+                                        text: "Next";
+                                        kind: "flat";
+                                        enabled: root.history-page < root.history-page-count;
+                                        clicked => {
+                                            root.history-page += 1;
+                                            root.refresh-history-page();
                                         }
                                     }
                                 }

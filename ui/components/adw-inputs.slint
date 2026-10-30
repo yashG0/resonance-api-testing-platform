@@ -290,6 +290,7 @@ export component AdwSelectableText inherits Rectangle {
     in property <length> font-size: Theme.fs-body;
     in property <string> font-family: Theme.font-mono;
     in property <int> font-weight: 400;
+    in property <TextVerticalAlignment> vertical-alignment: TextVerticalAlignment.center;
 
     background: transparent;
     forward-focus: input;
@@ -322,7 +323,7 @@ export component AdwSelectableText inherits Rectangle {
             selection-background-color: Theme.accent;
             selection-foreground-color: Theme.accent-fg;
             horizontal-alignment: left;
-            vertical-alignment: center;
+            vertical-alignment: root.vertical-alignment;
         }
     }
 }

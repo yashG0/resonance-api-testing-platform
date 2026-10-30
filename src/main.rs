@@ -422,6 +422,31 @@ fn to_history_model(history: Vec<RequestHistory>) -> ModelRc<HistoryItem> {
     ModelRc::new(VecModel::from(items))
 }
 
+fn filter_history_items(history: &ModelRc<HistoryItem>, filter: &str) -> ModelRc<HistoryItem> {
+    let items = (0..history.row_count())
+        .filter_map(|index| history.row_data(index))
+        .filter(|item| match filter {
+            "Success" => item.status.starts_with('2') || item.status.starts_with('3'),
+            "Failed" => !item.status.starts_with('2') && !item.status.starts_with('3'),
+            _ => true,
+        })
+        .collect::<Vec<_>>();
+    ModelRc::new(VecModel::from(items))
+}
+
+fn paginate_history_items(
+    history: &ModelRc<HistoryItem>,
+    page: i32,
+    page_size: i32,
+) -> ModelRc<HistoryItem> {
+    let page_size = page_size.max(1) as usize;
+    let start = page.saturating_sub(1).max(0) as usize * page_size;
+    let items = (start..(start + page_size).min(history.row_count()))
+        .filter_map(|index| history.row_data(index))
+        .collect::<Vec<_>>();
+    ModelRc::new(VecModel::from(items))
+}
+
 #[derive(Clone, Copy)]
 struct SyntaxColors {
     base: Color,
@@ -938,7 +963,37 @@ fn tokenize_response(
             let mut segment_start = 0;
             let mut segment_end = 0;
             for (offset, character) in token.text.char_indices() {
-                if column == max_columns {
+                let boundary = character.is_whitespace()
+                    || matches!(character, ',' | ':' | '/' | '-' | '+' | '.');
+                let has_later_boundary = token.text[offset..].chars().any(|ch| {
+                    ch.is_whitespace() || matches!(ch, ',' | ':' | '/' | '-' | '+' | '.')
+                });
+
+                if column >= max_columns && boundary {
+                    segment_end = offset + character.len_utf8();
+                    if segment_end > segment_start {
+                        push_syntax_token(
+                            &mut current,
+                            &token.text[segment_start..segment_end],
+                            token.color,
+                        );
+                    }
+                    append_visual_line(
+                        &mut lines,
+                        if first_visual_line {
+                            (line_index + 1) as i32
+                        } else {
+                            0
+                        },
+                        std::mem::take(&mut current),
+                    );
+                    first_visual_line = false;
+                    column = 0;
+                    segment_start = segment_end;
+                    continue;
+                }
+
+                if column >= max_columns && !has_later_boundary {
                     if segment_end > segment_start {
                         push_syntax_token(
                             &mut current,
@@ -1331,6 +1386,8 @@ async fn main() -> Result<(), slint::PlatformError> {
         }
     });
 
+    app.on_parse_response_headers(|headers| to_response_header_model(headers.as_str()));
+
     app.on_toggle_json_tree_node({
         let tree_expansion_state = Arc::clone(&tree_expansion_state);
         move |scope, path| {
@@ -1644,12 +1701,33 @@ async fn main() -> Result<(), slint::PlatformError> {
         let client = Arc::clone(&client);
         let store = Arc::clone(&store);
         move |collection_id| {
+            let collection_name = app_weak
+                .upgrade()
+                .and_then(|ui| {
+                    ui.get_collections()
+                        .iter()
+                        .find(|c| c.id == collection_id)
+                        .map(|c| c.name.to_string())
+                })
+                .unwrap_or_else(|| "Collection".to_owned());
             if let Some(ui) = app_weak.upgrade() {
-                ui.set_response_tab("Body".into());
-                ui.set_response_headers("".into());
-                ui.set_response_cookies("".into());
-                ui.set_response_header_items(to_response_header_model(""));
-                ui.set_response_cookie_items(to_response_cookie_model(""));
+                ui.set_collection_run_name(collection_name.clone().into());
+                ui.set_collection_run_state("running".into());
+                ui.set_collection_run_duration("".into());
+                ui.set_collection_run_error("".into());
+                ui.set_collection_run_total(0);
+                ui.set_collection_run_completed(0);
+                ui.set_collection_run_passed(0);
+                ui.set_collection_run_failed(0);
+                ui.set_collection_run_skipped(0);
+                ui.set_collection_run_selected(-1);
+                ui.set_collection_run_response_tab("Body".into());
+                ui.set_collection_run_header_items(to_response_header_model(""));
+                ui.set_collection_run_results(ModelRc::new(VecModel::from(Vec::<
+                    CollectionRunResult,
+                >::new(
+                ))));
+                ui.set_active_view("Regression".into());
             }
             let app_handle = app_weak.clone();
             let client = Arc::clone(&client);
@@ -1669,10 +1747,8 @@ async fn main() -> Result<(), slint::PlatformError> {
                         let message = format!("Could not start collection run: {error}");
                         let _ = slint::invoke_from_event_loop(move || {
                             if let Some(ui) = app_handle.upgrade() {
-                                ui.set_response_status("Collection run failed".into());
-                                ui.set_response_state("error".into());
-                                ui.set_response_body(message.into());
-                                ui.set_is_loading(false);
+                                ui.set_collection_run_state("error".into());
+                                ui.set_collection_run_error(message.into());
                             }
                         });
                         return;
@@ -1681,28 +1757,28 @@ async fn main() -> Result<(), slint::PlatformError> {
                         let message = format!("Could not start collection run: {error}");
                         let _ = slint::invoke_from_event_loop(move || {
                             if let Some(ui) = app_handle.upgrade() {
-                                ui.set_response_status("Collection run failed".into());
-                                ui.set_response_state("error".into());
-                                ui.set_response_body(message.into());
-                                ui.set_is_loading(false);
+                                ui.set_collection_run_state("error".into());
+                                ui.set_collection_run_error(message.into());
                             }
                         });
                         return;
                     }
                 };
 
-                let start_handle = app_handle.clone();
-                let _ = slint::invoke_from_event_loop(move || {
-                    if let Some(ui) = start_handle.upgrade() {
-                        ui.set_response_large(false);
-                        ui.set_is_loading(true);
-                        ui.set_response_status("Running collection…".into());
-                        ui.set_response_state("loading".into());
+                let total = requests.len();
+                let started = std::time::Instant::now();
+                let _ = slint::invoke_from_event_loop({
+                    let handle = app_handle.clone();
+                    move || {
+                        if let Some(ui) = handle.upgrade() {
+                            ui.set_collection_run_total(total as i32);
+                        }
                     }
                 });
 
                 let mut passed = 0usize;
-                let mut lines = Vec::new();
+                let mut failed = 0usize;
+                let mut results = Vec::<CollectionRunResult>::new();
                 let mut history_entries: Vec<(i64, i64, String, String, String, String, i64)> =
                     Vec::new();
 
@@ -1721,16 +1797,51 @@ async fn main() -> Result<(), slint::PlatformError> {
                             &variables,
                         )
                         .await;
-                    if result.status.starts_with('2') || result.status.starts_with('3') {
+                    let success = result.state == "success";
+                    if success {
                         passed += 1;
+                    } else {
+                        failed += 1;
                     }
-                    lines.push(format!(
-                        "{} {} — {} ({:.2} ms)",
-                        request.method,
-                        request.name,
-                        result.status,
-                        result.elapsed.as_secs_f64() * 1000.0
-                    ));
+                    let formatted_body = format_response_body(&result.body, &result.format);
+                    results.push(CollectionRunResult {
+                        method: request.method.clone().into(),
+                        name: request.name.clone().into(),
+                        url: request.url.clone().into(),
+                        status: result.status.clone().into(),
+                        elapsed: format!("{:.2} ms", result.elapsed.as_secs_f64() * 1000.0).into(),
+                        state: result.state.clone().into(),
+                        body: result.body.clone().into(),
+                        pretty_body: formatted_body.into(),
+                        format: result.format.clone().into(),
+                        large: result.body.len() > MAX_STRUCTURED_VIEW_BYTES,
+                        headers: result.headers.clone().into(),
+                    });
+                    let progress_handle = app_handle.clone();
+                    let progress_results = results.clone();
+                    let completed = passed + failed;
+                    let _ = slint::invoke_from_event_loop(move || {
+                        if let Some(ui) = progress_handle.upgrade() {
+                            ui.set_collection_run_completed(completed as i32);
+                            ui.set_collection_run_passed(passed as i32);
+                            ui.set_collection_run_failed(failed as i32);
+                            ui.set_collection_run_results(ModelRc::new(VecModel::from(
+                                progress_results,
+                            )));
+                            if ui.get_collection_run_selected() < 0 {
+                                ui.set_collection_run_selected(0);
+                            }
+                            let selected = ui.get_collection_run_selected();
+                            if selected >= 0
+                                && let Some(result) =
+                                    ui.get_collection_run_results().row_data(selected as usize)
+                            {
+                                ui.set_collection_run_header_items(to_response_header_model(
+                                    result.headers.as_str(),
+                                ));
+                            }
+                        }
+                    });
                     history_entries.push((
                         request.id,
                         request.collection_id,
@@ -1747,30 +1858,13 @@ async fn main() -> Result<(), slint::PlatformError> {
                 })
                 .await;
 
-                let total = lines.len();
-                let state = if passed == total {
-                    "success"
-                } else {
-                    "http-error"
-                };
-                let status = format!("Collection run · {passed}/{total} passed");
-                let body = if lines.is_empty() {
-                    "This collection has no saved requests.".to_owned()
-                } else {
-                    lines.join("\n")
-                };
+                let duration = format!("{:.2} s", started.elapsed().as_secs_f64());
                 let _ = slint::invoke_from_event_loop(move || {
                     if let Some(ui) = app_handle.upgrade() {
-                        if ui.get_selected_collection_id() == collection_id {
-                            ui.set_response_status(status.into());
-                            ui.set_response_state(state.into());
-                            ui.set_response_format("Text".into());
-                            ui.set_response_body(body.into());
-                            ui.set_response_time("".into());
-                            ui.set_is_loading(false);
-                            if ui.get_active_view() == "History" {
-                                ui.invoke_load_history(ui.get_history_sort());
-                            }
+                        ui.set_collection_run_duration(duration.into());
+                        ui.set_collection_run_state("completed".into());
+                        if ui.get_active_view() == "History" {
+                            ui.invoke_load_history(ui.get_history_sort());
                         }
                     }
                 });
@@ -1967,6 +2061,26 @@ async fn main() -> Result<(), slint::PlatformError> {
         }
     });
 
+    app.on_filter_history({
+        let app_weak = app_weak.clone();
+        move |filter| {
+            app_weak
+                .upgrade()
+                .map(|ui| filter_history_items(&ui.get_history_items(), filter.as_str()))
+                .unwrap_or_else(|| ModelRc::new(VecModel::from(Vec::<HistoryItem>::new())))
+        }
+    });
+
+    app.on_paginate_history({
+        let app_weak = app_weak.clone();
+        move |page, page_size| {
+            app_weak
+                .upgrade()
+                .map(|ui| paginate_history_items(&ui.get_history_visible_items(), page, page_size))
+                .unwrap_or_else(|| ModelRc::new(VecModel::from(Vec::<HistoryItem>::new())))
+        }
+    });
+
     app.on_load_history({
         let app_weak = app_weak.clone();
         let store = Arc::clone(&store);
@@ -1983,8 +2097,36 @@ async fn main() -> Result<(), slint::PlatformError> {
             .then(move |result| async move {
                 let _ = slint::invoke_from_event_loop(move || {
                     if let Some(ui) = app_handle.upgrade() {
-                        if let Ok(Ok(history)) = result {
-                            ui.set_history_items(to_history_model(history));
+                        match result {
+                            Ok(Ok(history)) => {
+                                let history = to_history_model(history);
+                                let visible = filter_history_items(
+                                    &history,
+                                    ui.get_history_filter().as_str(),
+                                );
+                                let page = paginate_history_items(
+                                    &visible,
+                                    ui.get_history_page(),
+                                    ui.get_history_page_size(),
+                                );
+                                ui.set_history_items(history);
+                                ui.set_history_visible_items(visible);
+                                ui.set_history_page_items(page);
+                                ui.set_history_loading(false);
+                                ui.set_history_load_error("".into());
+                            }
+                            Ok(Err(error)) => {
+                                ui.set_history_loading(false);
+                                ui.set_history_load_error(
+                                    format!("Could not load request history: {error}").into(),
+                                );
+                            }
+                            Err(error) => {
+                                ui.set_history_loading(false);
+                                ui.set_history_load_error(
+                                    format!("History loading task failed: {error}").into(),
+                                );
+                            }
                         }
                     }
                 });

@@ -40,6 +40,8 @@ export component ResponseBody inherits Rectangle {
     in property <string> format: "JSON";
     in property <bool> dark: true;
     in property <bool> large-response: false;
+    in property <bool> show-toolbar: true;
+    in property <bool> selectable-text: false;
 
     property <bool> structured-format: root.format == "JSON" || root.format == "HTML" || root.format == "XML";
     property <bool> has-pretty: root.structured-format || (root.pretty != "" && root.pretty != root.raw);
@@ -128,7 +130,7 @@ changed wrap-lines => {
     VerticalLayout {
         spacing: 0px;
 
-        HorizontalLayout {
+        if root.show-toolbar : HorizontalLayout {
             // Match the request/response header rhythm while keeping the action row compact.
             height: 44px;
             padding-left: 12px;
@@ -172,7 +174,7 @@ changed wrap-lines => {
             }
         }
 
-        Rectangle { height: 1px; background: Theme.border; }
+        if root.show-toolbar : Rectangle { height: 1px; background: Theme.border; }
 
         if root.format == "JSON" && root.mode == "Tree" && !root.large-response : Rectangle {
             vertical-stretch: 1;
@@ -249,7 +251,7 @@ changed wrap-lines => {
 
         // Keep structured bodies in the token renderer in both wrap modes so colors
         // and line numbers remain intact when long lines flow to the next display row.
-        if root.structured-format && root.mode == "Pretty" && !root.large-response : Rectangle {
+        if root.structured-format && root.mode == "Pretty" && !root.large-response && !root.selectable-text : Rectangle {
             // ScrollView has no background property; paint the containing surface.
             vertical-stretch: 1;
             background: Theme.view-bg;
@@ -312,11 +314,11 @@ changed wrap-lines => {
 
         // Slint conditional elements are separate siblings; use the inverse
         // condition rather than an `else` element branch.
-        if (!root.structured-format || root.mode == "Raw" || root.large-response) && !(root.format == "JSON" && root.mode == "Tree") : AdwTextEdit {
+        if (!root.structured-format || root.mode == "Raw" || root.large-response || root.selectable-text) && !(root.format == "JSON" && root.mode == "Tree") : AdwTextEdit {
             vertical-stretch: 1;
             read-only: true;
             wrap: root.wrap-lines
-                ? (root.format == "JSON" && root.mode == "Pretty" ? TextWrap.char-wrap : TextWrap.word-wrap)
+                ? (!root.selectable-text && root.format == "JSON" && root.mode == "Pretty" ? TextWrap.char-wrap : TextWrap.word-wrap)
                 : TextWrap.no-wrap;
             font-family: Theme.font-mono;
             font-size: 13px;
@@ -327,9 +329,9 @@ changed wrap-lines => {
     if root.raw == "" && root.pretty == "" : Rectangle {
         // Empty-state overlay. Kept below the toolbar so Copy/Wrap stay reachable.
         x: 0px;
-        y: 42px;
+        y: root.show-toolbar ? 42px : 0px;
         width: parent.width;
-        height: parent.height - 42px;
+        height: parent.height - (root.show-toolbar ? 42px : 0px);
         background: transparent;
         Text {
             text: "The server returned an empty response body.";
