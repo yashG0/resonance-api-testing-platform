@@ -875,7 +875,7 @@ in-out property <bool> response-large: false;
                                 text: root.active-view == "Collections" ? "Collections"
                                     : root.active-view == "History" ? "History"
                                     : root.active-view == "Environments" ? "Environments"
-                                    : root.active-view == "Regression" ? "Regression run" : "Collection variables";
+                                    : root.active-view == "Regression" ? "Regression testing" : "Collection variables";
                                 color: Theme.fg;
                                 font-size: Theme.fs-body;
                                 font-weight: 700;
@@ -1056,7 +1056,7 @@ in-out property <bool> response-large: false;
                         Rectangle { height: 4px; }
 
                         NavRow { icon: Icons.folder; text: "Collections"; active: root.active-view == "Collections"; clicked => { root.open-view("Collections"); } }
-                        NavRow { icon: Icons.play; text: "Regression run"; active: root.active-view == "Regression"; clicked => { if root.collection-run-name != "" { root.active-view = "Regression"; } } }
+                        NavRow { icon: Icons.play; text: "Regression testing"; active: root.active-view == "Regression"; clicked => { root.open-view("Regression"); } }
                         NavRow { icon: Icons.history; text: "History"; active: root.active-view == "History"; clicked => { root.open-view("History"); } }
                         NavRow { icon: Icons.globe; text: "Environments"; active: root.active-view == "Environments" || root.active-view == "Variables"; clicked => { root.open-view("Environments"); } }
 
@@ -1537,6 +1537,7 @@ in-out property <bool> response-large: false;
                         Btn { kind: "suggested"; height: 44px; icon: Icons.plus; clicked => { root.start-new-request(root.selected-collection-id, root.selected-collection-name); } }
                         Rectangle { height: 6px; }
                         Btn { kind: "flat"; height: 44px; icon: Icons.folder; active: root.active-view == "Collections"; clicked => { root.open-view("Collections"); } }
+                        Btn { kind: "flat"; height: 44px; icon: Icons.play; active: root.active-view == "Regression"; accessible-name: "Regression testing"; clicked => { root.open-view("Regression"); } }
                         Btn { kind: "flat"; height: 44px; icon: Icons.history; active: root.active-view == "History"; clicked => { root.open-view("History"); } }
                         Btn { kind: "flat"; height: 44px; icon: Icons.globe; active: root.active-view == "Environments" || root.active-view == "Variables"; clicked => { root.open-view("Environments"); } }
                         Rectangle { vertical-stretch: 1; }
@@ -1757,18 +1758,159 @@ in-out property <bool> response-large: false;
                         Rectangle { horizontal-stretch: 1; }
                     }
 
-                    if root.active-view == "Regression" : VerticalLayout {
+                    if root.active-view == "Regression" && root.collection-run-name == "" : HorizontalLayout {
+                        padding: 24px;
+                        Rectangle { horizontal-stretch: 1; }
+                        VerticalLayout {
+                            horizontal-stretch: 100;
+                            max-width: 880px;
+                            vertical-stretch: 1;
+                            spacing: 18px;
+                            HorizontalLayout {
+                                height: 64px;
+                                spacing: 14px;
+                                Rectangle {
+                                    width: 48px;
+                                    height: 48px;
+                                    border-radius: 14px;
+                                    background: Theme.accent.with-alpha(0.16);
+                                    Image {
+                                        source: Icons.play;
+                                        width: 22px;
+                                        height: 22px;
+                                        x: 13px;
+                                        y: 13px;
+                                        colorize: Theme.accent-text;
+                                    }
+                                }
+                                VerticalLayout {
+                                    cross-axis-alignment: start;
+                                    alignment: center;
+                                    spacing: 3px;
+                                    Text { text: "REGRESSION TESTING"; color: Theme.accent-text; font-size: Theme.fs-caption; font-weight: 700; }
+                                    Text { text: "Choose a collection"; color: Theme.fg; font-size: 24px; font-weight: 700; }
+                                }
+                            }
+                            Text {
+                                text: "Run every saved request in a collection and inspect each response in one focused workspace.";
+                                color: Theme.fg-2;
+                                font-size: Theme.fs-body;
+                                wrap: word-wrap;
+                            }
+                            if root.collections.length == 0 : Rectangle {
+                                vertical-stretch: 1;
+                                border-radius: Theme.radius-card;
+                                background: Theme.view-bg;
+                                border-width: 1px;
+                                border-color: Theme.border;
+                                VerticalLayout {
+                                    alignment: center;
+                                    cross-axis-alignment: center;
+                                    spacing: 10px;
+                                    Image { source: Icons.folder; width: 30px; height: 30px; colorize: Theme.fg-3; }
+                                    Text { text: "No collections yet"; color: Theme.fg; font-size: Theme.fs-heading; font-weight: 700; horizontal-alignment: center; }
+                                    Text { text: "Create a collection first, then run its saved requests together."; color: Theme.fg-2; font-size: Theme.fs-body; horizontal-alignment: center; }
+                                    Btn {
+                                        text: "Create a collection";
+                                        kind: "suggested";
+                                        icon: Icons.plus;
+                                        clicked => {
+                                            root.open-view("Collections");
+                                            root.begin-new-collection();
+                                        }
+                                    }
+                                }
+                            }
+                            if root.collections.length > 0 : VerticalLayout {
+                                vertical-stretch: 1;
+                                spacing: 10px;
+                                Text { text: "Choose a collection"; color: Theme.fg; font-size: Theme.fs-label; font-weight: 700; }
+                                ScrollView {
+                                    vertical-stretch: 1;
+                                    VerticalLayout {
+                                        spacing: 8px;
+                                        for collection in root.collections : Rectangle {
+                                            height: 76px;
+                                            background: collection-choice-touch.has-hover ? Theme.hover : Theme.view-bg;
+                                            border-width: 1px;
+                                            border-color: collection-choice-touch.has-hover ? Theme.accent.with-alpha(0.6) : Theme.border;
+                                            border-radius: Theme.radius-card;
+                                            collection-choice-touch := TouchArea {
+                                                mouse-cursor: pointer;
+                                                clicked => { root.run-collection(collection.id); }
+                                            }
+                                            HorizontalLayout {
+                                                padding: 12px;
+                                                spacing: 12px;
+                                                Rectangle {
+                                                    width: 42px;
+                                                    height: 42px;
+                                                    border-radius: 11px;
+                                                    background: Theme.accent.with-alpha(0.14);
+                                                    Image {
+                                                        source: Icons.folder;
+                                                        width: 20px;
+                                                        height: 20px;
+                                                        x: 11px;
+                                                        y: 11px;
+                                                        colorize: Theme.accent-text;
+                                                    }
+                                                }
+                                                VerticalLayout {
+                                                    horizontal-stretch: 1;
+                                                    alignment: center;
+                                                    spacing: 3px;
+                                                    Text { text: collection.name; color: Theme.fg; font-size: Theme.fs-label; font-weight: 700; overflow: elide; }
+                                                    Text { text: "Run all saved requests in this collection"; color: Theme.fg-3; font-size: Theme.fs-small; }
+                                                }
+                                                Btn {
+                                                    text: "Run collection";
+                                                    kind: "suggested";
+                                                    icon: Icons.play;
+                                                    clicked => { root.run-collection(collection.id); }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        Rectangle { horizontal-stretch: 1; }
+                    }
+
+                    if root.active-view == "Regression" && root.collection-run-name != "" : VerticalLayout {
                         padding: 24px;
                         spacing: 16px;
                         HorizontalLayout {
                             height: 54px;
                             spacing: 12px;
-                            Rectangle { width: 42px; height: 42px; border-radius: 12px; background: Theme.active;
-                                Image { source: Icons.play; width: 20px; height: 20px; x: 11px; y: 11px; colorize: Theme.accent; }
+                            cross-axis-alignment: center;
+                            Btn {
+                                kind: "flat";
+                                icon: Icons.arrow-left;
+                                accessible-name: "Back to regression testing";
+                                tooltip: "Back to regression testing";
+                                enabled: root.collection-run-state != "running";
+                                clicked => {
+                                    root.collection-run-name = "";
+                                    root.collection-run-state = "idle";
+                                    root.collection-run-error = "";
+                                }
                             }
-                            VerticalLayout { cross-axis-alignment: start; spacing: 2px;
-                                Text { text: "COLLECTION REGRESSION"; color: Theme.accent-text; font-size: Theme.fs-caption; font-weight: 700; }
-                                Text { text: root.collection-run-name; color: Theme.fg; font-size: Theme.fs-heading; font-weight: 700; }
+                            Text { text: "Regression testing"; color: Theme.fg-2; font-size: Theme.fs-label; vertical-alignment: center; }
+                            Image {
+                                source: Icons.chevron-right;
+                                width: 14px;
+                                height: 14px;
+                                colorize: Theme.fg-3;
+                            }
+                            Text {
+                                text: root.collection-run-name;
+                                color: Theme.fg;
+                                font-size: Theme.fs-label;
+                                font-weight: 700;
+                                vertical-alignment: center;
+                                overflow: elide;
                             }
                             Rectangle { horizontal-stretch: 1; }
                             Text { text: root.collection-run-state == "running" ? "Running · " + root.collection-run-completed + " of " + root.collection-run-total : root.collection-run-state == "completed" ? "Completed in " + root.collection-run-duration : root.collection-run-state; color: root.collection-run-failed > 0 ? Theme.danger : Theme.fg-2; font-size: Theme.fs-label; vertical-alignment: center; }
@@ -2900,20 +3042,29 @@ in-out property <bool> response-large: false;
                                         if root.response-state != "idle" && root.response-state != "loading" && root.response-tab == "Headers" && root.response-header-items.length > 0 : ScrollView {
                                             mouse-drag-pan-enabled: true;
                                             content-width: self.width;
-                                            content-height: root.response-header-items.length * 68px + 20px;
+                                            content-height: max(self.height, response-header-list.preferred-height + 20px);
 
-                                            VerticalLayout {
+                                            response-header-list := VerticalLayout {
                                                 x: 12px;
                                                 y: 10px;
                                                 width: parent.width - 24px;
                                                 spacing: 0px;
 
                                                 for item in root.response-header-items : Rectangle {
-                                                    // Give long response header values room to wrap instead of hiding
-                                                    // their tails behind an ellipsis. The list remains scrollable.
-                                                    height: 68px;
+                                                    height: max(68px, header-value-measure.preferred-height + 24px);
                                                     border-radius: 6px;
                                                     background: header-touch.has-hover ? Theme.hover : transparent;
+                                                    header-value-measure := Text {
+                                                        visible: false;
+                                                        x: 0px;
+                                                        y: 0px;
+                                                        width: max(80px, parent.width - 236px);
+                                                        text: item.value;
+                                                        color: Theme.fg;
+                                                        font-family: Theme.font-mono;
+                                                        font-size: Theme.fs-small;
+                                                        wrap: char-wrap;
+                                                    }
                                                     header-touch := TouchArea { }
                                                     HorizontalLayout {
                                                         padding-left: 10px;
