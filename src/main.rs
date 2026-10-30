@@ -2157,6 +2157,11 @@ async fn main() -> Result<(), slint::PlatformError> {
         let app_weak = app_weak.clone();
         let store = Arc::clone(&store);
         move |sort_order| {
+            let load_started = tokio::time::Instant::now();
+            let generation = app_weak
+                .upgrade()
+                .map(|ui| ui.get_history_load_generation())
+                .unwrap_or_default();
             let app_handle = app_weak.clone();
             let store = Arc::clone(&store);
             tokio::task::spawn_blocking(move || {
@@ -2167,8 +2172,17 @@ async fn main() -> Result<(), slint::PlatformError> {
                 Ok::<_, crate::storage::StoreError>(history)
             })
             .then(move |result| async move {
+                // Keep the same visible spinner as the response view long enough
+                // for its rotation to register on fast local history reads.
+                let spinner_minimum = Duration::from_millis(350);
+                if let Some(remaining) = spinner_minimum.checked_sub(load_started.elapsed()) {
+                    tokio::time::sleep(remaining).await;
+                }
                 let _ = slint::invoke_from_event_loop(move || {
                     if let Some(ui) = app_handle.upgrade() {
+                        if ui.get_history_load_generation() != generation {
+                            return;
+                        }
                         match result {
                             Ok(Ok(history)) => {
                                 let history = to_history_model(history);
@@ -2185,16 +2199,19 @@ async fn main() -> Result<(), slint::PlatformError> {
                                 ui.set_history_visible_items(visible);
                                 ui.set_history_page_items(page);
                                 ui.set_history_loading(false);
+                                ui.set_history_loader_visible(false);
                                 ui.set_history_load_error("".into());
                             }
                             Ok(Err(error)) => {
                                 ui.set_history_loading(false);
+                                ui.set_history_loader_visible(false);
                                 ui.set_history_load_error(
                                     format!("Could not load request history: {error}").into(),
                                 );
                             }
                             Err(error) => {
                                 ui.set_history_loading(false);
+                                ui.set_history_loader_visible(false);
                                 ui.set_history_load_error(
                                     format!("History loading task failed: {error}").into(),
                                 );

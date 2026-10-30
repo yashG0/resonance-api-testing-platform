@@ -159,6 +159,9 @@ export component AppWindow inherits Window {
     in-out property <[HistoryItem]> history-visible-items: [];
     in-out property <[HistoryItem]> history-page-items: [];
     in-out property <bool> history-loading: false;
+    in-out property <bool> history-loader-visible: false;
+    in-out property <int> history-load-generation: 0;
+    in-out property <float> history-spinner-phase: 0;
     in-out property <string> history-load-error: "";
     in-out property <int> history-page: 1;
     in-out property <int> history-page-size: 20;
@@ -305,7 +308,9 @@ in-out property <bool> response-large: false;
         root.active-view = view;
         root.collection-menu-id = -1;
         if view == "History" {
+            root.history-load-generation += 1;
             root.history-loading = true;
+            root.history-loader-visible = true;
             root.history-load-error = "";
             root.history-page = 1;
             root.load-history(root.history-sort);
@@ -749,6 +754,17 @@ in-out property <bool> response-large: false;
     shortcut-scope := FocusScope {
         width: 100%;
         height: 100%;
+
+        Timer {
+            interval: 16ms;
+            running: root.history-loading;
+            triggered => {
+                root.history-spinner-phase += 4.2667;
+                if root.history-spinner-phase >= 360 {
+                    root.history-spinner-phase -= 360;
+                }
+            }
+        }
 
         Rectangle {
             x: root.shadow-margin;
@@ -2177,7 +2193,9 @@ in-out property <bool> response-large: false;
                                     dark-mode: Theme.dark;
                                     selected(value) => {
                                         root.history-sort = value;
+                                        root.history-load-generation += 1;
                                         root.history-loading = true;
+                                        root.history-loader-visible = true;
                                         root.history-load-error = "";
                                         root.history-page = 1;
                                         root.load-history(value);
@@ -2185,7 +2203,7 @@ in-out property <bool> response-large: false;
                                 }
                             }
 
-                            if root.history-loading : Rectangle {
+                            if root.history-loading && root.history-loader-visible : Rectangle {
                                 vertical-stretch: 1;
                                 background: Theme.view-bg;
                                 border-width: 1px;
@@ -2210,24 +2228,24 @@ in-out property <bool> response-large: false;
                                             background: Theme.accent.with-alpha(0.035);
                                         }
                                         Rectangle {
-                                            x: 25px + 20px * sin(360deg * animation-tick() / 1.35s);
-                                            y: 25px - 20px * cos(360deg * animation-tick() / 1.35s);
+                                            x: 25px + 20px * sin(root.history-spinner-phase * 1deg);
+                                            y: 25px - 20px * cos(root.history-spinner-phase * 1deg);
                                             width: 6px;
                                             height: 6px;
                                             border-radius: 3px;
                                             background: Theme.accent;
                                         }
                                         Rectangle {
-                                            x: 25px + 20px * sin(360deg * animation-tick() / 1.35s + 120deg);
-                                            y: 25px - 20px * cos(360deg * animation-tick() / 1.35s + 120deg);
+                                            x: 25px + 20px * sin(root.history-spinner-phase * 1deg + 120deg);
+                                            y: 25px - 20px * cos(root.history-spinner-phase * 1deg + 120deg);
                                             width: 6px;
                                             height: 6px;
                                             border-radius: 3px;
                                             background: Theme.accent.with-alpha(0.72);
                                         }
                                         Rectangle {
-                                            x: 25px + 20px * sin(360deg * animation-tick() / 1.35s + 240deg);
-                                            y: 25px - 20px * cos(360deg * animation-tick() / 1.35s + 240deg);
+                                            x: 25px + 20px * sin(root.history-spinner-phase * 1deg + 240deg);
+                                            y: 25px - 20px * cos(root.history-spinner-phase * 1deg + 240deg);
                                             width: 6px;
                                             height: 6px;
                                             border-radius: 3px;
@@ -2239,7 +2257,7 @@ in-out property <bool> response-large: false;
                                             width: 10px;
                                             height: 10px;
                                             border-radius: 5px;
-                                            background: Theme.accent.with-alpha(0.18 + 0.22 * abs(sin(180deg * animation-tick() / 1s)));
+                                            background: Theme.accent.with-alpha(0.18 + 0.22 * abs(sin(root.history-spinner-phase * 0.675 * 1deg)));
                                         }
                                     }
                                     Text { text: "Loading request history…"; color: Theme.fg; font-size: 20px; font-weight: 700; horizontal-alignment: center; }
@@ -2262,7 +2280,9 @@ in-out property <bool> response-large: false;
                                         text: "Try again";
                                         kind: "suggested";
                                         clicked => {
+                                            root.history-load-generation += 1;
                                             root.history-loading = true;
+                                            root.history-loader-visible = true;
                                             root.history-load-error = "";
                                             root.load-history(root.history-sort);
                                         }
