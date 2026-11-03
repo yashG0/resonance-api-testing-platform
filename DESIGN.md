@@ -18,6 +18,7 @@ SQLite stores collections, requests, non-secret variables, assertion definitions
 
 - **Slint:** a compact native UI framework that lets the project share a Rust-first implementation across desktop platforms. The current UI is still concentrated in a large Slint file; view extraction remains future work.
 - **Window decorations:** GNOME sessions use the app's custom client-side frame; other desktops use their native window frame so operating-system controls and window-management behavior remain available.
+- **Fonts:** the UI and code views request the platform's generic system UI and monospace families, avoiding a runtime dependency on Adwaita Sans or JetBrains Mono being installed.
 - **SQLite:** simple, transactional local persistence with schema migrations. It avoids a service dependency, but collections are not yet represented as Git-friendly files.
 - **Direct HTTP:** requests go from the app to the configured endpoint without a Cosmic API server. The app currently focuses on HTTP and does not yet provide OAuth, GraphQL-specific editing, WebSocket, or SSE workflows.
 - **Operating-system credential storage:** secrets are kept out of the database. Saving a secret depends on an available, functioning platform credential service; the app does not silently fall back to plaintext.

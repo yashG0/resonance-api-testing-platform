@@ -6,9 +6,9 @@ export global Theme {
     in property <bool> dark: true;
     in property <color> accent: #3584e4;
 
-    // Fonts
-    out property <string> font-ui: "Adwaita Sans";
-    out property <string> font-mono: "JetBrains Mono";
+    // Generic system families keep the UI readable without requiring bundled fonts.
+    out property <string> font-ui: "system-ui";
+    out property <string> font-mono: "ui-monospace";
 
     // Type scale
     out property <length> fs-caption: 11px;
