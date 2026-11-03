@@ -38,6 +38,8 @@ jobs:
             libegl1-mesa-dev libfontconfig1-dev libfreetype6-dev
       - name: Check formatting
         run: cargo fmt --check
+      - name: Run Clippy
+        run: cargo clippy --locked -- -D warnings
       - name: Run tests
         run: cargo test --locked
       - name: Build release executable

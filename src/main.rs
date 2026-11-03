@@ -1,6 +1,8 @@
 mod assertions;
+mod cli;
 mod collection_runner;
 mod credentials;
+mod curl;
 mod http;
 mod storage;
 
@@ -9,14 +11,21 @@ use std::{
     future::Future,
     hash::{Hash, Hasher},
     process::Command,
-    sync::{Arc, Mutex},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicU64, Ordering},
+    },
     time::Duration,
 };
 
-use crate::assertions::{Assertion, append_assertion_json};
+use crate::assertions::{
+    Assertion, append_assertion_json, remove_assertion_json, update_assertion_json,
+};
 use crate::http::HttpClient;
+use crate::http::client::RequestSpec;
 use crate::storage::{
-    Collection, CollectionVariable, NewRequest, RequestHistory, RequestStore, SavedRequest,
+    Collection, CollectionVariable, HistoryRecord, NewRequest, RequestHistory, RequestStore,
+    SavedRequest,
 };
 use slint::{Color, ComponentHandle, Model, ModelRc, VecModel};
 
@@ -24,6 +33,43 @@ slint::include_modules!();
 
 const MAX_STRUCTURED_VIEW_BYTES: usize = 256 * 1024;
 const MAX_VISIBLE_JSON_TREE_NODES: usize = 2_000;
+
+fn is_gnome_session(current_desktop: &str, session_desktop: &str) -> bool {
+    [current_desktop, session_desktop]
+        .into_iter()
+        .any(|desktops| {
+            desktops
+                .split([':', ','])
+                .any(|desktop| desktop.trim().eq_ignore_ascii_case("gnome"))
+        })
+}
+
+fn use_gnome_custom_frame() -> bool {
+    #[cfg(target_os = "linux")]
+    {
+        is_gnome_session(
+            &std::env::var("XDG_CURRENT_DESKTOP").unwrap_or_default(),
+            &std::env::var("XDG_SESSION_DESKTOP").unwrap_or_default(),
+        )
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        false
+    }
+}
+
+#[cfg(test)]
+mod platform_window_tests {
+    use super::is_gnome_session;
+
+    #[test]
+    fn selects_custom_frame_only_for_gnome_desktops() {
+        assert!(is_gnome_session("GNOME", "gnome"));
+        assert!(is_gnome_session("ubuntu:GNOME", "ubuntu"));
+        assert!(!is_gnome_session("KDE", "plasma"));
+        assert!(!is_gnome_session("", ""));
+    }
+}
 
 trait JoinHandleThen<T>: Sized {
     fn then<F, Fut>(self, continuation: F)
@@ -84,8 +130,8 @@ fn copy_text_to_clipboard(
         Err(native_error) => {
             #[cfg(target_os = "linux")]
             {
-                return copy_text_with_linux_clipboard_tools(text)
-                    .map_err(|fallback_error| format!("{native_error}; {fallback_error}"));
+                copy_text_with_linux_clipboard_tools(text)
+                    .map_err(|fallback_error| format!("{native_error}; {fallback_error}"))
             }
             #[cfg(not(target_os = "linux"))]
             {
@@ -138,15 +184,14 @@ fn detect_system_dark_mode(fallback: bool) -> bool {
         if let Ok(output) = Command::new("gsettings")
             .args(["get", "org.gnome.desktop.interface", "color-scheme"])
             .output()
+            && output.status.success()
         {
-            if output.status.success() {
-                let preference = String::from_utf8_lossy(&output.stdout);
-                if preference.contains("prefer-dark") {
-                    return true;
-                }
-                if preference.contains("prefer-light") {
-                    return false;
-                }
+            let preference = String::from_utf8_lossy(&output.stdout);
+            if preference.contains("prefer-dark") {
+                return true;
+            }
+            if preference.contains("prefer-light") {
+                return false;
             }
         }
     }
@@ -198,24 +243,23 @@ fn detect_system_accent_color(fallback: Color) -> Color {
         if let Ok(output) = Command::new("gsettings")
             .args(["get", "org.gnome.desktop.interface", "accent-color"])
             .output()
+            && output.status.success()
         {
-            if output.status.success() {
-                let accent = String::from_utf8_lossy(&output.stdout);
-                let rgb = match accent.trim().trim_matches('\'') {
-                    "blue" => Some((0x35, 0x84, 0xe4)),
-                    "teal" => Some((0x21, 0x90, 0xa4)),
-                    "green" => Some((0x3a, 0x94, 0x4a)),
-                    "yellow" => Some((0xc8, 0x88, 0x00)),
-                    "orange" => Some((0xed, 0x5b, 0x00)),
-                    "red" => Some((0xe6, 0x2d, 0x42)),
-                    "pink" => Some((0xd5, 0x61, 0x99)),
-                    "purple" => Some((0x91, 0x41, 0xac)),
-                    "slate" => Some((0x6f, 0x83, 0x96)),
-                    _ => None,
-                };
-                if let Some((red, green, blue)) = rgb {
-                    return Color::from_rgb_u8(red, green, blue);
-                }
+            let accent = String::from_utf8_lossy(&output.stdout);
+            let rgb = match accent.trim().trim_matches('\'') {
+                "blue" => Some((0x35, 0x84, 0xe4)),
+                "teal" => Some((0x21, 0x90, 0xa4)),
+                "green" => Some((0x3a, 0x94, 0x4a)),
+                "yellow" => Some((0xc8, 0x88, 0x00)),
+                "orange" => Some((0xed, 0x5b, 0x00)),
+                "red" => Some((0xe6, 0x2d, 0x42)),
+                "pink" => Some((0xd5, 0x61, 0x99)),
+                "purple" => Some((0x91, 0x41, 0xac)),
+                "slate" => Some((0x6f, 0x83, 0x96)),
+                _ => None,
+            };
+            if let Some((red, green, blue)) = rgb {
+                return Color::from_rgb_u8(red, green, blue);
             }
         }
     }
@@ -429,6 +473,124 @@ fn to_environment_model(items: Vec<(i32, String, CollectionVariable)>) -> ModelR
                 is_secret: variable.is_secret,
             },
         )
+        .collect::<Vec<_>>();
+    ModelRc::new(VecModel::from(items))
+}
+
+fn parse_header_rows(source: &str) -> ModelRc<KeyValueRow> {
+    let rows = source
+        .lines()
+        .filter_map(|line| {
+            let (key, value) = line.split_once(':')?;
+            let key = key.trim();
+            if key.is_empty() {
+                return None;
+            }
+            Some(KeyValueRow {
+                key: key.into(),
+                value: value.trim().into(),
+                enabled: true,
+            })
+        })
+        .collect::<Vec<_>>();
+    ModelRc::new(VecModel::from(rows))
+}
+
+fn to_assertion_model(source: &str) -> ModelRc<AssertionItem> {
+    let items = serde_json::from_str::<Vec<Assertion>>(source)
+        .unwrap_or_default()
+        .into_iter()
+        .enumerate()
+        .map(|(index, assertion)| {
+            let (title, summary, kind, first, second) = match assertion {
+                Assertion::HttpStatus { expected } => (
+                    "HTTP status",
+                    format!("equals {expected}"),
+                    "HTTP status",
+                    expected.to_string(),
+                    String::new(),
+                ),
+                Assertion::HttpStatusClass { class } => (
+                    "HTTP status class",
+                    format!("is {class}xx"),
+                    "HTTP status class",
+                    format!("{class}xx"),
+                    String::new(),
+                ),
+                Assertion::HttpStatusAnyOf { expected } => (
+                    "HTTP status any of",
+                    expected
+                        .iter()
+                        .map(u16::to_string)
+                        .collect::<Vec<_>>()
+                        .join(", "),
+                    "HTTP status any of",
+                    expected
+                        .iter()
+                        .map(u16::to_string)
+                        .collect::<Vec<_>>()
+                        .join(", "),
+                    String::new(),
+                ),
+                Assertion::LatencyUnder { max_ms } => (
+                    "Latency",
+                    format!("under {max_ms} ms"),
+                    "Latency under (ms)",
+                    max_ms.to_string(),
+                    String::new(),
+                ),
+                Assertion::BodyContains { text } => (
+                    "Body contains",
+                    text.clone(),
+                    "Body contains",
+                    text,
+                    String::new(),
+                ),
+                Assertion::JsonPointer { pointer, expected } => (
+                    "JSON Pointer",
+                    format!("{pointer} = {expected}"),
+                    "JSON Pointer equals",
+                    pointer,
+                    expected.to_string(),
+                ),
+                Assertion::HeaderExists { name } => (
+                    "Header exists",
+                    name.clone(),
+                    "Header exists",
+                    name,
+                    String::new(),
+                ),
+                Assertion::HeaderEquals { name, expected } => (
+                    "Header equals",
+                    format!("{name} = {expected}"),
+                    "Header equals",
+                    name,
+                    expected,
+                ),
+                Assertion::HeaderContains { name, text } => (
+                    "Header contains",
+                    format!("{name} contains {text}"),
+                    "Header contains",
+                    name,
+                    text,
+                ),
+                Assertion::CaptureJsonPointer { pointer, variable } => (
+                    "Capture JSON Pointer",
+                    format!("{pointer} → {{{variable}}}"),
+                    "Capture JSON Pointer",
+                    pointer,
+                    variable,
+                ),
+            };
+            AssertionItem {
+                index: index as i32,
+                title: title.into(),
+                summary: summary.into(),
+                kind: kind.into(),
+                first: first.into(),
+                second: second.into(),
+            }
+        })
         .collect::<Vec<_>>();
     ModelRc::new(VecModel::from(items))
 }
@@ -767,13 +929,13 @@ fn auto_pair_request_body(
             text[start..]
                 .chars()
                 .next()
-                .filter(|next| Some(*next) == key.chars().next())
+                .filter(|next| key.starts_with(*next))
                 .map(|next| (0, next))
         } else {
             text[start..]
                 .char_indices()
                 .find(|(_, ch)| !ch.is_whitespace())
-                .filter(|(_, next)| Some(*next) == key.chars().next())
+                .filter(|(_, next)| key.starts_with(*next))
         };
         if let Some((relative_offset, next)) = next_closer {
             let next_cursor = start + relative_offset + next.len_utf8();
@@ -1095,21 +1257,25 @@ fn build_json_tree(
         value.replace('~', "~0").replace('/', "~1")
     }
 
+    struct TreeBuildContext<'a> {
+        expanded_paths: &'a HashSet<String>,
+        colors: SyntaxColors,
+        nodes: Vec<JsonTreeNode>,
+        truncated: bool,
+    }
+
     fn append_node(
         value: &serde_json::Value,
         path: String,
         depth: usize,
         key_label: String,
-        expanded_paths: &HashSet<String>,
-        colors: SyntaxColors,
-        nodes: &mut Vec<JsonTreeNode>,
-        truncated: &mut bool,
+        context: &mut TreeBuildContext<'_>,
     ) {
-        if nodes.len() >= MAX_VISIBLE_JSON_TREE_NODES {
-            *truncated = true;
+        if context.nodes.len() >= MAX_VISIBLE_JSON_TREE_NODES {
+            context.truncated = true;
             return;
         }
-        let expanded = expanded_paths.contains(&path);
+        let expanded = context.expanded_paths.contains(&path);
         let child_count = match value {
             serde_json::Value::Object(fields) => fields.len(),
             serde_json::Value::Array(items) => items.len(),
@@ -1117,28 +1283,34 @@ fn build_json_tree(
         };
         let has_children = child_count > 0;
         let (preview, value_color) = match value {
-            serde_json::Value::Object(fields) => {
-                (format!("object {{{}}}", fields.len()), colors.punctuation)
-            }
-            serde_json::Value::Array(items) => {
-                (format!("array [{}]", items.len()), colors.punctuation)
-            }
+            serde_json::Value::Object(fields) => (
+                format!("object {{{}}}", fields.len()),
+                context.colors.punctuation,
+            ),
+            serde_json::Value::Array(items) => (
+                format!("array [{}]", items.len()),
+                context.colors.punctuation,
+            ),
             serde_json::Value::String(_) => (
                 truncate(serde_json::to_string(value).unwrap_or_default(), 120),
-                colors.string,
+                context.colors.string,
             ),
-            serde_json::Value::Number(_) => (value.to_string(), colors.number),
-            serde_json::Value::Bool(_) => (value.to_string(), colors.boolean),
-            serde_json::Value::Null => ("null".to_owned(), colors.comment),
+            serde_json::Value::Number(_) => (value.to_string(), context.colors.number),
+            serde_json::Value::Bool(_) => (value.to_string(), context.colors.boolean),
+            serde_json::Value::Null => ("null".to_owned(), context.colors.comment),
         };
-        nodes.push(JsonTreeNode {
+        context.nodes.push(JsonTreeNode {
             depth: depth as i32,
             key_label: key_label.into(),
             preview: preview.into(),
             path: path.clone().into(),
             has_children,
             expanded,
-            key_color: if depth == 0 { colors.base } else { colors.key },
+            key_color: if depth == 0 {
+                context.colors.base
+            } else {
+                context.colors.key
+            },
             value_color,
         });
 
@@ -1154,13 +1326,10 @@ fn build_json_tree(
                         format!("{path}/{}", escaped_pointer_segment(key)),
                         depth + 1,
                         format!("{key_json}: "),
-                        expanded_paths,
-                        colors,
-                        nodes,
-                        truncated,
+                        context,
                     );
-                    if nodes.len() >= MAX_VISIBLE_JSON_TREE_NODES {
-                        *truncated = true;
+                    if context.nodes.len() >= MAX_VISIBLE_JSON_TREE_NODES {
+                        context.truncated = true;
                         break;
                     }
                 }
@@ -1172,13 +1341,10 @@ fn build_json_tree(
                         format!("{path}/{index}"),
                         depth + 1,
                         format!("[{index}] "),
-                        expanded_paths,
-                        colors,
-                        nodes,
-                        truncated,
+                        context,
                     );
-                    if nodes.len() >= MAX_VISIBLE_JSON_TREE_NODES {
-                        *truncated = true;
+                    if context.nodes.len() >= MAX_VISIBLE_JSON_TREE_NODES {
+                        context.truncated = true;
                         break;
                     }
                 }
@@ -1231,29 +1397,26 @@ fn build_json_tree(
             Color::from_rgb_u8(0x6c, 0x6a, 0x73)
         },
     };
-    let mut nodes = Vec::new();
-    let mut truncated = false;
-    append_node(
-        &value,
-        "$".into(),
-        0,
-        String::new(),
-        &expanded_paths,
+    let mut context = TreeBuildContext {
+        expanded_paths: &expanded_paths,
         colors,
-        &mut nodes,
-        &mut truncated,
-    );
-    if truncated && let Some(last) = nodes.last_mut() {
+        nodes: Vec::new(),
+        truncated: false,
+    };
+    append_node(&value, "$".into(), 0, String::new(), &mut context);
+    if context.truncated
+        && let Some(last) = context.nodes.last_mut()
+    {
         last.key_label = "".into();
         last.preview =
             "Display limited to 2,000 rows; use Pretty or Raw for the full response".into();
         last.path = "$limit".into();
         last.has_children = false;
         last.expanded = false;
-        last.key_color = colors.comment;
-        last.value_color = colors.comment;
+        last.key_color = context.colors.comment;
+        last.value_color = context.colors.comment;
     }
-    ModelRc::new(VecModel::from(nodes))
+    ModelRc::new(VecModel::from(context.nodes))
 }
 
 fn format_response_body(body: &str, format: &str) -> String {
@@ -1378,16 +1541,37 @@ mod response_tokenizer_tests {
 }
 
 #[tokio::main]
-async fn main() -> Result<(), slint::PlatformError> {
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let arguments = std::env::args().skip(1).collect::<Vec<_>>();
+    if let Some(command) = arguments.first() {
+        if matches!(command.as_str(), "--help" | "-h") {
+            println!("Cosmic API\n\n{}", cli::help());
+            return Ok(());
+        }
+        if command == "run" {
+            match cli::run(&arguments[1..]).await {
+                Ok(true) => return Ok(()),
+                Ok(false) => std::process::exit(1),
+                Err(error) => {
+                    eprintln!("{error}");
+                    std::process::exit(2);
+                }
+            }
+        }
+        eprintln!("Unknown command '{command}'.\n\n{}", cli::help());
+        std::process::exit(2);
+    }
+
     let store = Arc::new(RequestStore::open_default().map_err(|error| {
         slint::PlatformError::from(format!(
-            "Could not initialize Resonance local storage: {error}"
+            "Could not initialize Cosmic API local storage: {error}"
         ))
     })?);
     let client = Arc::new(HttpClient::new().map_err(|error| {
         slint::PlatformError::from(format!("Could not initialize the HTTP client: {error}"))
     })?);
     let app = AppWindow::new()?;
+    app.set_custom_frame(use_gnome_custom_frame());
     app.set_shortcut_modifier(if cfg!(target_os = "macos") {
         "⌘".into()
     } else {
@@ -1429,6 +1613,64 @@ async fn main() -> Result<(), slint::PlatformError> {
         .unwrap_or_default()
         .into()
     });
+    app.on_remove_assertion(|current, index| {
+        remove_assertion_json(current.as_str(), index.max(0) as usize)
+            .unwrap_or_default()
+            .into()
+    });
+    app.on_update_assertion(|current, index, kind, first, second| {
+        update_assertion_json(
+            current.as_str(),
+            index.max(0) as usize,
+            kind.as_str(),
+            first.as_str(),
+            second.as_str(),
+        )
+        .unwrap_or_default()
+        .into()
+    });
+    app.on_parse_assertions(|source| to_assertion_model(source.as_str()));
+    app.on_parse_curl(|command| match crate::curl::parse_curl(command.as_str()) {
+        Ok(request) => CurlDraft {
+            error: "".into(),
+            method: request.method.into(),
+            url: request.url.into(),
+            headers: request.headers.into(),
+            body: request.body.into(),
+            body_format: request.body_format.into(),
+            auth_type: request.auth_type.into(),
+            auth_value: request.auth_value.into(),
+            auth_secret: request.auth_secret.into(),
+        },
+        Err(error) => CurlDraft {
+            error: error.into(),
+            method: "".into(),
+            url: "".into(),
+            headers: "".into(),
+            body: "".into(),
+            body_format: "".into(),
+            auth_type: "".into(),
+            auth_value: "".into(),
+            auth_secret: "".into(),
+        },
+    });
+    app.on_build_curl(
+        |method, url, body, headers, params, body_format, auth_type, auth_value, auth_secret| {
+            crate::curl::build_curl(&RequestSpec {
+                method: method.as_str(),
+                url: url.as_str(),
+                body: body.as_str(),
+                headers: headers.as_str(),
+                query_params: params.as_str(),
+                body_format: body_format.as_str(),
+                auth_type: auth_type.as_str(),
+                auth_value: auth_value.as_str(),
+                auth_secret: auth_secret.as_str(),
+            })
+            .into()
+        },
+    );
+    app.on_parse_header_rows(|source| parse_header_rows(source.as_str()));
 
     app.on_auto_pair_request_body(|text, cursor, anchor, key, format| {
         auto_pair_request_body(text.as_str(), cursor, anchor, key.as_str(), format.as_str())
@@ -1491,7 +1733,7 @@ async fn main() -> Result<(), slint::PlatformError> {
         let clipboard = Arc::clone(&clipboard);
         move |text| {
             if let Err(error) = copy_text_to_clipboard(&clipboard, text.as_str()) {
-                eprintln!("Resonance: could not copy response: {error}");
+                eprintln!("Cosmic API: could not copy response: {error}");
             }
         }
     });
@@ -1507,10 +1749,10 @@ async fn main() -> Result<(), slint::PlatformError> {
             if let Some(ui) = app_weak.upgrade() {
                 let tabs = ui.get_request_tabs();
                 for index in 0..tabs.row_count() {
-                    if let Some(tab) = tabs.row_data(index) {
-                        if tab.collection_id == collection_id {
-                            names.insert(tab.name.to_string());
-                        }
+                    if let Some(tab) = tabs.row_data(index)
+                        && tab.collection_id == collection_id
+                    {
+                        names.insert(tab.name.to_string());
                     }
                 }
             }
@@ -1575,8 +1817,6 @@ async fn main() -> Result<(), slint::PlatformError> {
             };
             let name = name.to_string();
             let collection_id = collection_id as i64;
-            let tab_key = tab_key;
-
             tokio::spawn(async move {
                 // Save first so each request is available in its collection as soon
                 // as the response arrives. Existing requests are updated in place.
@@ -1698,15 +1938,17 @@ async fn main() -> Result<(), slint::PlatformError> {
 
                 let result = client
                     .send(
-                        &method,
-                        &url,
-                        &body,
-                        &headers,
-                        &params,
-                        &body_format,
-                        &auth_type,
-                        &auth_value,
-                        &auth_secret,
+                        &RequestSpec {
+                            method: &method,
+                            url: &url,
+                            body: &body,
+                            headers: &headers,
+                            query_params: &params,
+                            body_format: &body_format,
+                            auth_type: &auth_type,
+                            auth_value: &auth_value,
+                            auth_secret: &auth_secret,
+                        },
                         &variables,
                     )
                     .await;
@@ -1718,29 +1960,29 @@ async fn main() -> Result<(), slint::PlatformError> {
                 let elapsed_ms = (result.elapsed.as_secs_f64() * 1000.0) as i64;
                 let history_handle = app_handle.clone();
                 tokio::task::spawn_blocking(move || {
-                    history_store.record_history(
-                        saved_id,
+                    history_store.record_history(&HistoryRecord {
+                        request_id: saved_id,
                         collection_id,
-                        &history_name,
-                        &history_method,
-                        &history_url,
-                        &history_status,
+                        request_name: history_name,
+                        method: history_method,
+                        url: history_url,
+                        status: history_status,
                         elapsed_ms,
-                    )?;
+                    })?;
                     history_store.list_history()
                 })
                 .then(move |history_result| async move {
                     if let Ok(Ok(history)) = history_result {
                         let _ = slint::invoke_from_event_loop(move || {
-                            if let Some(ui) = history_handle.upgrade() {
-                                if ui.get_active_view() == "History" {
-                                    ui.set_history_items(to_history_model(history));
-                                }
+                            if let Some(ui) = history_handle.upgrade()
+                                && ui.get_active_view() == "History"
+                            {
+                                ui.set_history_items(to_history_model(history));
                             }
                         });
                     }
                 });
-                let response_state = result.state.clone();
+                let response_state = result.state.as_label().to_owned();
                 let elapsed = format!("{:.2} ms", result.elapsed.as_secs_f64() * 1000.0);
                 let response_status = result.status.clone();
                 let response_body = result.body;
@@ -1841,17 +2083,15 @@ async fn main() -> Result<(), slint::PlatformError> {
                 auth_secret: auth_secret.to_string(),
                 assertions,
             };
-            let tab_key = tab_key;
-
             tokio::task::spawn_blocking(move || {
-                if id <= 0 && request.name.trim().starts_with("New Request ") {
-                    if let Ok(existing) = store.list_for_collection(collection_id as i64) {
-                        let mut suffix =
-                            request.name.trim()[12..].parse::<u64>().unwrap_or(1).max(1);
-                        while existing.iter().any(|item| item.name == request.name) {
-                            suffix += 1;
-                            request.name = format!("New Request {suffix}");
-                        }
+                if id <= 0
+                    && request.name.trim().starts_with("New Request ")
+                    && let Ok(existing) = store.list_for_collection(collection_id as i64)
+                {
+                    let mut suffix = request.name.trim()[12..].parse::<u64>().unwrap_or(1).max(1);
+                    while existing.iter().any(|item| item.name == request.name) {
+                        suffix += 1;
+                        request.name = format!("New Request {suffix}");
                     }
                 }
                 let saved_name = request.name.clone();
@@ -1969,12 +2209,15 @@ async fn main() -> Result<(), slint::PlatformError> {
                                         replace_saved_request_models(&ui, requests);
                                     }
                                 }
-                                Ok(Err(error)) => {
+                                Ok(Err(error))
+                                    if ui.get_expanded_collection_id() == collection_id =>
+                                {
                                     ui.set_response_status(format!("Load failed: {error}").into())
                                 }
-                                Err(error) => {
+                                Err(error) if ui.get_expanded_collection_id() == collection_id => {
                                     ui.set_response_status(format!("Load failed: {error}").into())
                                 }
+                                _ => {}
                             }
                         }
                     });
@@ -2084,11 +2327,17 @@ async fn main() -> Result<(), slint::PlatformError> {
         }
     });
 
+    let environment_load_generation = Arc::new(AtomicU64::new(0));
     app.on_load_environments({
         let app_weak = app_weak.clone();
         let store = Arc::clone(&store);
+        let environment_load_generation = Arc::clone(&environment_load_generation);
         move || {
+            let generation = environment_load_generation
+                .fetch_add(1, Ordering::Relaxed)
+                .wrapping_add(1);
             let app_handle = app_weak.clone();
+            let environment_load_generation = Arc::clone(&environment_load_generation);
             let store = Arc::clone(&store);
             tokio::task::spawn_blocking(move || {
                 store.list_all_variables().map(|items| {
@@ -2103,6 +2352,9 @@ async fn main() -> Result<(), slint::PlatformError> {
             .then(move |result| async move {
                 let _ = slint::invoke_from_event_loop(move || {
                     if let Some(ui) = app_handle.upgrade() {
+                        if environment_load_generation.load(Ordering::Relaxed) != generation {
+                            return;
+                        }
                         match result {
                             Ok(Ok(items)) => ui.set_environment_items(to_environment_model(items)),
                             Ok(Err(error)) => ui.set_variables_message(
@@ -2128,6 +2380,9 @@ async fn main() -> Result<(), slint::PlatformError> {
                 move |result| async move {
                     let _ = slint::invoke_from_event_loop(move || {
                         if let Some(ui) = app_handle.upgrade() {
+                            if ui.get_selected_collection_id() != collection_id {
+                                return;
+                            }
                             match result {
                                 Ok(Ok(variables)) => {
                                     ui.set_collection_variables(to_variable_model(variables));
@@ -2242,6 +2497,9 @@ async fn main() -> Result<(), slint::PlatformError> {
                                 }
                                 ui.set_editing_collection_id(-1);
                                 ui.set_variables_message("Collection renamed.".into());
+                                if ui.get_active_view() == "Environments" {
+                                    ui.invoke_load_environments();
+                                }
                             }
                             Ok(Err(error)) => ui.set_variables_message(
                                 format!("Could not rename collection: {error}").into(),
@@ -2260,7 +2518,6 @@ async fn main() -> Result<(), slint::PlatformError> {
         let app_weak = app_weak.clone();
         let store = Arc::clone(&store);
         move |collection_id| {
-            let selected_before = app_weak.upgrade().map(|ui| ui.get_selected_collection_id());
             let app_handle = app_weak.clone();
             let store = Arc::clone(&store);
             tokio::task::spawn_blocking(move || {
@@ -2272,13 +2529,14 @@ async fn main() -> Result<(), slint::PlatformError> {
                     if let Some(ui) = app_handle.upgrade() {
                         match result {
                             Ok(Ok(collections)) => {
-                                let selected_id = selected_before
-                                    .filter(|selected_id| {
-                                        *selected_id != collection_id
-                                            && collections.iter().any(|collection| {
-                                                collection.id as i32 == *selected_id
-                                            })
+                                let current_selected = ui.get_selected_collection_id();
+                                let selected_id = collections
+                                    .iter()
+                                    .find(|collection| {
+                                        collection.id as i32 == current_selected
+                                            && current_selected != collection_id
                                     })
+                                    .map(|collection| collection.id as i32)
                                     .or_else(|| {
                                         collections.first().map(|collection| collection.id as i32)
                                     });
@@ -2289,19 +2547,31 @@ async fn main() -> Result<(), slint::PlatformError> {
                                     );
                                     return;
                                 };
-                                let selection_changed = selected_before != Some(selected_id);
+                                let selection_changed = current_selected != selected_id;
+                                let tabs = ui.get_request_tabs();
+                                let tabs_to_close = (0..tabs.row_count())
+                                    .filter(|index| {
+                                        tabs.row_data(*index)
+                                            .is_some_and(|tab| tab.collection_id == collection_id)
+                                    })
+                                    .collect::<Vec<_>>();
+                                for index in tabs_to_close.into_iter().rev() {
+                                    ui.invoke_close_request_tab(index as i32);
+                                }
+                                let selection_changed = selection_changed
+                                    || ui.get_selected_collection_id() != selected_id;
                                 let selected_name = collections
                                     .iter()
                                     .find(|collection| collection.id as i32 == selected_id)
                                     .map(|collection| collection.name.clone());
                                 ui.set_collections(to_collection_model(collections));
                                 ui.set_confirm_delete_collection_id(-1);
+                                if let Some(selected_name) = selected_name {
+                                    ui.set_selected_collection_id(selected_id);
+                                    ui.set_expanded_collection_id(selected_id);
+                                    ui.set_selected_collection_name(selected_name.into());
+                                }
                                 if selection_changed {
-                                    if let Some(selected_name) = selected_name {
-                                        ui.set_selected_collection_id(selected_id);
-                                        ui.set_expanded_collection_id(selected_id);
-                                        ui.set_selected_collection_name(selected_name.into());
-                                    }
                                     ui.set_active_request_id(-1);
                                     ui.set_active_request("".into());
                                     ui.set_editing_request_name(false);
@@ -2337,6 +2607,9 @@ async fn main() -> Result<(), slint::PlatformError> {
                                 ui.set_variables_message(
                                     "Collection and its saved data deleted.".into(),
                                 );
+                                if ui.get_active_view() == "Environments" {
+                                    ui.invoke_load_environments();
+                                }
                             }
                             Ok(Err(error)) => ui.set_variables_message(
                                 format!("Could not delete collection: {error}").into(),
@@ -2369,6 +2642,9 @@ async fn main() -> Result<(), slint::PlatformError> {
             .then(move |result| async move {
                 let _ = slint::invoke_from_event_loop(move || {
                     if let Some(ui) = app_handle.upgrade() {
+                        if ui.get_selected_collection_id() != collection_id {
+                            return;
+                        }
                         match result {
                             Ok(Ok(variables)) => {
                                 ui.set_collection_variables(to_variable_model(variables));
@@ -2380,6 +2656,9 @@ async fn main() -> Result<(), slint::PlatformError> {
                                     ui.set_variable_is_secret(false);
                                 }
                                 ui.set_variables_message("Variable added.".into());
+                                if ui.get_active_view() == "Environments" {
+                                    ui.invoke_load_environments();
+                                }
                             }
                             Ok(Err(error)) => ui.set_variables_message(
                                 format!("Could not add variable: {error}").into(),
@@ -2417,11 +2696,17 @@ async fn main() -> Result<(), slint::PlatformError> {
             .then(move |result| async move {
                 let _ = slint::invoke_from_event_loop(move || {
                     if let Some(ui) = app_handle.upgrade() {
+                        if ui.get_selected_collection_id() != collection_id {
+                            return;
+                        }
                         let is_same_edit = ui.get_editing_variable_collection_id() == collection_id
                             && ui.get_editing_variable_key() == submitted_key;
                         match result {
                             Ok(Ok(variables)) => {
                                 ui.set_collection_variables(to_variable_model(variables));
+                                if ui.get_active_view() == "Environments" {
+                                    ui.invoke_load_environments();
+                                }
                                 if is_same_edit {
                                     ui.set_editing_variable_key("".into());
                                     ui.set_editing_variable_collection_id(-1);
@@ -2458,10 +2743,16 @@ async fn main() -> Result<(), slint::PlatformError> {
             .then(move |result| async move {
                 let _ = slint::invoke_from_event_loop(move || {
                     if let Some(ui) = app_handle.upgrade() {
+                        if ui.get_selected_collection_id() != collection_id {
+                            return;
+                        }
                         match result {
                             Ok(Ok(variables)) => {
                                 ui.set_collection_variables(to_variable_model(variables));
                                 ui.set_variables_message("Variable deleted.".into());
+                                if ui.get_active_view() == "Environments" {
+                                    ui.invoke_load_environments();
+                                }
                             }
                             Ok(Err(error)) => ui.set_variables_message(
                                 format!("Could not delete variable: {error}").into(),
@@ -2476,13 +2767,18 @@ async fn main() -> Result<(), slint::PlatformError> {
         }
     });
 
+    let request_selection_generation = Arc::new(AtomicU64::new(0));
     app.on_select_request({
         let app_weak = app_weak.clone();
         let store = Arc::clone(&store);
+        let request_selection_generation = Arc::clone(&request_selection_generation);
         move |id| {
             if id <= 0 {
                 return;
             }
+            let generation = request_selection_generation
+                .fetch_add(1, Ordering::Relaxed)
+                .wrapping_add(1);
             if let Some(ui) = app_weak.upgrade() {
                 let tabs = ui.get_request_tabs();
                 for index in 0..tabs.row_count() {
@@ -2494,6 +2790,7 @@ async fn main() -> Result<(), slint::PlatformError> {
                 ui.invoke_store_active_request_tab();
             }
             let app_handle = app_weak.clone();
+            let request_selection_generation = Arc::clone(&request_selection_generation);
             let store = Arc::clone(&store);
             tokio::task::spawn_blocking(move || {
                 store.get(id as i64).and_then(|request| {
@@ -2513,6 +2810,9 @@ async fn main() -> Result<(), slint::PlatformError> {
             .then(move |result| async move {
                 let _ = slint::invoke_from_event_loop(move || {
                     if let Some(ui) = app_handle.upgrade() {
+                        if request_selection_generation.load(Ordering::Relaxed) != generation {
+                            return;
+                        }
                         match result {
                             Ok(Ok(Some((request, collection_name, requests)))) => {
                                 let collection_id = request.collection_id as i32;
@@ -2608,15 +2908,12 @@ async fn main() -> Result<(), slint::PlatformError> {
                                     && let Ok(requests) = requests
                                 {
                                     replace_saved_request_models(&ui, requests);
-                                    if selected_collection {
-                                        if ui.get_active_request_tab_index() < 0 {
-                                            ui.set_selected_collection_id(collection_id);
-                                            ui.set_expanded_collection_id(collection_id);
-                                            ui.set_selected_collection_name(
-                                                selected_collection_name,
-                                            );
-                                            ui.invoke_show_empty_collection();
-                                        }
+                                    if selected_collection && ui.get_active_request_tab_index() < 0
+                                    {
+                                        ui.set_selected_collection_id(collection_id);
+                                        ui.set_expanded_collection_id(collection_id);
+                                        ui.set_selected_collection_name(selected_collection_name);
+                                        ui.invoke_show_empty_collection();
                                     }
                                 } else {
                                     ui.set_response_status(
@@ -2714,5 +3011,5 @@ async fn main() -> Result<(), slint::PlatformError> {
     });
 
     app.invoke_load_collections();
-    app.run()
+    Ok(app.run()?)
 }

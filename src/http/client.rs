@@ -3,6 +3,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+use super::result::HttpState;
 use reqwest::{
     Client, Method, Url,
     header::{CONTENT_TYPE, HeaderMap, HeaderName, HeaderValue},
@@ -16,12 +17,26 @@ const MAX_RESPONSE_BYTES: usize = 5 * 1024 * 1024;
 #[derive(Debug)]
 pub struct HttpResult {
     pub status: String,
-    pub state: String,
+    pub status_code: Option<u16>,
+    pub state: HttpState,
     pub body: String,
     pub headers: String,
+    pub header_values: crate::assertions::ResponseHeaders,
     pub cookies: String,
     pub format: String,
     pub elapsed: Duration,
+}
+
+pub struct RequestSpec<'a> {
+    pub method: &'a str,
+    pub url: &'a str,
+    pub body: &'a str,
+    pub headers: &'a str,
+    pub query_params: &'a str,
+    pub body_format: &'a str,
+    pub auth_type: &'a str,
+    pub auth_value: &'a str,
+    pub auth_secret: &'a str,
 }
 
 pub struct HttpClient {
@@ -44,7 +59,7 @@ impl HttpClient {
                     attempt.stop()
                 }
             }))
-            .user_agent(concat!("Resonance/", env!("CARGO_PKG_VERSION")))
+            .user_agent(concat!("Cosmic-API/", env!("CARGO_PKG_VERSION")))
             .build()?;
 
         Ok(Self { client })
@@ -52,17 +67,18 @@ impl HttpClient {
 
     pub async fn send(
         &self,
-        method: &str,
-        url: &str,
-        body: &str,
-        headers_text: &str,
-        params_text: &str,
-        body_format: &str,
-        auth_type: &str,
-        auth_value: &str,
-        auth_secret: &str,
+        spec: &RequestSpec<'_>,
         variables: &HashMap<String, String>,
     ) -> HttpResult {
+        let method = spec.method;
+        let url = spec.url;
+        let body = spec.body;
+        let headers_text = spec.headers;
+        let params_text = spec.query_params;
+        let body_format = spec.body_format;
+        let auth_type = spec.auth_type;
+        let auth_value = spec.auth_value;
+        let auth_secret = spec.auth_secret;
         let start = Instant::now();
 
         let url = match interpolate_variables(url, variables) {
@@ -247,6 +263,7 @@ impl HttpClient {
         let status = response.status().to_string();
         let status_code = response.status().as_u16();
         let response_headers = format_response_headers(response.headers());
+        let response_header_values = collect_response_header_values(response.headers());
         let response_cookies = format_response_cookies(
             response
                 .headers()
@@ -277,9 +294,11 @@ impl HttpClient {
                     if chunk.len() > MAX_RESPONSE_BYTES - bytes.len() {
                         return HttpResult {
                             status,
-                            state: "error".into(),
+                            status_code: Some(status_code),
+                            state: HttpState::Error,
                             body: "Response exceeds the 5 MiB display limit.".into(),
                             headers: response_headers,
+                            header_values: response_header_values,
                             cookies: response_cookies,
                             format: "Text".into(),
                             elapsed: start.elapsed(),
@@ -297,9 +316,11 @@ impl HttpClient {
                     );
                     return HttpResult {
                         status,
+                        status_code: Some(status_code),
                         state,
                         body: format!("Failed to read the response body: {message}"),
                         headers: response_headers,
+                        header_values: response_header_values,
                         cookies: response_cookies,
                         format: "Text".into(),
                         elapsed: start.elapsed(),
@@ -311,12 +332,14 @@ impl HttpClient {
         if is_binary_media_type(&content_type) {
             return HttpResult {
                 status,
-                state: response_status_state(status_code).into(),
+                status_code: Some(status_code),
+                state: response_status_state(status_code),
                 body: format!(
                     "Received a binary response ({content_type}, {:.1} KiB). The Body viewer displays text and structured data.",
                     bytes.len() as f64 / 1024.0
                 ),
                 headers: response_headers,
+                header_values: response_header_values,
                 cookies: response_cookies,
                 format: "Binary".into(),
                 elapsed: start.elapsed(),
@@ -326,10 +349,12 @@ impl HttpClient {
         let format = detect_response_format(&raw, &content_type);
 
         HttpResult {
-            state: response_status_state(status_code).into(),
+            state: response_status_state(status_code),
             status,
+            status_code: Some(status_code),
             body: raw,
             headers: response_headers,
+            header_values: response_header_values,
             cookies: response_cookies,
             format,
             elapsed: start.elapsed(),
@@ -361,6 +386,20 @@ fn format_response_headers(headers: &HeaderMap) -> String {
         .collect::<Vec<_>>();
     entries.sort_unstable_by_key(|entry| entry.to_ascii_lowercase());
     entries.join("\n")
+}
+
+fn collect_response_header_values(headers: &HeaderMap) -> crate::assertions::ResponseHeaders {
+    headers
+        .keys()
+        .map(|name| {
+            let values = headers
+                .get_all(name)
+                .iter()
+                .filter_map(|value| value.to_str().ok().map(str::to_owned))
+                .collect();
+            (name.as_str().to_owned(), values)
+        })
+        .collect()
 }
 
 fn format_response_cookies<'a>(cookies: impl Iterator<Item = &'a str>) -> String {
@@ -526,12 +565,12 @@ pub(crate) fn format_html(input: &str) -> String {
             append_html_text(&mut output, &input[cursor..start], depth);
         }
 
-        if input[start..].starts_with("<!--") {
-            if let Some(end) = input[start + 4..].find("-->") {
-                append_html_line(&mut output, &input[start..start + 4 + end + 3], depth);
-                cursor = start + 4 + end + 3;
-                continue;
-            }
+        if input[start..].starts_with("<!--")
+            && let Some(end) = input[start + 4..].find("-->")
+        {
+            append_html_line(&mut output, &input[start..start + 4 + end + 3], depth);
+            cursor = start + 4 + end + 3;
+            continue;
         }
 
         let Some(end) = find_html_tag_end(input, start + 1) else {
@@ -676,11 +715,11 @@ fn valid_placeholder_key(key: &str) -> bool {
         && chars.all(|character| character == '_' || character.is_ascii_alphanumeric())
 }
 
-fn response_status_state(code: u16) -> &'static str {
+fn response_status_state(code: u16) -> HttpState {
     if (200..400).contains(&code) {
-        "success"
+        HttpState::Success
     } else {
-        "http-error"
+        HttpState::HttpError
     }
 }
 
@@ -688,11 +727,11 @@ fn transport_error_details(
     is_timeout: bool,
     is_connect: bool,
     detail: &str,
-) -> (String, String, String) {
+) -> (String, HttpState, String) {
     if is_timeout {
         (
             "Request timed out".into(),
-            "timeout".into(),
+            HttpState::Timeout,
             format!(
                 "The request exceeded its time limit ({} seconds to connect, {} seconds overall). Check the URL, network, and server availability, then try again.",
                 CONNECT_TIMEOUT.as_secs(),
@@ -702,7 +741,7 @@ fn transport_error_details(
     } else if is_connect {
         (
             "Connection failed".into(),
-            "connection-error".into(),
+            HttpState::ConnectionError,
             format!(
                 "Could not connect to the server: {detail}. Check your network, hostname, port, VPN, or firewall, then try again."
             ),
@@ -710,7 +749,7 @@ fn transport_error_details(
     } else {
         (
             "Request failed".into(),
-            "error".into(),
+            HttpState::Error,
             format!(
                 "Request failed: {detail}. Check the URL and request settings, then try again."
             ),
@@ -756,22 +795,24 @@ mod tests {
         let client = HttpClient::new().expect("build HTTP client");
         let result = client
             .send(
-                "GET",
-                &redirector_url,
-                "",
-                "X-API-Key: test-secret",
-                "",
-                "JSON",
-                "None",
-                "",
-                "",
+                &RequestSpec {
+                    method: "GET",
+                    url: &redirector_url,
+                    body: "",
+                    headers: "X-API-Key: test-secret",
+                    query_params: "",
+                    body_format: "JSON",
+                    auth_type: "None",
+                    auth_value: "",
+                    auth_secret: "",
+                },
                 &HashMap::new(),
             )
             .await;
         redirect_thread.join().expect("redirect server");
 
         assert!(result.status.starts_with("302"), "got {}", result.status);
-        assert_eq!(result.state, "success");
+        assert_eq!(result.state, HttpState::Success);
         assert!(destination.set_nonblocking(true).is_ok());
         assert!(
             destination.accept().is_err(),
@@ -781,10 +822,10 @@ mod tests {
 
     #[test]
     fn classifies_http_statuses_separately_from_transport_failures() {
-        assert_eq!(response_status_state(200), "success");
-        assert_eq!(response_status_state(302), "success");
-        assert_eq!(response_status_state(404), "http-error");
-        assert_eq!(response_status_state(503), "http-error");
+        assert_eq!(response_status_state(200), HttpState::Success);
+        assert_eq!(response_status_state(302), HttpState::Success);
+        assert_eq!(response_status_state(404), HttpState::HttpError);
+        assert_eq!(response_status_state(503), HttpState::HttpError);
     }
 
     #[test]
@@ -807,7 +848,7 @@ mod tests {
         let (timeout_status, timeout_state, timeout_message) =
             transport_error_details(true, false, "deadline reached");
         assert_eq!(timeout_status, "Request timed out");
-        assert_eq!(timeout_state, "timeout");
+        assert_eq!(timeout_state, HttpState::Timeout);
         assert!(timeout_message.contains("10 seconds to connect"));
         assert!(timeout_message.contains("30 seconds overall"));
         assert!(timeout_message.contains("try again"));
@@ -815,7 +856,7 @@ mod tests {
         let (connection_status, connection_state, connection_message) =
             transport_error_details(false, true, "connection refused");
         assert_eq!(connection_status, "Connection failed");
-        assert_eq!(connection_state, "connection-error");
+        assert_eq!(connection_state, HttpState::ConnectionError);
         assert!(connection_message.contains("firewall"));
     }
 
@@ -888,9 +929,11 @@ mod tests {
 fn failure(message: &str, start: Instant) -> HttpResult {
     HttpResult {
         status: "Error".into(),
-        state: "error".into(),
+        status_code: None,
+        state: HttpState::Error,
         body: message.into(),
         headers: String::new(),
+        header_values: HashMap::new(),
         cookies: String::new(),
         format: "Text".into(),
         elapsed: start.elapsed(),

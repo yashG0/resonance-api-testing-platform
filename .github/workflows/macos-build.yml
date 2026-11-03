@@ -42,6 +42,9 @@ jobs:
       - name: Check formatting
         run: cargo fmt --check
 
+      - name: Run Clippy
+        run: cargo clippy --locked -- -D warnings
+
       - name: Run tests
         run: cargo test --locked
 
@@ -53,26 +56,26 @@ jobs:
         run: |
           set -euo pipefail
 
-          mkdir -p dist/resonance-macos-aarch64
+          mkdir -p dist/cosmic-api-macos-aarch64
 
-          cp target/aarch64-apple-darwin/release/resonance \
-            dist/resonance-macos-aarch64/
+          cp target/aarch64-apple-darwin/release/cosmic-api \
+            dist/cosmic-api-macos-aarch64/
 
-          cp LICENSE README.md dist/resonance-macos-aarch64/
+          cp LICENSE README.md dist/cosmic-api-macos-aarch64/
 
-          tar -czf dist/resonance-macos-aarch64.tar.gz \
-            -C dist resonance-macos-aarch64
+          tar -czf dist/cosmic-api-macos-aarch64.tar.gz \
+            -C dist cosmic-api-macos-aarch64
 
           cd dist
-          shasum -a 256 resonance-macos-aarch64.tar.gz \
-            > resonance-macos-aarch64.tar.gz.sha256
+          shasum -a 256 cosmic-api-macos-aarch64.tar.gz \
+            > cosmic-api-macos-aarch64.tar.gz.sha256
 
       - name: Upload macOS build artifact
         uses: actions/upload-artifact@v4
         with:
-          name: resonance-macos-aarch64
+          name: cosmic-api-macos-aarch64
           path: |
-            dist/resonance-macos-aarch64.tar.gz
-            dist/resonance-macos-aarch64.tar.gz.sha256
+            dist/cosmic-api-macos-aarch64.tar.gz
+            dist/cosmic-api-macos-aarch64.tar.gz.sha256
           if-no-files-found: error
           retention-days: 14

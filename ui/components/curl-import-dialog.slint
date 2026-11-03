@@ -1,0 +1,51 @@
+import { Theme } from "theme.slint";
+import { Btn } from "btn.slint";
+import { AdwTextEdit } from "adw-inputs.slint";
+
+export component CurlImportDialog inherits Rectangle {
+    in-out property <string> command: "";
+    in property <string> error: "";
+    callback import(string);
+    callback close();
+
+    background: Theme.overlay;
+    TouchArea { clicked => { root.close(); } }
+
+    Rectangle {
+        width: min(680px, parent.width - 48px);
+        height: min(520px, parent.height - 48px);
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2;
+        background: Theme.dialog-bg;
+        border-radius: Theme.radius-card;
+        border-width: 1px;
+        border-color: Theme.border-strong;
+        drop-shadow-color: #00000066;
+        drop-shadow-blur: 28px;
+        drop-shadow-offset-y: 10px;
+        clip: true;
+
+        TouchArea { }
+
+        VerticalLayout {
+            padding: 20px;
+            spacing: 12px;
+            Text { text: "Import cURL request"; color: Theme.fg; font-size: Theme.fs-heading; font-weight: 700; }
+            Text { text: "Paste a cURL command. Supported options include method, URL, headers, request data, and basic or bearer authentication."; color: Theme.fg-2; font-size: Theme.fs-small; wrap: word-wrap; }
+            AdwTextEdit {
+                vertical-stretch: 1;
+                text <=> root.command;
+                placeholder-text: "curl 'https://api.example.com/items' -H 'Accept: application/json'";
+                font-family: Theme.font-mono;
+                wrap: word-wrap;
+            }
+            if root.error != "" : Text { text: root.error; color: Theme.danger; font-size: Theme.fs-small; wrap: word-wrap; }
+            HorizontalLayout {
+                height: 40px;
+                Rectangle { horizontal-stretch: 1; }
+                Btn { text: "Cancel"; kind: "flat"; clicked => { root.close(); } }
+                Btn { text: "Import request"; kind: "suggested"; clicked => { root.import(root.command); } }
+            }
+        }
+    }
+}

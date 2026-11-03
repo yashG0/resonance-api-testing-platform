@@ -13,7 +13,7 @@ export component Btn inherits Rectangle {
     callback clicked();
 
     accessible-role: button;
-    accessible-label: root.accessible-name != "" ? root.accessible-name : root.text;
+    accessible-label: root.accessible-name != "" ? root.accessible-name : root.text != "" ? root.text : root.tooltip;
 
     property <bool> accent-kind: root.kind == "suggested" || root.kind == "pill";
 

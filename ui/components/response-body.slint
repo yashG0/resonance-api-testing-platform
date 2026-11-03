@@ -26,13 +26,13 @@ export struct JsonTreeNode {
     value-color: color,
 }
 
-// Selectable, copyable response body with a slim toolbar (Pretty/Raw only when a distinct
-// pretty version exists, line wrapping, Copy). Emoji render via the renderer's font fallback.
+// Selectable, copyable response body with Pretty/Raw views and automatic line wrapping.
+// Emoji render via the renderer's font fallback.
 export component ResponseBody inherits Rectangle {
     in property <string> raw;
     in property <string> pretty;
     in-out property <string> mode: "Pretty";
-    in-out property <bool> wrap-lines: false;
+    in-out property <bool> wrap-lines: true;
     callback copy-all(string);
     callback tokenize-response(string, string, bool, float) -> [JsonLine];
     callback build-json-tree(string, string, bool) -> [JsonTreeNode];
@@ -149,18 +149,6 @@ changed wrap-lines => {
                 }
             }
             Rectangle { horizontal-stretch: 1; }
-            if root.mode != "Tree" : VerticalLayout {
-                height: 44px;
-                alignment: center;
-                Btn {
-                    height: 30px;
-                    kind: "flat";
-                    icon: Icons.wrap;
-                    text: "Wrap";
-                    active: root.wrap-lines;
-                    clicked => { root.wrap-lines = !root.wrap-lines; }
-                }
-            }
             VerticalLayout {
                 height: 44px;
                 alignment: center;

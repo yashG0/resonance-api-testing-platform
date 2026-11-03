@@ -42,6 +42,9 @@ jobs:
       - name: Check formatting
         run: cargo fmt --check
 
+      - name: Run Clippy
+        run: cargo clippy --locked -- -D warnings
+
       - name: Run tests
         run: cargo test --locked
 
@@ -53,28 +56,28 @@ jobs:
         run: |
           $ErrorActionPreference = "Stop"
 
-          $package = "dist/resonance-windows-x86_64"
+          $package = "dist/cosmic-api-windows-x86_64"
           New-Item -ItemType Directory -Force -Path $package | Out-Null
 
-          Copy-Item "target/x86_64-pc-windows-msvc/release/resonance.exe" $package
+          Copy-Item "target/x86_64-pc-windows-msvc/release/cosmic-api.exe" $package
           Copy-Item "LICENSE" $package
           Copy-Item "README.md" $package
 
           Compress-Archive `
             -Path "$package/*" `
-            -DestinationPath "dist/resonance-windows-x86_64.zip" `
+            -DestinationPath "dist/cosmic-api-windows-x86_64.zip" `
             -CompressionLevel Optimal
 
-          $hash = (Get-FileHash "dist/resonance-windows-x86_64.zip" -Algorithm SHA256).Hash.ToLower()
-          "$hash  resonance-windows-x86_64.zip" |
-            Out-File "dist/resonance-windows-x86_64.zip.sha256" -Encoding ascii
+          $hash = (Get-FileHash "dist/cosmic-api-windows-x86_64.zip" -Algorithm SHA256).Hash.ToLower()
+          "$hash  cosmic-api-windows-x86_64.zip" |
+            Out-File "dist/cosmic-api-windows-x86_64.zip.sha256" -Encoding ascii
 
       - name: Upload Windows build artifact
         uses: actions/upload-artifact@v4
         with:
-          name: resonance-windows-x86_64
+          name: cosmic-api-windows-x86_64
           path: |
-            dist/resonance-windows-x86_64.zip
-            dist/resonance-windows-x86_64.zip.sha256
+            dist/cosmic-api-windows-x86_64.zip
+            dist/cosmic-api-windows-x86_64.zip.sha256
           if-no-files-found: error
           retention-days: 14

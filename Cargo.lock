@@ -921,6 +921,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "cosmic-api"
+version = "1.2.0"
+dependencies = [
+ "arboard",
+ "directories",
+ "keyring",
+ "reqwest",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "slint",
+ "slint-build",
+ "tempfile",
+ "thiserror 2.0.21",
+ "tokio",
+ "uuid",
+]
+
+[[package]]
 name = "countme"
 version = "3.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4241,25 +4260,6 @@ dependencies = [
  "wasm-streams",
  "web-sys",
  "webpki-roots",
-]
-
-[[package]]
-name = "resonance"
-version = "1.2.0"
-dependencies = [
- "arboard",
- "directories",
- "keyring",
- "reqwest",
- "rusqlite",
- "serde",
- "serde_json",
- "slint",
- "slint-build",
- "tempfile",
- "thiserror 2.0.21",
- "tokio",
- "uuid",
 ]
 
 [[package]]

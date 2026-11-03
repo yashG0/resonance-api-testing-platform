@@ -1,7 +1,7 @@
 {
   "results": [
     {
-      "command": "./target/release/resonance",
+      "command": "./target/release/cosmic-api",
       "mean": 0.7190915029600001,
       "stddev": 0.290265723027158,
       "median": 0.5506924305600001,

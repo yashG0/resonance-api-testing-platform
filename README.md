@@ -1,6 +1,6 @@
 <div align="center">
-  <img src="assets/logo/resonance-logo.svg" alt="Resonance" width="92" />
-  <h1>Resonance</h1>
+  <img src="assets/logo/cosmic-api-logo.svg" alt="Cosmic API" width="92" />
+  <h1>Cosmic API</h1>
   <p><strong>A native, local-first API client for building and testing HTTP requests.</strong></p>
   <p>
     <img alt="Rust" src="https://img.shields.io/badge/built_with-Rust-DEA584?logo=rust&logoColor=white" />
@@ -8,7 +8,7 @@
     <img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-2EA66B.svg" />
   </p>
   <p>
-    <a href="https://github.com/yashG0/resonance-api-testing-platform/releases">Download Resonance</a>
+    <a href="https://github.com/yashG0/resonance-api-testing-platform/releases">Download Cosmic API</a>
     ·
     <a href="#getting-started">Build from source</a>
     ·
@@ -18,18 +18,18 @@
 
 ---
 
-Resonance helps you create, send, inspect, and repeat API requests from a focused desktop workspace. Requests and collections stay on your machine, while HTTP traffic goes directly to the endpoint you choose.
+Cosmic API helps you create, send, inspect, and repeat API requests from a focused desktop workspace. Requests and collections stay on your machine, while HTTP traffic goes directly to the endpoint you choose.
 
 ## At a glance
 
 <div align="center">
-  <img src="assets/images/1.png" alt="Resonance request workspace in dark theme, showing request editing and a formatted JSON response" width="100%" />
+  <img src="assets/images/1.png" alt="Cosmic API request workspace in dark theme, showing request editing and a formatted JSON response" width="100%" />
   <br />
   <sub>Request workspace · dark theme</sub>
 </div>
 
 <div align="center">
-  <img src="assets/images/2.png" alt="Resonance request workspace in light theme, showing request editing and a formatted JSON response" width="100%" />
+  <img src="assets/images/2.png" alt="Cosmic API request workspace in light theme, showing request editing and a formatted JSON response" width="100%" />
   <br />
   <sub>The same workspace · light theme</sub>
 </div>
@@ -41,7 +41,12 @@ Resonance helps you create, send, inspect, and repeat API requests from a focuse
 - **Organize work** in collections and keep multiple request tabs open with their response state preserved.
 - **Reuse values** with collection variables and environment configuration; mark sensitive variables to store their values in the operating-system credential store.
 - **Inspect responses** with formatted, raw, and JSON tree views, plus status, timing, headers, and cookies.
-- **Run collection regression checks** and review per-request outcomes and response details in a dedicated view.
+- **Check collection responses** with status, status-class, latency, body, JSON Pointer, and response-header assertions.
+- **Chain requests** by capturing a JSON Pointer value into a variable for later requests in the same run. Captured values are run-scoped.
+- **Control collection runs** with retries, an optional delay, and stop-on-first-failure behavior.
+- **Import and copy cURL commands** for common methods, headers, data, and Basic or Bearer authentication. TLS-verification-disabling options are rejected during import.
+- **Review regression runs** with per-request outcomes, skipped requests, and response details in a dedicated view.
+- **Run collections in CI** with `cosmic-api run "API checks" --database ci-data.sqlite3 --env Staging --data cases.json --junit test-results/api.xml`; a failed request returns a non-zero exit code. `--env` selects another collection's variables as an overlay until named environments are introduced.
 - **Review request history** with filtering, sorting, and pagination.
 - **Work locally** with SQLite storage and operating-system credential storage for saved secrets.
 - **Choose your appearance** with system, light, and dark themes.
@@ -62,7 +67,7 @@ See [release notes](RELEASE_NOTES.md) for installation requirements and platform
 
 ### Build and run
 
-You’ll need a recent Rust toolchain with Cargo, plus the native libraries required by Slint for your platform.
+You’ll need Rust 1.88 or newer with Cargo, plus the native libraries required by Slint for your platform.
 
 ```bash
 git clone https://github.com/yashG0/resonance-api-testing-platform.git
@@ -78,6 +83,17 @@ cargo build --release
 
 The executable is written to `target/release/`.
 
+The headless runner uses the same OS credential store as the desktop app. It uses the local database by default; pass `--database <file>` to run a prepared SQLite database in CI. A data file is a JSON array of objects whose string, number, and boolean values override collection variables for each iteration. For example:
+
+```json
+[
+  {"user_id": 1},
+  {"user_id": 42}
+]
+```
+
+For command options and data limits, run `cosmic-api --help`.
+
 ### Development checks
 
 ```bash
@@ -88,10 +104,12 @@ cargo test
 
 ## Architecture
 
-Resonance is a native desktop application. The Slint interface collects requests and presents results; Rust coordinates storage and HTTP work; SQLite stores local collections, requests, variables, and recent history. The app does not route API traffic through a Resonance server.
+Cosmic API is a native desktop application. The Slint interface collects requests and presents results; Rust coordinates storage and HTTP work; SQLite stores local collections, requests, variables, and recent history. The app does not route API traffic through a Cosmic API server.
+
+See [DESIGN.md](DESIGN.md) for the data flow and current trade-offs, and [BENCHMARKS.md](BENCHMARKS.md) for the available startup sample and the measurements still needed.
 
 <div align="center">
-  <img src="assets/images/resonance-system-design.png" alt="Resonance system design showing the user, Slint interface, Rust and Tokio coordinator, direct HTTP request flow, and local SQLite storage" width="100%" />
+  <img src="assets/images/cosmic-api-system-design.png" alt="Cosmic API system design showing the user, Slint interface, Rust and Tokio coordinator, direct HTTP request flow, and local SQLite storage" width="100%" />
   <br />
   <sub>Request flow and local storage boundaries</sub>
 </div>
@@ -112,8 +130,8 @@ Authentication credentials and variables marked **Secret** are stored in the ope
 
 ## Project status
 
-Resonance is under active development. Check the release page and [release notes](RELEASE_NOTES.md) for the current version, supported artifacts, and known platform limitations.
+Cosmic API is under active development. Check the release page and [release notes](RELEASE_NOTES.md) for the current version, supported artifacts, and known platform limitations.
 
 ## License
 
-Resonance is distributed under the terms in [`LICENSE`](LICENSE).
+Cosmic API is distributed under the terms in [`LICENSE`](LICENSE).

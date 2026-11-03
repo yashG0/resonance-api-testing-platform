@@ -1,4 +1,4 @@
-import { ThemedButton } from "themed-button.slint";
+import { Btn } from "btn.slint";
 import { AdwLineEdit } from "adw-inputs.slint";
 import { Theme } from "theme.slint";
 
@@ -89,12 +89,11 @@ export component KeyValueEditor inherits Rectangle {
                         root.changed(root.rows);
                     }
                 }
-                ThemedButton {
+                Btn {
                     width: 34px;
                     text: "×";
-                    dark-mode: root.dark-mode;
-                    accent-button: false;
-                    destructive-button: true;
+                    accessible-name: "Remove row";
+                    kind: "destructive";
                     clicked => {
                         root.rows.remove(index);
                         root.changed(root.rows);
@@ -103,12 +102,11 @@ export component KeyValueEditor inherits Rectangle {
             }
         }
 
-        ThemedButton {
+        Btn {
             width: 112px;
             height: 32px;
             text: "+ " + root.add-label;
-            dark-mode: root.dark-mode;
-            accent-button: false;
+            kind: "default";
             clicked => {
                 root.rows.push({ key: "", value: "", enabled: true });
                 root.changed(root.rows);

@@ -43,6 +43,17 @@ pub struct RequestHistory {
     pub created_at: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HistoryRecord {
+    pub request_id: i64,
+    pub collection_id: i64,
+    pub request_name: String,
+    pub method: String,
+    pub url: String,
+    pub status: String,
+    pub elapsed_ms: i64,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SavedRequest {
     pub id: i64,
@@ -58,6 +69,9 @@ pub struct SavedRequest {
     pub auth_value: String,
     pub auth_secret: String,
     pub assertions: Vec<crate::assertions::Assertion>,
+    /// Set when persisted assertion data cannot be decoded. Requests remain loadable,
+    /// but collection runs must fail them closed instead of treating them as unchecked.
+    pub assertions_error: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -327,7 +341,7 @@ impl RequestStore {
         if !reference.is_empty()
             && let Err(error) = self.credential_vault.delete(reference)
         {
-            eprintln!("Resonance: could not remove an unused credential entry: {error}");
+            eprintln!("Cosmic API: could not remove an unused credential entry: {error}");
         }
     }
 
@@ -606,7 +620,7 @@ impl RequestStore {
         value: &str,
     ) -> Result<(), StoreError> {
         let key = key.trim();
-        if !valid_variable_key(key) {
+        if !crate::assertions::valid_variable_key(key) {
             return Err(StoreError::Validation(
                 "variable names must start with a letter or underscore and contain only letters, numbers, or underscores".into(),
             ));
@@ -632,7 +646,7 @@ impl RequestStore {
         is_secret: bool,
     ) -> Result<(), StoreError> {
         let key = key.trim();
-        if !valid_variable_key(key) {
+        if !crate::assertions::valid_variable_key(key) {
             return Err(StoreError::Validation(
                 "variable names must start with a letter or underscore and contain only letters, numbers, or underscores".into(),
             ));
@@ -671,7 +685,7 @@ impl RequestStore {
     ) -> Result<(), StoreError> {
         let old_key = old_key.trim();
         let new_key = new_key.trim();
-        if !valid_variable_key(new_key) {
+        if !crate::assertions::valid_variable_key(new_key) {
             return Err(StoreError::Validation(
                 "variable names must start with a letter or underscore and contain only letters, numbers, or underscores".into(),
             ));
@@ -769,8 +783,17 @@ impl RequestStore {
 
     pub fn create(&self, request: &NewRequest) -> Result<SavedRequest, StoreError> {
         validate_request(request)?;
+        let assertions = serde_json::to_string(&request.assertions).map_err(|error| {
+            StoreError::Validation(format!("could not encode assertions: {error}"))
+        })?;
         let credential_ref = self.store_request_credentials(request)?;
-        let connection = self.connect()?;
+        let connection = match self.connect() {
+            Ok(connection) => connection,
+            Err(error) => {
+                self.remove_request_credentials(&credential_ref);
+                return Err(error);
+            }
+        };
         let insert_result = connection.execute(
             r#"
             INSERT INTO saved_requests (name, method, url, headers, query_params, body, collection_id, body_format, auth_type, auth_value, auth_secret, credential_ref, assertions)
@@ -787,7 +810,7 @@ impl RequestStore {
                 request.body_format,
                 request.auth_type,
                 credential_ref,
-                serde_json::to_string(&request.assertions).unwrap_or_else(|_| "[]".to_owned())
+                assertions
             ],
         );
         if let Err(error) = insert_result {
@@ -839,15 +862,32 @@ impl RequestStore {
 
     pub fn update(&self, id: i64, request: &NewRequest) -> Result<bool, StoreError> {
         validate_request(request)?;
+        let assertions = serde_json::to_string(&request.assertions).map_err(|error| {
+            StoreError::Validation(format!("could not encode assertions: {error}"))
+        })?;
         let credential_ref = self.store_request_credentials(request)?;
-        let connection = self.connect()?;
-        let old_ref = connection
+        let connection = match self.connect() {
+            Ok(connection) => connection,
+            Err(error) => {
+                self.remove_request_credentials(&credential_ref);
+                return Err(error);
+            }
+        };
+        let old_ref = match connection
             .query_row(
                 "SELECT credential_ref FROM saved_requests WHERE id = ?1",
                 [id],
                 |row| row.get::<_, String>(0),
             )
-            .optional()?;
+            .optional()
+        {
+            Ok(old_ref) => old_ref,
+            Err(error) => {
+                drop(connection);
+                self.remove_request_credentials(&credential_ref);
+                return Err(error.into());
+            }
+        };
         let Some(old_ref) = old_ref else {
             drop(connection);
             self.remove_request_credentials(&credential_ref);
@@ -875,7 +915,7 @@ impl RequestStore {
                 request.auth_type,
                 credential_ref,
                 id,
-                serde_json::to_string(&request.assertions).unwrap_or_else(|_| "[]".to_owned())
+                assertions
             ],
         );
         let changed = match update_result {
@@ -913,37 +953,11 @@ impl RequestStore {
         Ok(changed == 1)
     }
 
-    pub fn record_history(
-        &self,
-        request_id: i64,
-        collection_id: i64,
-        request_name: &str,
-        method: &str,
-        url: &str,
-        status: &str,
-        elapsed_ms: i64,
-    ) -> Result<(), StoreError> {
-        let connection = self.connect()?;
-        let collection_name = connection.query_row(
-            "SELECT name FROM collections WHERE id = ?1",
-            [collection_id],
-            |row| row.get::<_, String>(0),
-        )?;
-        connection.execute(
-            "INSERT INTO request_history (request_id, collection_name, request_name, method, url, status, elapsed_ms) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-            params![request_id, collection_name, request_name, method, redact_url(url), status, elapsed_ms],
-        )?;
-        connection.execute(
-            "DELETE FROM request_history WHERE id NOT IN (SELECT id FROM request_history ORDER BY id DESC LIMIT 500)",
-            [],
-        )?;
-        Ok(())
+    pub fn record_history(&self, entry: &HistoryRecord) -> Result<(), StoreError> {
+        self.record_history_batch(std::slice::from_ref(entry))
     }
 
-    pub fn record_history_batch(
-        &self,
-        entries: &[(i64, i64, String, String, String, String, i64)],
-    ) -> Result<(), StoreError> {
+    pub fn record_history_batch(&self, entries: &[HistoryRecord]) -> Result<(), StoreError> {
         if entries.is_empty() {
             return Ok(());
         }
@@ -958,21 +972,21 @@ impl RequestStore {
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
             )?;
 
-            for (request_id, collection_id, name, method, url, status, elapsed_ms) in entries {
+            for entry in entries {
                 let collection_name: String = transaction.query_row(
                     "SELECT name FROM collections WHERE id = ?1",
-                    [collection_id],
+                    [entry.collection_id],
                     |row| row.get(0),
                 )?;
 
                 insert.execute(params![
-                    request_id,
+                    entry.request_id,
                     collection_name,
-                    name,
-                    method,
-                    redact_url(url),
-                    status,
-                    elapsed_ms
+                    entry.request_name,
+                    entry.method,
+                    redact_url(&entry.url),
+                    entry.status,
+                    entry.elapsed_ms
                 ])?;
             }
         }
@@ -1009,12 +1023,6 @@ impl RequestStore {
         rows.collect::<Result<Vec<_>, _>>()
             .map_err(StoreError::from)
     }
-}
-
-fn valid_variable_key(key: &str) -> bool {
-    let mut chars = key.chars();
-    matches!(chars.next(), Some(c) if c == '_' || c.is_ascii_alphabetic())
-        && chars.all(|c| c == '_' || c.is_ascii_alphanumeric())
 }
 
 fn is_sensitive_query_name(name: &str) -> bool {
@@ -1121,6 +1129,14 @@ fn validate_request(request: &NewRequest) -> Result<(), StoreError> {
 }
 
 fn row_to_stored_request(row: &rusqlite::Row<'_>) -> rusqlite::Result<StoredSavedRequest> {
+    let raw_assertions = row.get::<_, String>(13)?;
+    let (assertions, assertions_error) = match serde_json::from_str(&raw_assertions) {
+        Ok(assertions) => (assertions, None),
+        Err(error) => (
+            Vec::new(),
+            Some(format!("Saved assertions are invalid: {error}")),
+        ),
+    };
     Ok(StoredSavedRequest {
         request: SavedRequest {
             id: row.get(0)?,
@@ -1135,7 +1151,8 @@ fn row_to_stored_request(row: &rusqlite::Row<'_>) -> rusqlite::Result<StoredSave
             auth_type: row.get(9)?,
             auth_value: row.get(10)?,
             auth_secret: row.get(11)?,
-            assertions: serde_json::from_str(&row.get::<_, String>(13)?).unwrap_or_default(),
+            assertions,
+            assertions_error,
         },
         credential_ref: row.get(12)?,
     })
@@ -1198,6 +1215,47 @@ mod tests {
     }
 
     #[test]
+    fn create_removes_new_vault_credentials_when_database_cannot_open() {
+        let temp = tempfile::tempdir().expect("temporary directory");
+        let path = temp.path().join("test.sqlite3");
+        let vault = std::sync::Arc::new(MemoryVault::default());
+        let store = RequestStore::open_with_vault(&path, vault.clone()).expect("open store");
+        let collection_id = store.list_collections().expect("collections")[0].id;
+        let mut request = sample(collection_id);
+        request.auth_type = "Basic".into();
+        request.auth_value = "username".into();
+        request.auth_secret = "password".into();
+
+        std::fs::remove_file(&path).expect("remove database");
+        std::fs::create_dir(&path).expect("replace database with directory");
+
+        assert!(store.create(&request).is_err());
+        assert!(vault.0.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn update_removes_new_vault_credentials_when_database_cannot_open() {
+        let temp = tempfile::tempdir().expect("temporary directory");
+        let path = temp.path().join("test.sqlite3");
+        let vault = std::sync::Arc::new(MemoryVault::default());
+        let store = RequestStore::open_with_vault(&path, vault.clone()).expect("open store");
+        let collection_id = store.list_collections().expect("collections")[0].id;
+        let saved = store
+            .create(&sample(collection_id))
+            .expect("create request");
+        let mut update = sample(collection_id);
+        update.auth_type = "Basic".into();
+        update.auth_value = "username".into();
+        update.auth_secret = "password".into();
+
+        std::fs::remove_file(&path).expect("remove database");
+        std::fs::create_dir(&path).expect("replace database with directory");
+
+        assert!(store.update(saved.id, &update).is_err());
+        assert!(vault.0.lock().unwrap().is_empty());
+    }
+
+    #[test]
     fn create_read_update_delete_round_trip() {
         let temp = tempfile::tempdir().expect("temporary directory");
         let store = test_store(&temp.path().join("test.sqlite3"));
@@ -1252,21 +1310,49 @@ mod tests {
     }
 
     #[test]
+    fn corrupted_saved_assertions_are_preserved_as_an_explicit_error() {
+        let temp = tempfile::tempdir().expect("temporary directory");
+        let path = temp.path().join("test.sqlite3");
+        let store = test_store(&path);
+        let collection_id = store.list_collections().expect("collections")[0].id;
+        let saved = store
+            .create(&sample(collection_id))
+            .expect("create request");
+
+        Connection::open(&path)
+            .expect("open database")
+            .execute(
+                "UPDATE saved_requests SET assertions = ?1 WHERE id = ?2",
+                params![r#"[{"kind":"future_assertion"}]"#, saved.id],
+            )
+            .expect("corrupt stored assertion variant");
+
+        let loaded = store.get(saved.id).expect("load request").expect("exists");
+        assert!(loaded.assertions.is_empty());
+        assert!(
+            loaded
+                .assertions_error
+                .as_deref()
+                .is_some_and(|error| error.contains("Saved assertions are invalid"))
+        );
+    }
+
+    #[test]
     fn history_redacts_credentials_tokens_and_fragments() {
         let temp = tempfile::tempdir().expect("temporary directory");
         let path = temp.path().join("history.sqlite3");
         let store = test_store(&path);
         let collection_id = store.list_collections().expect("collections")[0].id;
         store
-            .record_history(
-                1,
+            .record_history(&HistoryRecord {
+                request_id: 1,
                 collection_id,
-                "request",
-                "GET",
-                "https://user:pass@example.com/items?api_key=top-secret&name=public#client-token",
-                "200 OK",
-                10,
-            )
+                request_name: "request".into(),
+                method: "GET".into(),
+                url: "https://user:pass@example.com/items?api_key=top-secret&name=public#client-token".into(),
+                status: "200 OK".into(),
+                elapsed_ms: 10,
+            })
             .expect("record history");
         let existing_history = Connection::open(&path).expect("open database");
         existing_history

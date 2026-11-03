@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 512 512" fill="none">
+  <title>Cosmic API — orbit mark</title>
+  <desc>A clean open orbit forming a C, with a small star at its edge.</desc>
+  <defs>
+    <linearGradient id="orbit" x1="92" y1="143" x2="420" y2="386" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#31D3D7"/>
+      <stop offset=".52" stop-color="#39A8E8"/>
+      <stop offset="1" stop-color="#6685F5"/>
+    </linearGradient>
+    <linearGradient id="spark" x1="358" y1="116" x2="420" y2="178" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#B6F7F0"/>
+      <stop offset="1" stop-color="#7CAEFF"/>
+    </linearGradient>
+  </defs>
+  <path d="M372 125 A173 173 0 1 0 372 387" stroke="url(#orbit)" stroke-width="34" stroke-linecap="round"/>
+  <path d="M399 99 L411 130 L442 142 L411 154 L399 185 L387 154 L356 142 L387 130 Z" fill="url(#spark)"/>
+  <circle cx="337" cy="256" r="15" fill="#EAFBFF"/>
+</svg>

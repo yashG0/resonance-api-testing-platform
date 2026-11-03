@@ -1,4 +1,4 @@
-import { ThemedButton } from "themed-button.slint";
+import { Btn } from "btn.slint";
 import { Theme } from "theme.slint";
 
 export component ChoiceDropdown inherits Rectangle {
@@ -12,13 +12,11 @@ export component ChoiceDropdown inherits Rectangle {
 
     height: 36px;
 
-    ThemedButton {
+    Btn {
         width: 100%;
         height: parent.height;
         text: root.current-value + "  ▾";
-        dark-mode: root.dark-mode;
-        accent-button: root.accent-button;
-        accent-color: root.accent-color;
+        kind: root.accent-button ? "suggested" : "default";
         clicked => popup.show();
     }
 

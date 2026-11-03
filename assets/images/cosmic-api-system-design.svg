@@ -24,7 +24,7 @@
   <path d="M2 19 C2 8 9 3 20 4 C32 3 41 11 40 22 C40 34 30 40 18 39 C7 40 0 31 2 19Z" fill="#dcecff" class="outline"/>
   <path d="M12 13h15l8 9-8 8-6-6 5-4-5-5H12zM11 22l8 7-7 7z" fill="none" stroke="#3584e4" stroke-width="3" stroke-linejoin="round" stroke-linecap="round"/>
 </g>
-<text x="130" y="88" font-size="25" font-weight="700">Resonance</text>
+<text x="130" y="88" font-size="25" font-weight="700">Cosmic API</text>
 <path d="M130 96q57 3 115-1" class="echo-line"/>
 <text x="77" y="163" class="title">How a request moves through the app</text>
 <path d="M79 177q250 4 567-2" fill="none" stroke="#3584e4" stroke-width="4" stroke-linecap="round"/>
@@ -176,5 +176,5 @@
 <text x="850" y="1008" class="body">Requests, collections, variables, and history live in SQLite.</text>
 <path d="M778 1034h56" class="line blue"/><path d="M831 1034l-10-7m10 7-10 7" class="line blue"/>
 <text x="850" y="1041" class="body">HTTP traffic goes directly to your chosen API endpoint.</text>
-<text x="1734" y="1090" text-anchor="end" class="tiny">Resonance · v0.1.1 · system sketch</text>
+<text x="1734" y="1090" text-anchor="end" class="tiny">Cosmic API · v0.1.1 · system sketch</text>
 </svg>
