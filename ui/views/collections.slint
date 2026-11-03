@@ -1,0 +1,106 @@
+import { ScrollView } from "std-widgets.slint";
+import { Btn } from "../components/btn.slint";
+import { Theme } from "../components/theme.slint";
+import { Icons } from "../components/icons.slint";
+
+export struct CollectionItem {
+    id: int,
+    name: string,
+}
+
+export component CollectionsView inherits Rectangle {
+    in property <[CollectionItem]> collections: [];
+    in property <int> selected-collection-id: -1;
+    callback new-collection();
+    callback open-collection(int, string);
+
+    HorizontalLayout {
+                        padding: 24px;
+                        Rectangle { horizontal-stretch: 1; }
+                        VerticalLayout {
+                            horizontal-stretch: 100;
+                            max-width: 1000px;
+                            spacing: 12px;
+
+                            HorizontalLayout {
+                                height: 40px;
+                                Text { text: "Browse your collections and open their requests."; color: Theme.fg-2; font-size: Theme.fs-label; vertical-alignment: center; horizontal-stretch: 1; }
+                                Btn { kind: "suggested"; text: "New collection"; icon: Icons.plus; clicked => { root.new-collection(); } }
+                            }
+
+                            ScrollView {
+                                vertical-stretch: 1;
+                                VerticalLayout {
+                                    alignment: start;
+                                    spacing: 10px;
+
+                                    if root.collections.length == 0 : Rectangle {
+                                        height: 200px;
+                                        background: Theme.view-bg;
+                                        border-width: 1px;
+                                        border-color: Theme.border;
+                                        border-radius: Theme.radius-card;
+                                        VerticalLayout {
+                                            alignment: center;
+                                            spacing: 8px;
+                                            Text { text: "No collections yet"; color: Theme.fg; font-size: Theme.fs-heading; font-weight: 700; horizontal-alignment: center; }
+                                            Text { text: "Create a collection to organize requests and variables."; color: Theme.fg-2; font-size: Theme.fs-body; horizontal-alignment: center; }
+                                        }
+                                    }
+
+                                    for collection in root.collections : Rectangle {
+                                        height: 76px;
+                                        background: Theme.view-bg;
+                                        border-width: collection.id == root.selected-collection-id ? 2px : 1px;
+                                        border-color: collection.id == root.selected-collection-id ? Theme.accent : Theme.border;
+                                        border-radius: Theme.radius-card;
+
+                                        open-touch := TouchArea {
+                                            mouse-cursor: pointer;
+                                            clicked => {
+                                                root.open-collection(collection.id, collection.name);
+                                            }
+                                        }
+
+                                        HorizontalLayout {
+                                            padding: 14px;
+                                            spacing: 14px;
+                                            Rectangle {
+                                                width: 46px;
+                                                height: 46px;
+                                                border-radius: 12px;
+                                                background: Theme.accent.with-alpha(0.16);
+                                                Image {
+                                                    source: Icons.folder;
+                                                    width: 22px;
+                                                    height: 22px;
+                                                    x: (parent.width - self.width) / 2;
+                                                    y: (parent.height - self.height) / 2;
+                                                    colorize: Theme.accent-text;
+                                                }
+                                            }
+                                            VerticalLayout {
+                                                horizontal-stretch: 1;
+                                                alignment: center;
+                                                spacing: 3px;
+                                                Text { text: collection.name; color: Theme.fg; font-size: Theme.fs-heading; font-weight: 700; overflow: elide; }
+                                                Text { text: collection.id == root.selected-collection-id ? "Currently open" : "Collection"; color: Theme.fg-3; font-size: Theme.fs-small; }
+                                            }
+                                            Btn {
+                                                y: 8px;
+                                                text: "Open";
+                                                kind: collection.id == root.selected-collection-id ? "suggested" : "default";
+                                                clicked => {
+                                                    root.open-collection(collection.id, collection.name);
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        Rectangle { horizontal-stretch: 1; }
+                    
+}
+}
