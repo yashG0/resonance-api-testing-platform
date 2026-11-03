@@ -269,7 +269,7 @@ fn parse_options(arguments: &[String]) -> Result<RunOptions, String> {
 }
 
 fn usage() -> &'static str {
-    "Usage: cosmic-api run <collection> [--database <file>] [--env <collection-name>] [--data <rows.json>] [--junit <report.xml>]"
+    "Usage: cosmic-api run <collection> [--database <file>] [--env <collection-name>] [--data <rows.json|rows.csv>] [--junit <report.xml>]"
 }
 
 fn load_data_rows(path: &std::path::Path) -> Result<Vec<HashMap<String, String>>, String> {
@@ -284,8 +284,16 @@ fn load_data_rows(path: &std::path::Path) -> Result<Vec<HashMap<String, String>>
             "Data file is larger than the {MAX_DATA_FILE_BYTES}-byte limit."
         ));
     }
-    let rows = serde_json::from_slice::<serde_json::Value>(&data)
-        .map_err(|error| format!("Data file must contain a JSON array of objects: {error}"))?;
+    let rows = if path
+        .extension()
+        .and_then(std::ffi::OsStr::to_str)
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("csv"))
+    {
+        csv_rows_as_json(&data)?
+    } else {
+        serde_json::from_slice::<serde_json::Value>(&data)
+            .map_err(|error| format!("Data file must contain a JSON array of objects: {error}"))?
+    };
     let rows = rows
         .as_array()
         .ok_or_else(|| "Data file must contain a JSON array of objects.".to_owned())?;
@@ -338,6 +346,108 @@ fn load_data_rows(path: &std::path::Path) -> Result<Vec<HashMap<String, String>>
                 .collect::<Result<HashMap<_, _>, String>>()
         })
         .collect()
+}
+
+fn csv_rows_as_json(data: &[u8]) -> Result<serde_json::Value, String> {
+    let text =
+        std::str::from_utf8(data).map_err(|error| format!("CSV data must be UTF-8: {error}"))?;
+    let mut records = parse_csv_records(text)?;
+    if records.is_empty() {
+        return Err("CSV data must include a header and at least one row.".to_owned());
+    }
+    let headers = records.remove(0);
+    if headers.is_empty() || headers.len() > MAX_VARIABLES_PER_ROW {
+        return Err(format!(
+            "CSV header must contain between 1 and {MAX_VARIABLES_PER_ROW} columns."
+        ));
+    }
+    for (index, header) in headers.iter().enumerate() {
+        if header.is_empty() {
+            return Err(format!("CSV header {} cannot be empty.", index + 1));
+        }
+        if headers[..index].contains(header) {
+            return Err(format!("CSV header '{header}' is duplicated."));
+        }
+    }
+
+    let rows = records
+        .into_iter()
+        .enumerate()
+        .map(|(index, record)| {
+            if record.len() != headers.len() {
+                return Err(format!(
+                    "CSV row {} has {} values; expected {}.",
+                    index + 2,
+                    record.len(),
+                    headers.len()
+                ));
+            }
+            Ok(serde_json::Value::Object(
+                headers
+                    .iter()
+                    .cloned()
+                    .zip(record.into_iter().map(serde_json::Value::String))
+                    .collect(),
+            ))
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+    Ok(serde_json::Value::Array(rows))
+}
+
+fn parse_csv_records(text: &str) -> Result<Vec<Vec<String>>, String> {
+    let mut records = Vec::new();
+    let mut record = Vec::new();
+    let mut field = String::new();
+    let mut chars = text.chars().peekable();
+    let mut quoted = false;
+    let mut quote_closed = false;
+
+    while let Some(character) = chars.next() {
+        if quoted {
+            if character == '"' {
+                if chars.peek() == Some(&'"') {
+                    chars.next();
+                    field.push('"');
+                } else {
+                    quoted = false;
+                    quote_closed = true;
+                }
+            } else {
+                field.push(character);
+            }
+            continue;
+        }
+
+        match character {
+            ',' => {
+                record.push(std::mem::take(&mut field));
+                quote_closed = false;
+            }
+            '\n' | '\r' => {
+                if character == '\r' && chars.peek() == Some(&'\n') {
+                    chars.next();
+                }
+                record.push(std::mem::take(&mut field));
+                records.push(std::mem::take(&mut record));
+                quote_closed = false;
+            }
+            '"' if field.is_empty() && !quote_closed => quoted = true,
+            '"' => return Err("CSV contains a quote inside an unquoted field.".to_owned()),
+            _ if quote_closed => {
+                return Err("CSV contains characters after a closing quote.".to_owned());
+            }
+            _ => field.push(character),
+        }
+    }
+
+    if quoted {
+        return Err("CSV contains an unterminated quoted field.".to_owned());
+    }
+    if !record.is_empty() || !field.is_empty() || quote_closed {
+        record.push(field);
+        records.push(record);
+    }
+    Ok(records)
 }
 
 fn valid_data_variable_name(name: &str) -> bool {
@@ -488,6 +598,30 @@ mod tests {
                 .unwrap_err()
                 .contains("Invalid variable name")
         );
+    }
+
+    #[test]
+    fn parses_csv_rows_with_quoted_commas_quotes_and_newlines() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let path = directory.path().join("rows.CSV");
+        std::fs::write(
+            &path,
+            "item,note\r\nfirst,\"hello, \"\"world\"\"\"\r\nsecond,\"line one\nline two\"\r\n",
+        )
+        .expect("write CSV rows");
+
+        let rows = load_data_rows(&path).expect("parse CSV rows");
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0]["item"], "first");
+        assert_eq!(rows[0]["note"], "hello, \"world\"");
+        assert_eq!(rows[1]["note"], "line one\nline two");
+
+        std::fs::write(&path, "item,item\nfirst,second\n").expect("write duplicate headers");
+        assert!(load_data_rows(&path).unwrap_err().contains("duplicated"));
+        std::fs::write(&path, "item,note\nfirst\n").expect("write short row");
+        assert!(load_data_rows(&path).unwrap_err().contains("expected 2"));
+        std::fs::write(&path, "item\n\"unterminated").expect("write malformed CSV");
+        assert!(load_data_rows(&path).unwrap_err().contains("unterminated"));
     }
 
     #[test]
