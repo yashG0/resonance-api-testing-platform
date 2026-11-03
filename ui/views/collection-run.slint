@@ -1,0 +1,301 @@
+import { ScrollView } from "std-widgets.slint";
+import { AdwSelectableText } from "../components/adw-inputs.slint";
+import { Theme } from "../components/theme.slint";
+import { TabBar } from "../components/tab-bar.slint";
+import { MethodBadge } from "../components/method-badge.slint";
+import { ResponseBody, JsonLine, JsonTreeNode } from "../components/response-body.slint";
+
+export struct ResponseHeaderItem {
+    name: string,
+    value: string,
+}
+export struct CollectionRunResult {
+    method: string, name: string, url: string, status: string, elapsed: string,
+    state: string, body: string, pretty-body: string, format: string, large: bool,
+    headers: string,
+    assertion-summary: string,
+}
+
+component CollectionRunListPane inherits Rectangle {
+    in property <[CollectionRunResult]> results: [];
+    in property <int> selected-index: -1;
+    in property <string> run-state: "idle";
+    in property <string> error-message: "";
+    callback request-selected(int);
+
+    border-radius: 10px;
+    background: Theme.view-bg;
+    border-width: 1px;
+    border-color: Theme.border;
+    VerticalLayout {
+        padding: 12px;
+        spacing: 6px;
+        Text { text: "Request results"; color: Theme.fg; font-size: Theme.fs-label; font-weight: 700; }
+        if root.results.length == 0 : Text {
+            text: root.run-state == "running" ? "Preparing collection run…" : root.run-state == "error" ? root.error-message : "No saved requests in this collection.";
+            color: root.run-state == "error" ? Theme.danger : Theme.fg-3;
+            font-size: Theme.fs-label;
+            vertical-alignment: center;
+            vertical-stretch: 1;
+            horizontal-alignment: center;
+            wrap: word-wrap;
+        }
+        ScrollView {
+            vertical-stretch: 1;
+            VerticalLayout {
+                spacing: 4px;
+                for result[index] in root.results : Rectangle {
+                    height: 58px;
+                    border-radius: 7px;
+                    background: root.selected-index == index ? Theme.active : row-touch.has-hover ? Theme.hover : transparent;
+                    border-width: root.selected-index == index ? 1px : 0px;
+                    border-color: Theme.accent;
+                    row-touch := TouchArea {
+                        clicked => { root.request-selected(index); }
+                    }
+                    HorizontalLayout {
+                        padding: 8px;
+                        spacing: 8px;
+                        cross-axis-alignment: center;
+                        MethodBadge { value: result.method; }
+                        VerticalLayout {
+                            horizontal-stretch: 1;
+                            min-width: 0px;
+                            preferred-width: 0px;
+                            max-width: 100000px;
+                            vertical-stretch: 1;
+                            spacing: 2px;
+                            Text { horizontal-stretch: 1; min-width: 0px; preferred-width: 0px; text: result.name; color: Theme.fg; font-size: Theme.fs-small; font-weight: 600; overflow: elide; }
+                            Text { horizontal-stretch: 1; min-width: 0px; preferred-width: 0px; text: result.url; color: Theme.fg-3; font-size: Theme.fs-caption; overflow: elide; }
+                        }
+                        Text {
+                            width: 112px;
+                            text: result.status;
+                            color: result.state == "success" ? Theme.success : result.state == "skipped" ? Theme.fg-2 : Theme.danger;
+                            font-size: Theme.fs-small;
+                            font-weight: 700;
+                            horizontal-alignment: right;
+                            overflow: elide;
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+component CollectionRunDetailPane inherits Rectangle {
+    in property <[CollectionRunResult]> results: [];
+    in property <int> selected-index: -1;
+    in property <[ResponseHeaderItem]> header-items: [];
+    in property <string> response-tab: "Body";
+    in property <bool> dark: true;
+    callback tab-selected(string);
+    callback tokenize-response(string, string, bool, float) -> [JsonLine];
+    callback build-json-tree(string, string, bool) -> [JsonTreeNode];
+    callback toggle-json-tree-node(string, string);
+    callback copy-text(string);
+
+    border-radius: 10px;
+    background: Theme.view-bg;
+    border-width: 1px;
+    border-color: Theme.border;
+    VerticalLayout {
+        padding: 14px;
+        spacing: 10px;
+        if root.selected-index < 0 || root.selected-index >= root.results.length : VerticalLayout {
+            vertical-stretch: 1;
+            alignment: center;
+            spacing: 6px;
+            Text { text: "Select a request result"; color: Theme.fg; font-size: Theme.fs-heading; font-weight: 700; horizontal-alignment: center; }
+            Text { text: "Inspect the response, headers, and timing for each request in this run."; color: Theme.fg-2; font-size: Theme.fs-label; horizontal-alignment: center; wrap: word-wrap; }
+        }
+        if root.selected-index >= 0 && root.selected-index < root.results.length : VerticalLayout {
+            vertical-stretch: 1;
+            spacing: 8px;
+            HorizontalLayout {
+                height: 32px;
+                spacing: 8px;
+                Text { text: root.results[root.selected-index].name; color: Theme.fg; font-size: Theme.fs-label; font-weight: 700; vertical-alignment: center; horizontal-stretch: 1; overflow: elide; }
+                Text { text: root.results[root.selected-index].status + " · " + root.results[root.selected-index].elapsed; color: root.results[root.selected-index].state == "success" ? Theme.success : Theme.danger; font-size: Theme.fs-small; vertical-alignment: center; }
+            }
+            Text { horizontal-stretch: 1; min-width: 0px; preferred-width: 0px; text: root.results[root.selected-index].url; color: Theme.fg-3; font-size: Theme.fs-small; overflow: elide; }
+            Text { text: root.results[root.selected-index].assertion-summary; color: root.results[root.selected-index].state == "success" ? Theme.success : root.results[root.selected-index].state == "skipped" ? Theme.fg-2 : Theme.danger; font-size: Theme.fs-small; wrap: word-wrap; }
+            TabBar {
+                tabs: root.results[root.selected-index].format == "JSON" ? ["Body", "Tree", "Headers"] : ["Body", "Headers"];
+                counts: root.results[root.selected-index].format == "JSON" ? ["", "", "" + root.header-items.length] : ["", "" + root.header-items.length];
+                current: root.response-tab;
+                style: "underline";
+                selected(tab) => { root.tab-selected(tab); }
+            }
+            if root.response-tab == "Body" : ResponseBody {
+                vertical-stretch: 1;
+                raw: root.results[root.selected-index].body;
+                pretty: root.results[root.selected-index].pretty-body;
+                format: root.results[root.selected-index].format;
+                dark: root.dark;
+                wrap-lines: true;
+                large-response: root.results[root.selected-index].large;
+                show-toolbar: false;
+                selectable-text: true;
+                tree-scope: "collection-run-" + root.selected-index;
+                tokenize-response(source, format, dark, max-columns) => { root.tokenize-response(source, format, dark, max-columns); }
+                build-json-tree(scope, source, dark) => { root.build-json-tree(scope, source, dark); }
+                toggle-json-tree-node(scope, path) => { root.toggle-json-tree-node(scope, path); }
+                copy-all(text) => { root.copy-text(text); }
+            }
+            if root.response-tab == "Tree" : ResponseBody {
+                vertical-stretch: 1;
+                raw: root.results[root.selected-index].body;
+                pretty: root.results[root.selected-index].pretty-body;
+                format: root.results[root.selected-index].format;
+                mode: "Tree";
+                dark: root.dark;
+                wrap-lines: true;
+                large-response: root.results[root.selected-index].large;
+                show-toolbar: false;
+                selectable-text: true;
+                tree-scope: "collection-run-" + root.selected-index;
+                tokenize-response(source, format, dark, max-columns) => { root.tokenize-response(source, format, dark, max-columns); }
+                build-json-tree(scope, source, dark) => { root.build-json-tree(scope, source, dark); }
+                toggle-json-tree-node(scope, path) => { root.toggle-json-tree-node(scope, path); }
+                copy-all(text) => { root.copy-text(text); }
+            }
+            if root.response-tab == "Headers" && root.header-items.length == 0 : VerticalLayout {
+                vertical-stretch: 1;
+                alignment: center;
+                spacing: 6px;
+                Text { text: "No response headers"; color: Theme.fg; font-size: Theme.fs-label; font-weight: 700; horizontal-alignment: center; }
+                Text { text: "This response did not include any headers."; color: Theme.fg-3; font-size: Theme.fs-small; horizontal-alignment: center; }
+            }
+            if root.response-tab == "Headers" && root.header-items.length > 0 : ScrollView {
+                vertical-stretch: 1;
+                content-width: self.width;
+                content-height: max(self.height, root.header-items.length * 76px + 20px);
+                VerticalLayout {
+                    x: 10px;
+                    y: 10px;
+                    width: parent.width - 20px;
+                    spacing: 6px;
+                    for header in root.header-items : Rectangle {
+                        header-name-measure := Text {
+                            visible: false;
+                            width: parent.width - 16px;
+                            text: header.name;
+                            font-family: Theme.font-mono;
+                            font-size: Theme.fs-caption;
+                            font-weight: 700;
+                            wrap: char-wrap;
+                        }
+                        header-value-measure := Text {
+                            visible: false;
+                            width: parent.width - 16px;
+                            text: header.value;
+                            font-family: Theme.font-mono;
+                            font-size: Theme.fs-small;
+                            wrap: char-wrap;
+                        }
+                        height: max(70px, header-name-measure.preferred-height + header-value-measure.preferred-height + 25px);
+                        border-radius: 8px;
+                        background: Theme.view-bg;
+                        border-width: 1px;
+                        border-color: Theme.border;
+                        VerticalLayout {
+                            padding: 8px;
+                            spacing: 3px;
+                            AdwSelectableText {
+                                height: header-name-measure.preferred-height;
+                                text: header.name;
+                                text-color: Theme.accent-text;
+                                font-family: Theme.font-mono;
+                                font-size: Theme.fs-caption;
+                                font-weight: 700;
+                                vertical-alignment: TextVerticalAlignment.top;
+                                wrap: char-wrap;
+                            }
+                            AdwSelectableText {
+                                height: header-value-measure.preferred-height;
+                                text: header.value;
+                                text-color: Theme.fg;
+                                font-family: Theme.font-mono;
+                                font-size: Theme.fs-small;
+                                vertical-alignment: TextVerticalAlignment.top;
+                                wrap: char-wrap;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+export component CollectionRunPanes inherits Rectangle {
+    in property <[CollectionRunResult]> results: [];
+    in property <int> selected-index: -1;
+    in property <string> run-state: "idle";
+    in property <string> error-message: "";
+    in property <[ResponseHeaderItem]> header-items: [];
+    in property <string> response-tab: "Body";
+    in property <bool> dark: true;
+    in property <bool> stacked: false;
+    callback request-selected(int);
+    callback tab-selected(string);
+    callback parse-headers(string) -> [ResponseHeaderItem];
+    callback tokenize-response(string, string, bool, float) -> [JsonLine];
+    callback build-json-tree(string, string, bool) -> [JsonTreeNode];
+    callback toggle-json-tree-node(string, string);
+    callback copy-text(string);
+
+    if root.stacked : VerticalLayout {
+        spacing: 10px;
+        CollectionRunListPane {
+            height: max(150px, parent.height * 0.30);
+            results: root.results;
+            selected-index: root.selected-index;
+            run-state: root.run-state;
+            error-message: root.error-message;
+            request-selected(index) => { root.request-selected(index); }
+        }
+        CollectionRunDetailPane {
+            vertical-stretch: 1;
+            min-height: 200px;
+            results: root.results;
+            selected-index: root.selected-index;
+            header-items: root.header-items;
+            response-tab: root.response-tab;
+            dark: root.dark;
+            tab-selected(tab) => { root.tab-selected(tab); }
+            tokenize-response(source, format, dark, columns) => { root.tokenize-response(source, format, dark, columns); }
+            build-json-tree(scope, source, dark) => { root.build-json-tree(scope, source, dark); }
+            toggle-json-tree-node(scope, path) => { root.toggle-json-tree-node(scope, path); }
+            copy-text(text) => { root.copy-text(text); }
+        }
+    }
+    if !root.stacked : HorizontalLayout {
+        spacing: 14px;
+        CollectionRunListPane {
+            horizontal-stretch: 2;
+            min-width: 280px;
+            results: root.results;
+            selected-index: root.selected-index;
+            run-state: root.run-state;
+            error-message: root.error-message;
+            request-selected(index) => { root.request-selected(index); }
+        }
+        CollectionRunDetailPane {
+            horizontal-stretch: 3;
+            min-width: 320px;
+            results: root.results;
+            selected-index: root.selected-index;
+            header-items: root.header-items;
+            response-tab: root.response-tab;
+            dark: root.dark;
+            tab-selected(tab) => { root.tab-selected(tab); }
+            tokenize-response(source, format, dark, columns) => { root.tokenize-response(source, format, dark, columns); }
+            build-json-tree(scope, source, dark) => { root.build-json-tree(scope, source, dark); }
+            toggle-json-tree-node(scope, path) => { root.toggle-json-tree-node(scope, path); }
+            copy-text(text) => { root.copy-text(text); }
+        }
+    }
+}
