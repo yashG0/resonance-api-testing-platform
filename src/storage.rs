@@ -1209,6 +1209,33 @@ mod tests {
         }
     }
 
+    struct UnavailableVault;
+
+    impl CredentialVault for UnavailableVault {
+        fn store(
+            &self,
+            _reference: &str,
+            _credentials: &RequestCredentials,
+        ) -> Result<(), CredentialVaultError> {
+            Err(CredentialVaultError::Backend(
+                "secret service unavailable".into(),
+            ))
+        }
+
+        fn load(
+            &self,
+            _reference: &str,
+        ) -> Result<Option<RequestCredentials>, CredentialVaultError> {
+            Err(CredentialVaultError::Backend(
+                "secret service unavailable".into(),
+            ))
+        }
+
+        fn delete(&self, _reference: &str) -> Result<(), CredentialVaultError> {
+            Ok(())
+        }
+    }
+
     fn test_store(path: &Path) -> RequestStore {
         RequestStore::open_with_vault(path, std::sync::Arc::new(MemoryVault::default()))
             .expect("open store")
@@ -1428,6 +1455,39 @@ mod tests {
         assert!(auth_secret.is_empty());
         assert!(!reference.is_empty());
         assert!(vault.0.lock().unwrap().contains_key(&reference));
+    }
+
+    #[test]
+    fn secret_save_fails_without_keyring_and_never_falls_back_to_plaintext() {
+        let temp = tempfile::tempdir().expect("temporary directory");
+        let path = temp.path().join("no-keyring.sqlite3");
+        let store = RequestStore::open_with_vault(&path, std::sync::Arc::new(UnavailableVault))
+            .expect("open store without contacting keyring");
+        let collection_id = store.list_collections().expect("collections")[0].id;
+        let mut request = sample(collection_id);
+        request.auth_type = "Bearer".into();
+        request.auth_value = "must-not-be-saved-in-plaintext".into();
+
+        let error = store
+            .create(&request)
+            .expect_err("secret store unavailable");
+        assert!(error.to_string().contains("secret service unavailable"));
+        let connection = Connection::open(&path).expect("inspect SQLite");
+        let saved_requests: i64 = connection
+            .query_row("SELECT COUNT(*) FROM saved_requests", [], |row| row.get(0))
+            .expect("count saved requests");
+        assert_eq!(
+            saved_requests, 0,
+            "failed vault writes must not create a request"
+        );
+        let plaintext_matches: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM saved_requests WHERE auth_value = 'must-not-be-saved-in-plaintext'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("check no plaintext credential");
+        assert_eq!(plaintext_matches, 0);
     }
 
     #[test]
