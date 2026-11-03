@@ -47,6 +47,7 @@ export struct RequestTabItem {
     auth-type: string,
     auth-value: string,
     auth-secret: string,
+    timeout-ms: string,
     assertions-json: string,
     response-status: string,
     response-body: string,
@@ -398,8 +399,8 @@ export component AppWindow inherits Window {
     background: transparent;
     forward-focus: shortcut-scope;
 
-    callback send-request(string, string, string, string, string, string, string, string, string, int, int, string, int, string);
-    callback save-request(int, int, string, string, string, string, string, string, string, string, string, string, int, string);
+    callback send-request(string, string, string, string, string, string, string, string, string, int, int, string, int, string, string);
+    callback save-request(int, int, string, string, string, string, string, string, string, string, string, string, int, string, string);
     callback suggest-request-name(int) -> string;
     callback open-latest-request(int);
     callback serialize-param-rows([KeyValueRow]) -> string;
@@ -524,6 +525,7 @@ export component AppWindow inherits Window {
     in-out property <[KeyValueRow]> request-param-rows: [];
     in-out property <string> request-body: "";
     in-out property <string> body-format: "JSON";
+    in-out property <string> request-timeout-ms: "30000";
 
     in-out property <string> request-headers: "Accept: application/json";
     in-out property <[KeyValueRow]> request-header-rows: [{ key: "Accept", value: "application/json", enabled: true }];
@@ -697,6 +699,7 @@ in-out property <bool> response-large: false;
             auth-type: root.auth-type,
             auth-value: root.auth-value,
             auth-secret: root.auth-secret,
+            timeout-ms: root.request-timeout-ms,
             assertions-json: root.request-assertions,
             response-status: root.response-status,
             response-body: root.response-body,
@@ -734,6 +737,7 @@ in-out property <bool> response-large: false;
         root.auth-type = tab.auth-type;
         root.auth-value = tab.auth-value;
         root.auth-secret = tab.auth-secret;
+        root.request-timeout-ms = tab.timeout-ms;
         root.request-assertions = tab.assertions-json;
         root.editing-request-name = false;
         root.active-view = "Request";
@@ -764,6 +768,7 @@ in-out property <bool> response-large: false;
                     url: tab.url, headers: tab.headers, params: tab.params, body: tab.body,
                     body-format: tab.body-format, auth-type: tab.auth-type, auth-value: tab.auth-value,
                     auth-secret: tab.auth-secret, assertions-json: tab.assertions-json, response-status: status, response-body: body,
+                    timeout-ms: tab.timeout-ms,
                     response-body-formatted: formatted-body,
                     response-time: elapsed, response-state: state, response-format: format,
                     response-headers: headers, response-cookies: cookies, response-large: large,
@@ -792,6 +797,7 @@ in-out property <bool> response-large: false;
                     url: tab.url, headers: tab.headers, params: tab.params, body: tab.body,
                     body-format: tab.body-format, auth-type: tab.auth-type, auth-value: tab.auth-value,
                     auth-secret: tab.auth-secret, assertions-json: tab.assertions-json, response-status: tab.response-status,
+                    timeout-ms: tab.timeout-ms,
                     response-body: tab.response-body,
                     response-body-formatted: tab.response-body-formatted,
                     response-time: tab.response-time,
@@ -830,6 +836,7 @@ in-out property <bool> response-large: false;
             auth-type: root.auth-type,
             auth-value: root.auth-value,
             auth-secret: root.auth-secret,
+            timeout-ms: root.request-timeout-ms,
             assertions-json: root.request-assertions,
             response-status: root.response-status,
             response-body: root.response-body,
@@ -914,7 +921,7 @@ in-out property <bool> response-large: false;
                 root.active-request-id, root.selected-collection-id, root.active-request,
                 root.active-method, root.request-url, root.request-headers, root.request-params,
                 root.request-body, root.body-format, root.auth-type, root.auth-value, root.auth-secret,
-                root.active-request-tab-key, root.request-assertions
+                root.active-request-tab-key, root.request-assertions, root.request-timeout-ms
             );
         }
     }
@@ -957,6 +964,7 @@ in-out property <bool> response-large: false;
         root.auth-type = "None";
         root.auth-value = "";
         root.auth-secret = "";
+        root.request-timeout-ms = "30000";
         root.request-assertions = "[]";
         root.active-tab = "Body";
         let key = root.next-request-tab-key;
@@ -979,6 +987,7 @@ in-out property <bool> response-large: false;
             auth-type: "None",
             auth-value: "",
             auth-secret: "",
+            timeout-ms: "30000",
             assertions-json: "[]",
             response-status: "No response yet",
             response-body: "Send a request to inspect its response.",
@@ -1033,6 +1042,7 @@ in-out property <bool> response-large: false;
         root.auth-type = "None";
         root.auth-value = "";
         root.auth-secret = "";
+        root.request-timeout-ms = "30000";
         root.request-assertions = "[]";
         root.response-status = "No response yet";
         root.response-body = "Send a request to inspect its response.";
@@ -1053,7 +1063,7 @@ in-out property <bool> response-large: false;
                 root.active-request-id, root.selected-collection-id, root.active-request,
                 root.active-method, root.request-url, root.request-headers, root.request-params,
                 root.request-body, root.body-format, root.auth-type, root.auth-value, root.auth-secret,
-                root.active-request-tab-key, root.request-assertions
+                root.active-request-tab-key, root.request-assertions, root.request-timeout-ms
             );
         }
     }
@@ -1077,7 +1087,8 @@ in-out property <bool> response-large: false;
                 root.active-method, root.request-url, root.request-body, root.request-headers,
                 root.request-params, root.body-format, root.auth-type, root.auth-value,
                 root.auth-secret, root.selected-collection-id, root.active-request-id, root.active-request,
-                root.active-request-tab-key, root.request-assertions
+                root.active-request-tab-key, root.request-assertions,
+                root.request-timeout-ms
             );
         }
     }
@@ -2993,6 +3004,25 @@ in-out property <bool> response-large: false;
                                     font-size: Theme.fs-label;
                                     font-family: Theme.font-mono;
                                     accepted(value) => { root.send-current-request(); }
+                                }
+
+                                VerticalLayout {
+                                    width: 92px;
+                                    spacing: 2px;
+                                    Text {
+                                        text: "Timeout (ms)";
+                                        color: Theme.fg-3;
+                                        font-size: 10px;
+                                        horizontal-alignment: center;
+                                    }
+                                    AdwLineEdit {
+                                        height: 30px;
+                                        input-type: InputType.number;
+                                        text <=> root.request-timeout-ms;
+                                        placeholder-text: "30000";
+                                        font-size: 12px;
+                                        text-padding: 6px;
+                                    }
                                 }
 
                                 Btn {

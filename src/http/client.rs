@@ -37,6 +37,7 @@ pub struct RequestSpec<'a> {
     pub auth_type: &'a str,
     pub auth_value: &'a str,
     pub auth_secret: &'a str,
+    pub timeout_ms: u64,
 }
 
 pub struct HttpClient {
@@ -105,6 +106,16 @@ impl HttpClient {
             Ok(value) => value,
             Err(error) => return failure(&error, start),
         };
+
+        if !(crate::storage::MIN_REQUEST_TIMEOUT_MS as u64
+            ..=crate::storage::MAX_REQUEST_TIMEOUT_MS as u64)
+            .contains(&spec.timeout_ms)
+        {
+            return failure(
+                "Request timeout must be between 100 and 600000 milliseconds.",
+                start,
+            );
+        }
 
         if !matches!(auth_type, "None" | "Basic" | "Bearer" | "API Key") {
             return failure("Unsupported authentication type.", start);
@@ -239,7 +250,11 @@ impl HttpClient {
             }
         }
 
-        let mut request = self.client.request(method, parsed_url).headers(headers);
+        let mut request = self
+            .client
+            .request(method, parsed_url)
+            .headers(headers)
+            .timeout(Duration::from_millis(spec.timeout_ms));
         match auth_type {
             "Bearer" if !auth_value.is_empty() => request = request.bearer_auth(auth_value),
             "Basic" if !auth_value.is_empty() => {
@@ -813,6 +828,7 @@ mod tests {
                     auth_type: "None",
                     auth_value: "",
                     auth_secret: "",
+                    timeout_ms: 30_000,
                 },
                 &HashMap::new(),
             )
@@ -841,6 +857,7 @@ mod tests {
             auth_type: "Unknown",
             auth_value: "",
             auth_secret: "",
+            timeout_ms: 30_000,
         };
 
         let auth_result = client.send(&base, &HashMap::new()).await;
@@ -855,6 +872,41 @@ mod tests {
         let format_result = client.send(&bad_body_format, &HashMap::new()).await;
         assert_eq!(format_result.state, HttpState::Error);
         assert_eq!(format_result.body, "Unsupported request body format.");
+    }
+
+    #[tokio::test]
+    async fn applies_the_saved_request_timeout() {
+        use std::{io::Read, net::TcpListener, thread};
+
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind slow server");
+        let url = format!("http://{}/", listener.local_addr().unwrap());
+        let server_thread = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept request");
+            let mut request = [0; 1024];
+            let _ = stream.read(&mut request);
+            thread::sleep(Duration::from_millis(400));
+        });
+
+        let client = HttpClient::new().expect("build HTTP client");
+        let result = client
+            .send(
+                &RequestSpec {
+                    method: "GET",
+                    url: &url,
+                    body: "",
+                    headers: "",
+                    query_params: "",
+                    body_format: "JSON",
+                    auth_type: "None",
+                    auth_value: "",
+                    auth_secret: "",
+                    timeout_ms: 100,
+                },
+                &HashMap::new(),
+            )
+            .await;
+        server_thread.join().expect("join slow server");
+        assert_eq!(result.state, HttpState::Timeout);
     }
 
     #[test]

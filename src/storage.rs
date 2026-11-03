@@ -18,6 +18,10 @@ use crate::credentials::{
     CredentialVault, CredentialVaultError, RequestCredentials, SystemCredentialVault,
 };
 
+pub const DEFAULT_REQUEST_TIMEOUT_MS: i64 = 30_000;
+pub const MIN_REQUEST_TIMEOUT_MS: i64 = 100;
+pub const MAX_REQUEST_TIMEOUT_MS: i64 = 600_000;
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Collection {
     pub id: i64,
@@ -72,6 +76,7 @@ pub struct SavedRequest {
     /// Set when persisted assertion data cannot be decoded. Requests remain loadable,
     /// but collection runs must fail them closed instead of treating them as unchecked.
     pub assertions_error: Option<String>,
+    pub timeout_ms: i64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -88,6 +93,7 @@ pub struct NewRequest {
     pub auth_value: String,
     pub auth_secret: String,
     pub assertions: Vec<crate::assertions::Assertion>,
+    pub timeout_ms: i64,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -168,6 +174,7 @@ impl RequestStore {
                 auth_secret  TEXT NOT NULL DEFAULT '',
                 credential_ref TEXT NOT NULL DEFAULT '',
                 assertions TEXT NOT NULL DEFAULT '[]',
+                timeout_ms INTEGER NOT NULL DEFAULT 30000,
                 collection_id INTEGER REFERENCES collections(id) ON DELETE CASCADE,
                 created_at   TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 updated_at   TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -245,6 +252,7 @@ impl RequestStore {
             ("auth_secret", "TEXT NOT NULL DEFAULT ''"),
             ("credential_ref", "TEXT NOT NULL DEFAULT ''"),
             ("assertions", "TEXT NOT NULL DEFAULT '[]'"),
+            ("timeout_ms", "INTEGER NOT NULL DEFAULT 30000"),
         ] {
             let has_column = {
                 let mut statement = connection.prepare("PRAGMA table_info(saved_requests)")?;
@@ -796,8 +804,8 @@ impl RequestStore {
         };
         let insert_result = connection.execute(
             r#"
-            INSERT INTO saved_requests (name, method, url, headers, query_params, body, collection_id, body_format, auth_type, auth_value, auth_secret, credential_ref, assertions)
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, '', '', ?10, ?11)
+            INSERT INTO saved_requests (name, method, url, headers, query_params, body, collection_id, body_format, auth_type, auth_value, auth_secret, credential_ref, assertions, timeout_ms)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, '', '', ?10, ?11, ?12)
             "#,
             params![
                 request.name.trim(),
@@ -810,7 +818,8 @@ impl RequestStore {
                 request.body_format,
                 request.auth_type,
                 credential_ref,
-                assertions
+                assertions,
+                request.timeout_ms
             ],
         );
         if let Err(error) = insert_result {
@@ -829,7 +838,7 @@ impl RequestStore {
         let connection = self.connect()?;
         let mut statement = connection.prepare(
             r#"
-            SELECT id, collection_id, name, method, url, headers, query_params, body, body_format, auth_type, auth_value, auth_secret, credential_ref, assertions
+            SELECT id, collection_id, name, method, url, headers, query_params, body, body_format, auth_type, auth_value, auth_secret, credential_ref, assertions, timeout_ms
             FROM saved_requests WHERE collection_id = ?1
             ORDER BY name COLLATE NOCASE ASC, id ASC
             "#,
@@ -847,7 +856,7 @@ impl RequestStore {
         let stored = connection
             .query_row(
                 r#"
-                SELECT id, collection_id, name, method, url, headers, query_params, body, body_format, auth_type, auth_value, auth_secret, credential_ref, assertions
+                SELECT id, collection_id, name, method, url, headers, query_params, body, body_format, auth_type, auth_value, auth_secret, credential_ref, assertions, timeout_ms
                 FROM saved_requests WHERE id = ?1
                 "#,
                 [id],
@@ -899,7 +908,7 @@ impl RequestStore {
             SET name = ?1, method = ?2, url = ?3, headers = ?4,
                 query_params = ?5, body = ?6, collection_id = ?7,
                 body_format = ?8, auth_type = ?9, auth_value = '', auth_secret = '',
-                credential_ref = ?10, assertions = ?12,
+                credential_ref = ?10, assertions = ?12, timeout_ms = ?13,
                 updated_at = CURRENT_TIMESTAMP
             WHERE id = ?11
             "#,
@@ -915,7 +924,8 @@ impl RequestStore {
                 request.auth_type,
                 credential_ref,
                 id,
-                assertions
+                assertions,
+                request.timeout_ms
             ],
         );
         let changed = match update_result {
@@ -1125,6 +1135,12 @@ fn validate_request(request: &NewRequest) -> Result<(), StoreError> {
         )));
     }
 
+    if !(MIN_REQUEST_TIMEOUT_MS..=MAX_REQUEST_TIMEOUT_MS).contains(&request.timeout_ms) {
+        return Err(StoreError::Validation(format!(
+            "request timeout must be between {MIN_REQUEST_TIMEOUT_MS} and {MAX_REQUEST_TIMEOUT_MS} milliseconds"
+        )));
+    }
+
     Ok(())
 }
 
@@ -1153,6 +1169,7 @@ fn row_to_stored_request(row: &rusqlite::Row<'_>) -> rusqlite::Result<StoredSave
             auth_secret: row.get(11)?,
             assertions,
             assertions_error,
+            timeout_ms: row.get(14)?,
         },
         credential_ref: row.get(12)?,
     })
@@ -1211,6 +1228,7 @@ mod tests {
             auth_value: String::new(),
             auth_secret: String::new(),
             assertions: vec![crate::assertions::Assertion::HttpStatus { expected: 200 }],
+            timeout_ms: DEFAULT_REQUEST_TIMEOUT_MS,
         }
     }
 
@@ -1287,6 +1305,7 @@ mod tests {
             auth_value: String::new(),
             auth_secret: String::new(),
             assertions: Vec::new(),
+            timeout_ms: 45_000,
         };
         assert!(store.update(created.id, &updated).expect("update"));
         let loaded = store
@@ -1297,6 +1316,7 @@ mod tests {
         assert_eq!(loaded.method, "POST");
         assert_eq!(loaded.body, r#"{"ok":true}"#);
         assert!(loaded.assertions.is_empty());
+        assert_eq!(loaded.timeout_ms, 45_000);
         assert_eq!(
             store
                 .list_for_collection(collection_id)
@@ -1654,6 +1674,7 @@ mod tests {
         assert_eq!(migrated.len(), 1);
         assert_eq!(migrated[0].name, "Legacy");
         assert_eq!(migrated[0].collection_id, collection_id);
+        assert_eq!(migrated[0].timeout_ms, DEFAULT_REQUEST_TIMEOUT_MS);
         let variables = store
             .list_variables(collection_id)
             .expect("migrated variables");
@@ -1681,6 +1702,19 @@ mod tests {
         assert!(matches!(
             store.create(&request),
             Err(StoreError::Validation(_))
+        ));
+    }
+
+    #[test]
+    fn rejects_out_of_range_request_timeout() {
+        let temp = tempfile::tempdir().expect("temporary directory");
+        let store = RequestStore::open(temp.path().join("test.sqlite3")).expect("open store");
+        let collection_id = store.list_collections().expect("collections")[0].id;
+        let mut request = sample(collection_id);
+        request.timeout_ms = MAX_REQUEST_TIMEOUT_MS + 1;
+        assert!(matches!(
+            store.create(&request),
+            Err(StoreError::Validation(message)) if message.contains("request timeout")
         ));
     }
 }

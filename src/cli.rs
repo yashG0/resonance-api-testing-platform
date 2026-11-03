@@ -126,6 +126,7 @@ pub async fn run(arguments: &[String]) -> Result<bool, String> {
                                 auth_type: &request.auth_type,
                                 auth_value: &request.auth_value,
                                 auth_secret: &request.auth_secret,
+                                timeout_ms: request.timeout_ms as u64,
                             },
                             &variables,
                         )
@@ -640,6 +641,7 @@ mod tests {
             auth_value: String::new(),
             auth_secret: String::new(),
             assertions: vec![],
+            timeout_ms: crate::storage::DEFAULT_REQUEST_TIMEOUT_MS,
             assertions_error: None,
         };
         let cases = [
@@ -734,6 +736,7 @@ mod tests {
                 assertions: vec![Assertion::BodyContains {
                     text: "not-ready".into(),
                 }],
+                timeout_ms: crate::storage::DEFAULT_REQUEST_TIMEOUT_MS,
             })
             .expect("save request");
 

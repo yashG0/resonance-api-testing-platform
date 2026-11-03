@@ -38,6 +38,18 @@ pub(crate) use response_ui::{
 
 const MAX_STRUCTURED_VIEW_BYTES: usize = 256 * 1024;
 
+fn parse_request_timeout_ms(value: &str) -> Result<i64, String> {
+    let timeout_ms = value.trim().parse::<i64>().map_err(|_| {
+        "Request timeout must be a number between 100 and 600000 milliseconds.".to_owned()
+    })?;
+    if !(crate::storage::MIN_REQUEST_TIMEOUT_MS..=crate::storage::MAX_REQUEST_TIMEOUT_MS)
+        .contains(&timeout_ms)
+    {
+        return Err("Request timeout must be between 100 and 600000 milliseconds.".to_owned());
+    }
+    Ok(timeout_ms)
+}
+
 fn is_gnome_session(current_desktop: &str, session_desktop: &str) -> bool {
     [current_desktop, session_desktop]
         .into_iter()
@@ -72,6 +84,20 @@ mod platform_window_tests {
         assert!(is_gnome_session("ubuntu:GNOME", "ubuntu"));
         assert!(!is_gnome_session("KDE", "plasma"));
         assert!(!is_gnome_session("", ""));
+    }
+}
+
+#[cfg(test)]
+mod request_timeout_tests {
+    use super::parse_request_timeout_ms;
+
+    #[test]
+    fn accepts_only_supported_timeout_values() {
+        assert_eq!(parse_request_timeout_ms("30000"), Ok(30_000));
+        assert_eq!(parse_request_timeout_ms(" 100 "), Ok(100));
+        assert!(parse_request_timeout_ms("99").is_err());
+        assert!(parse_request_timeout_ms("600001").is_err());
+        assert!(parse_request_timeout_ms("later").is_err());
     }
 }
 
@@ -767,6 +793,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 auth_type: auth_type.as_str(),
                 auth_value: auth_value.as_str(),
                 auth_secret: auth_secret.as_str(),
+                timeout_ms: crate::storage::DEFAULT_REQUEST_TIMEOUT_MS as u64,
             })
             .into()
         },
@@ -888,7 +915,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
               request_id,
               name,
               tab_key,
-              assertions_json| {
+              assertions_json,
+              timeout_ms| {
             let app_handle = app_weak.clone();
             let client = Arc::clone(&client);
             let store = Arc::clone(&store);
@@ -901,6 +929,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let auth_type = auth_type.to_string();
             let auth_value = auth_value.to_string();
             let auth_secret = auth_secret.to_string();
+            let timeout_ms = match parse_request_timeout_ms(timeout_ms.as_str()) {
+                Ok(timeout_ms) => timeout_ms,
+                Err(message) => {
+                    if let Some(ui) = app_weak.upgrade() {
+                        ui.set_response_status(message.into());
+                        ui.set_response_state("error".into());
+                    }
+                    return;
+                }
+            };
             let assertions = match serde_json::from_str::<Vec<Assertion>>(assertions_json.as_str())
             {
                 Ok(assertions) => assertions,
@@ -934,6 +972,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     auth_value: auth_value.clone(),
                     auth_secret: auth_secret.clone(),
                     assertions: assertions.clone(),
+                    timeout_ms,
                 };
                 let save_store = Arc::clone(&store);
                 let save_result = tokio::task::spawn_blocking(move || {
@@ -1049,6 +1088,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             auth_type: &auth_type,
                             auth_value: &auth_value,
                             auth_secret: &auth_secret,
+                            timeout_ms: timeout_ms as u64,
                         },
                         &variables,
                     )
@@ -1157,7 +1197,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
               auth_value,
               auth_secret,
               tab_key,
-              assertions_json| {
+              assertions_json,
+              timeout_ms| {
             let app_handle = app_weak.clone();
             let store = Arc::clone(&store);
             let assertions = match serde_json::from_str::<Vec<Assertion>>(assertions_json.as_str())
@@ -1183,6 +1224,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 auth_value: auth_value.to_string(),
                 auth_secret: auth_secret.to_string(),
                 assertions,
+                timeout_ms: match parse_request_timeout_ms(timeout_ms.as_str()) {
+                    Ok(timeout_ms) => timeout_ms,
+                    Err(message) => {
+                        if let Some(ui) = app_weak.upgrade() {
+                            ui.set_response_status(message.into());
+                            ui.set_response_state("error".into());
+                        }
+                        return;
+                    }
+                },
             };
             tokio::task::spawn_blocking(move || {
                 if id <= 0
@@ -1941,6 +1992,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 ui.set_request_params(request.query_params.into());
                                 ui.set_request_body(request.body.into());
                                 ui.set_body_format(request.body_format.into());
+                                ui.set_request_timeout_ms(request.timeout_ms.to_string().into());
                                 ui.set_auth_type(request.auth_type.into());
                                 ui.set_auth_value(request.auth_value.into());
                                 ui.set_auth_secret(request.auth_secret.into());
