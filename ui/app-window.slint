@@ -16,8 +16,9 @@ import { AboutDialog } from "components/about-dialog.slint";
 import { CurlImportDialog } from "components/curl-import-dialog.slint";
 import { CollectionRunPanes, CollectionRunResult, ResponseHeaderItem } from "views/collection-run.slint";
 import { HistoryItem, HistoryView } from "views/history.slint";
+import { EnvironmentItem, EnvironmentView } from "views/environments.slint";
 
-export { Theme, CollectionRunResult, ResponseHeaderItem, HistoryItem }
+export { Theme, CollectionRunResult, ResponseHeaderItem, HistoryItem, EnvironmentItem }
 
 export struct RequestItem {
     id: int,
@@ -83,13 +84,6 @@ export struct CollectionItem {
     name: string,
 }
 export struct VariableItem {
-    key: string,
-    value: string,
-    is-secret: bool,
-}
-export struct EnvironmentItem {
-    collection-id: int,
-    collection-name: string,
     key: string,
     value: string,
     is-secret: bool,
@@ -2065,89 +2059,18 @@ in-out property <bool> response-large: false;
                         }
                     }
 
-                    // ───────── Environments ─────────
-                    if root.active-view == "Environments" : HorizontalLayout {
-                        padding: 24px;
-                        Rectangle { horizontal-stretch: 1; }
-                        VerticalLayout {
-                            horizontal-stretch: 100;
-                            max-width: 1000px;
-                            spacing: 12px;
-
-                            HorizontalLayout {
-                                height: 40px;
-                                Text { text: "Collection variables, grouped by collection."; color: Theme.fg-2; font-size: Theme.fs-label; vertical-alignment: center; horizontal-stretch: 1; }
-                                Btn {
-                                    text: root.show-variable-values ? "Hide values" : "Show values";
-                                    clicked => { root.show-variable-values = !root.show-variable-values; }
-                                }
-                            }
-
-                            ScrollView {
-                                vertical-stretch: 1;
-                                VerticalLayout {
-                                    alignment: start;
-                                    spacing: 8px;
-
-                                    if root.environment-items.length == 0 : Rectangle {
-                                        height: 200px;
-                                        background: Theme.view-bg;
-                                        border-width: 1px;
-                                        border-color: Theme.border;
-                                        border-radius: Theme.radius-card;
-                                        VerticalLayout {
-                                            alignment: center;
-                                            spacing: 8px;
-                                            Text { text: "No collection variables yet"; color: Theme.fg; font-size: Theme.fs-heading; font-weight: 700; horizontal-alignment: center; }
-                                            Text { text: "Add variables from a collection's variable editor to see them here."; color: Theme.fg-2; font-size: Theme.fs-body; horizontal-alignment: center; }
-                                        }
-                                    }
-
-                                    for item in root.environment-items : Rectangle {
-                                        height: 64px;
-                                        background: Theme.view-bg;
-                                        border-width: 1px;
-                                        border-color: Theme.border;
-                                        border-radius: 10px;
-                                        HorizontalLayout {
-                                            padding: 12px;
-                                            padding-left: 16px;
-                                            spacing: 14px;
-                                            VerticalLayout {
-                                                width: 220px;
-                                                alignment: center;
-                                                spacing: 3px;
-                                                Text { text: item.key; color: Theme.fg; font-family: Theme.font-mono; font-size: Theme.fs-body; font-weight: 700; overflow: elide; }
-                                                Text { text: item.collection-name; color: Theme.fg-3; font-size: Theme.fs-small; overflow: elide; }
-                                            }
-                                            Text {
-                                                horizontal-stretch: 1;
-                                                text: root.show-variable-values ? item.value : "••••••••";
-                                                color: Theme.fg-2;
-                                                font-family: Theme.font-mono;
-                                                font-size: Theme.fs-body;
-                                                vertical-alignment: center;
-                                                overflow: elide;
-                                            }
-                                            Btn {
-                                                y: 6px;
-                                                text: "Manage";
-                                                clicked => {
-                                                    root.cancel-variable-edit();
-                                                    root.selected-collection-id = item.collection-id;
-                                                    root.expanded-collection-id = item.collection-id;
-                                                    root.selected-collection-name = item.collection-name;
-                                                    root.load-collection-variables(item.collection-id);
-                                                    root.active-view = "Variables";
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                            Text { text: "Regular values are stored in SQLite; secret values use your operating-system credential store."; color: Theme.fg-3; font-size: Theme.fs-small; }
+                    if root.active-view == "Environments" : EnvironmentView {
+                        environment-items: root.environment-items;
+                        show-variable-values: root.show-variable-values;
+                        toggle-values => { root.show-variable-values = !root.show-variable-values; }
+                        manage-collection(id, name) => {
+                            root.cancel-variable-edit();
+                            root.selected-collection-id = id;
+                            root.expanded-collection-id = id;
+                            root.selected-collection-name = name;
+                            root.load-collection-variables(id);
+                            root.active-view = "Variables";
                         }
-                        Rectangle { horizontal-stretch: 1; }
                     }
 
                     if root.active-view == "History" : HistoryView {
