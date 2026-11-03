@@ -1,0 +1,296 @@
+import { ListView } from "std-widgets.slint";
+import { ChoiceDropdown } from "../components/choice-dropdown.slint";
+import { TabBar } from "../components/tab-bar.slint";
+import { MethodBadge } from "../components/method-badge.slint";
+import { Btn } from "../components/btn.slint";
+import { Theme } from "../components/theme.slint";
+
+export struct HistoryItem {
+    request-id: int,
+    request-name: string,
+    collection-name: string,
+    method: string,
+    url: string,
+    status: string,
+    duration: string,
+    date: string,
+}
+
+export component HistoryView inherits Rectangle {
+    in property <[HistoryItem]> history-items: [];
+    in property <[HistoryItem]> history-visible-items: [];
+    in property <[HistoryItem]> history-page-items: [];
+    in property <bool> history-loading: false;
+    in property <bool> history-loader-visible: false;
+    in property <string> history-load-error: "";
+    in property <float> history-spinner-phase: 0;
+    in property <int> history-page: 1;
+    in property <int> history-page-size: 20;
+    in property <string> history-sort: "Newest first";
+    in property <string> history-filter: "All";
+    in property <color> accent;
+    property <int> history-page-count: max(1, (root.history-visible-items.length + root.history-page-size - 1) / root.history-page-size);
+    callback filter-selected(string);
+    callback page-size-selected(string);
+    callback sort-selected(string);
+    callback retry();
+    callback request-selected(int, string);
+    callback previous-page();
+    callback next-page();
+
+    HorizontalLayout {
+                        padding: 24px;
+                        Rectangle { horizontal-stretch: 1; }
+                        VerticalLayout {
+                            horizontal-stretch: 100;
+                            max-width: 1000px;
+                            spacing: 12px;
+
+                            HorizontalLayout {
+                                height: 40px;
+                                spacing: 10px;
+                                TabBar {
+                                    style: "pill";
+                                    y: 3px;
+                                    tabs: ["All", "Success", "Failed"];
+                                    current: root.history-filter;
+                                    selected(t) => {
+                                        root.filter-selected(t);
+                                    }
+                                }
+                                Text {
+                                    text: "" + root.history-visible-items.length + " matching";
+                                    color: Theme.fg-3; font-size: Theme.fs-small; vertical-alignment: center;
+                                    horizontal-stretch: 1; horizontal-alignment: right;
+                                }
+                                Text { text: "Per page"; color: Theme.fg-3; font-size: Theme.fs-small; vertical-alignment: center; }
+                                ChoiceDropdown {
+                                    accent-color: root.accent;
+                                    width: 92px;
+                                    options: ["10", "20", "50", "100"];
+                                    current-value: "" + root.history-page-size;
+                                    dark-mode: Theme.dark;
+                                    selected(value) => {
+                                        root.page-size-selected(value);
+                                    }
+                                }
+                                ChoiceDropdown {
+                                    accent-color: root.accent;
+                                    width: 150px;
+                                    options: ["Newest first", "Oldest first"];
+                                    current-value: root.history-sort;
+                                    dark-mode: Theme.dark;
+                                    selected(value) => {
+                                        root.sort-selected(value);
+                                    }
+                                }
+                            }
+
+                            if root.history-loading && root.history-loader-visible : Rectangle {
+                                vertical-stretch: 1;
+                                background: Theme.view-bg;
+                                border-width: 1px;
+                                border-color: Theme.border;
+                                border-radius: Theme.radius-card;
+                                VerticalLayout {
+                                    alignment: center;
+                                    cross-axis-alignment: center;
+                                    spacing: 8px;
+                                    Rectangle {
+                                        width: 56px;
+                                        height: 56px;
+                                        background: transparent;
+                                        Rectangle {
+                                            x: 6px;
+                                            y: 6px;
+                                            width: 44px;
+                                            height: 44px;
+                                            border-radius: 22px;
+                                            border-width: 1px;
+                                            border-color: Theme.accent.with-alpha(0.24);
+                                            background: Theme.accent.with-alpha(0.035);
+                                        }
+                                        Rectangle {
+                                            x: 25px + 20px * sin(root.history-spinner-phase * 1deg);
+                                            y: 25px - 20px * cos(root.history-spinner-phase * 1deg);
+                                            width: 6px;
+                                            height: 6px;
+                                            border-radius: 3px;
+                                            background: Theme.accent;
+                                        }
+                                        Rectangle {
+                                            x: 25px + 20px * sin(root.history-spinner-phase * 1deg + 120deg);
+                                            y: 25px - 20px * cos(root.history-spinner-phase * 1deg + 120deg);
+                                            width: 6px;
+                                            height: 6px;
+                                            border-radius: 3px;
+                                            background: Theme.accent.with-alpha(0.72);
+                                        }
+                                        Rectangle {
+                                            x: 25px + 20px * sin(root.history-spinner-phase * 1deg + 240deg);
+                                            y: 25px - 20px * cos(root.history-spinner-phase * 1deg + 240deg);
+                                            width: 6px;
+                                            height: 6px;
+                                            border-radius: 3px;
+                                            background: Theme.accent.with-alpha(0.44);
+                                        }
+                                        Rectangle {
+                                            x: 23px;
+                                            y: 23px;
+                                            width: 10px;
+                                            height: 10px;
+                                            border-radius: 5px;
+                                            background: Theme.accent.with-alpha(0.18 + 0.22 * abs(sin(root.history-spinner-phase * 0.675 * 1deg)));
+                                        }
+                                    }
+                                    Text { text: "Loading request history…"; color: Theme.fg; font-size: 20px; font-weight: 700; horizontal-alignment: center; }
+                                    Text { text: "Fetching your recent requests. You can switch tabs while it loads."; color: Theme.fg-2; font-size: Theme.fs-body; horizontal-alignment: center; }
+                                }
+                            }
+
+                            if !root.history-loading && root.history-load-error != "" : Rectangle {
+                                vertical-stretch: 1;
+                                background: Theme.view-bg;
+                                border-width: 1px;
+                                border-color: Theme.border;
+                                border-radius: Theme.radius-card;
+                                VerticalLayout {
+                                    alignment: center;
+                                    spacing: 10px;
+                                    Text { text: "History could not be loaded"; color: Theme.fg; font-size: Theme.fs-heading; font-weight: 700; horizontal-alignment: center; }
+                                    Text { text: root.history-load-error; color: Theme.fg-2; font-size: Theme.fs-body; horizontal-alignment: center; }
+                                    Btn {
+                                        text: "Try again";
+                                        kind: "suggested";
+                                        clicked => {
+                                            root.retry();
+                                        }
+                                    }
+                                }
+                            }
+
+                            if !root.history-loading && root.history-load-error == "" && root.history-items.length == 0 : Rectangle {
+                                vertical-stretch: 1;
+                                background: Theme.view-bg;
+                                border-width: 1px;
+                                border-color: Theme.border;
+                                border-radius: Theme.radius-card;
+                                VerticalLayout {
+                                    alignment: center;
+                                    spacing: 8px;
+                                    Text { text: "No history yet"; color: Theme.fg; font-size: Theme.fs-heading; font-weight: 700; horizontal-alignment: center; }
+                                    Text { text: "Requests you send will appear here."; color: Theme.fg-2; font-size: Theme.fs-body; horizontal-alignment: center; }
+                                }
+                            }
+
+                            if !root.history-loading && root.history-load-error == "" && root.history-items.length > 0 && root.history-visible-items.length == 0 : Rectangle {
+                                vertical-stretch: 1;
+                                background: Theme.view-bg;
+                                border-width: 1px;
+                                border-color: Theme.border;
+                                border-radius: Theme.radius-card;
+                                VerticalLayout {
+                                    alignment: center;
+                                    spacing: 8px;
+                                    Text { text: "No matching requests"; color: Theme.fg; font-size: Theme.fs-heading; font-weight: 700; horizontal-alignment: center; }
+                                    Text { text: "Try another history filter to see more results."; color: Theme.fg-2; font-size: Theme.fs-body; horizontal-alignment: center; }
+                                }
+                            }
+
+                            if !root.history-loading && root.history-load-error == "" && root.history-page-items.length > 0 : ListView {
+                                vertical-stretch: 1;
+                                for item in root.history-page-items : Rectangle {
+                                    height: 72px;
+                                    Rectangle {
+                                        y: 4px;
+                                        width: parent.width;
+                                        height: 64px;
+                                        background: history-touch.has-hover ? Theme.hover : Theme.view-bg;
+                                        border-width: 1px;
+                                        border-color: Theme.border;
+                                        border-radius: 10px;
+
+                                        history-touch := TouchArea {
+                                            mouse-cursor: pointer;
+                                            clicked => {
+                                                root.request-selected(item.request-id, item.collection-name);
+                                            }
+                                        }
+
+                                        HorizontalLayout {
+                                            padding: 12px;
+                                            padding-left: 14px;
+                                            spacing: 14px;
+                                            MethodBadge { value: item.method; y: (parent.height - self.height) / 2; }
+                                            VerticalLayout {
+                                                horizontal-stretch: 1;
+                                                alignment: center;
+                                                spacing: 3px;
+                                                Text { text: item.request-name; color: Theme.fg; font-size: Theme.fs-body; font-weight: 700; overflow: elide; }
+                                                Text { text: item.collection-name + " · " + item.url; color: Theme.fg-3; font-size: Theme.fs-small; overflow: elide; }
+                                            }
+                                            Rectangle {
+                                                width: status-text.preferred-width + 20px;
+                                                height: 24px;
+                                                y: (parent.height - self.height) / 2;
+                                                border-radius: 12px;
+                                                background: item.status.starts-with("2") || item.status.starts-with("3") ? Theme.success-bg : Theme.danger-bg;
+                                                status-text := Text {
+                                                    text: item.status;
+                                                    color: item.status.starts-with("2") || item.status.starts-with("3") ? Theme.success : Theme.danger;
+                                                    font-size: Theme.fs-small;
+                                                    font-weight: 700;
+                                                    horizontal-alignment: center;
+                                                    vertical-alignment: center;
+                                                }
+                                            }
+                                            VerticalLayout {
+                                                width: 130px;
+                                                alignment: center;
+                                                spacing: 3px;
+                                                Text { text: item.duration; color: Theme.fg-2; font-size: Theme.fs-small; font-weight: 600; horizontal-alignment: right; }
+                                                Text { text: item.date; color: Theme.fg-3; font-size: Theme.fs-caption; horizontal-alignment: right; }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
+                            if !root.history-loading && root.history-load-error == "" && root.history-visible-items.length > 0 : Rectangle {
+                                height: 40px;
+                                background: Theme.view-bg;
+                                HorizontalLayout {
+                                    y: 0px;
+                                    height: 40px;
+                                    width: parent.width;
+                                    spacing: 8px;
+                                    Text {
+                                        text: "Showing " + ((root.history-page - 1) * root.history-page-size + 1) + "–" + min(root.history-page * root.history-page-size, root.history-visible-items.length) + " of " + root.history-visible-items.length;
+                                        color: Theme.fg-3; font-size: Theme.fs-small; vertical-alignment: center; horizontal-stretch: 1;
+                                    }
+                                    Btn {
+                                        text: "Previous";
+                                        kind: "flat";
+                                        enabled: root.history-page > 1;
+                                        clicked => {
+                                            root.previous-page();
+                                        }
+                                    }
+                                    Text {
+                                        text: "Page " + root.history-page + " of " + root.history-page-count;
+                                        color: Theme.fg-2; font-size: Theme.fs-small; vertical-alignment: center;
+                                    }
+                                    Btn {
+                                        text: "Next";
+                                        kind: "flat";
+                                        enabled: root.history-page < root.history-page-count;
+                                        clicked => {
+                                            root.next-page();
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        Rectangle { horizontal-stretch: 1; }
+                    }
+}
