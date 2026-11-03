@@ -106,6 +106,14 @@ impl HttpClient {
             Err(error) => return failure(&error, start),
         };
 
+        if !matches!(auth_type, "None" | "Basic" | "Bearer" | "API Key") {
+            return failure("Unsupported authentication type.", start);
+        }
+        // "None" appears in older databases created before body formats were selectable.
+        if !matches!(body_format, "None" | "JSON" | "Text" | "HTML" | "XML") {
+            return failure("Unsupported request body format.", start);
+        }
+
         let method = match method {
             "GET" => Method::GET,
             "POST" => Method::POST,
@@ -818,6 +826,35 @@ mod tests {
             destination.accept().is_err(),
             "cross-origin request was sent"
         );
+    }
+
+    #[tokio::test]
+    async fn rejects_unknown_auth_and_body_formats_before_sending() {
+        let client = HttpClient::new().expect("build HTTP client");
+        let base = RequestSpec {
+            method: "GET",
+            url: "http://127.0.0.1:1/",
+            body: "",
+            headers: "",
+            query_params: "",
+            body_format: "JSON",
+            auth_type: "Unknown",
+            auth_value: "",
+            auth_secret: "",
+        };
+
+        let auth_result = client.send(&base, &HashMap::new()).await;
+        assert_eq!(auth_result.state, HttpState::Error);
+        assert_eq!(auth_result.body, "Unsupported authentication type.");
+
+        let bad_body_format = RequestSpec {
+            auth_type: "None",
+            body_format: "BINARY",
+            ..base
+        };
+        let format_result = client.send(&bad_body_format, &HashMap::new()).await;
+        assert_eq!(format_result.state, HttpState::Error);
+        assert_eq!(format_result.body, "Unsupported request body format.");
     }
 
     #[test]
