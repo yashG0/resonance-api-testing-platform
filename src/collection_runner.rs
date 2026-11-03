@@ -249,6 +249,7 @@ pub fn register(
                                         auth_value: &request.auth_value,
                                         auth_secret: &request.auth_secret,
                                         timeout_ms: request.timeout_ms as u64,
+                                        follow_redirects: request.follow_redirects,
                                     },
                                     &variables,
                                 )

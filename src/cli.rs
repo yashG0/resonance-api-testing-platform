@@ -127,6 +127,7 @@ pub async fn run(arguments: &[String]) -> Result<bool, String> {
                                 auth_value: &request.auth_value,
                                 auth_secret: &request.auth_secret,
                                 timeout_ms: request.timeout_ms as u64,
+                                follow_redirects: request.follow_redirects,
                             },
                             &variables,
                         )
@@ -643,6 +644,7 @@ mod tests {
             assertions: vec![],
             timeout_ms: crate::storage::DEFAULT_REQUEST_TIMEOUT_MS,
             assertions_error: None,
+            follow_redirects: true,
         };
         let cases = [
             CaseResult {
@@ -737,6 +739,7 @@ mod tests {
                     text: "not-ready".into(),
                 }],
                 timeout_ms: crate::storage::DEFAULT_REQUEST_TIMEOUT_MS,
+                follow_redirects: true,
             })
             .expect("save request");
 

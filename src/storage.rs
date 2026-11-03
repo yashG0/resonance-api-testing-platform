@@ -77,6 +77,7 @@ pub struct SavedRequest {
     /// but collection runs must fail them closed instead of treating them as unchecked.
     pub assertions_error: Option<String>,
     pub timeout_ms: i64,
+    pub follow_redirects: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -94,6 +95,7 @@ pub struct NewRequest {
     pub auth_secret: String,
     pub assertions: Vec<crate::assertions::Assertion>,
     pub timeout_ms: i64,
+    pub follow_redirects: bool,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -175,6 +177,7 @@ impl RequestStore {
                 credential_ref TEXT NOT NULL DEFAULT '',
                 assertions TEXT NOT NULL DEFAULT '[]',
                 timeout_ms INTEGER NOT NULL DEFAULT 30000,
+                follow_redirects INTEGER NOT NULL DEFAULT 1,
                 collection_id INTEGER REFERENCES collections(id) ON DELETE CASCADE,
                 created_at   TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 updated_at   TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -253,6 +256,7 @@ impl RequestStore {
             ("credential_ref", "TEXT NOT NULL DEFAULT ''"),
             ("assertions", "TEXT NOT NULL DEFAULT '[]'"),
             ("timeout_ms", "INTEGER NOT NULL DEFAULT 30000"),
+            ("follow_redirects", "INTEGER NOT NULL DEFAULT 1"),
         ] {
             let has_column = {
                 let mut statement = connection.prepare("PRAGMA table_info(saved_requests)")?;
@@ -804,8 +808,8 @@ impl RequestStore {
         };
         let insert_result = connection.execute(
             r#"
-            INSERT INTO saved_requests (name, method, url, headers, query_params, body, collection_id, body_format, auth_type, auth_value, auth_secret, credential_ref, assertions, timeout_ms)
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, '', '', ?10, ?11, ?12)
+            INSERT INTO saved_requests (name, method, url, headers, query_params, body, collection_id, body_format, auth_type, auth_value, auth_secret, credential_ref, assertions, timeout_ms, follow_redirects)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, '', '', ?10, ?11, ?12, ?13)
             "#,
             params![
                 request.name.trim(),
@@ -819,7 +823,8 @@ impl RequestStore {
                 request.auth_type,
                 credential_ref,
                 assertions,
-                request.timeout_ms
+                request.timeout_ms,
+                request.follow_redirects
             ],
         );
         if let Err(error) = insert_result {
@@ -838,7 +843,7 @@ impl RequestStore {
         let connection = self.connect()?;
         let mut statement = connection.prepare(
             r#"
-            SELECT id, collection_id, name, method, url, headers, query_params, body, body_format, auth_type, auth_value, auth_secret, credential_ref, assertions, timeout_ms
+            SELECT id, collection_id, name, method, url, headers, query_params, body, body_format, auth_type, auth_value, auth_secret, credential_ref, assertions, timeout_ms, follow_redirects
             FROM saved_requests WHERE collection_id = ?1
             ORDER BY name COLLATE NOCASE ASC, id ASC
             "#,
@@ -856,7 +861,7 @@ impl RequestStore {
         let stored = connection
             .query_row(
                 r#"
-                SELECT id, collection_id, name, method, url, headers, query_params, body, body_format, auth_type, auth_value, auth_secret, credential_ref, assertions, timeout_ms
+                SELECT id, collection_id, name, method, url, headers, query_params, body, body_format, auth_type, auth_value, auth_secret, credential_ref, assertions, timeout_ms, follow_redirects
                 FROM saved_requests WHERE id = ?1
                 "#,
                 [id],
@@ -908,7 +913,7 @@ impl RequestStore {
             SET name = ?1, method = ?2, url = ?3, headers = ?4,
                 query_params = ?5, body = ?6, collection_id = ?7,
                 body_format = ?8, auth_type = ?9, auth_value = '', auth_secret = '',
-                credential_ref = ?10, assertions = ?12, timeout_ms = ?13,
+                credential_ref = ?10, assertions = ?12, timeout_ms = ?13, follow_redirects = ?14,
                 updated_at = CURRENT_TIMESTAMP
             WHERE id = ?11
             "#,
@@ -925,7 +930,8 @@ impl RequestStore {
                 credential_ref,
                 id,
                 assertions,
-                request.timeout_ms
+                request.timeout_ms,
+                request.follow_redirects
             ],
         );
         let changed = match update_result {
@@ -1170,6 +1176,7 @@ fn row_to_stored_request(row: &rusqlite::Row<'_>) -> rusqlite::Result<StoredSave
             assertions,
             assertions_error,
             timeout_ms: row.get(14)?,
+            follow_redirects: row.get(15)?,
         },
         credential_ref: row.get(12)?,
     })
@@ -1256,6 +1263,7 @@ mod tests {
             auth_secret: String::new(),
             assertions: vec![crate::assertions::Assertion::HttpStatus { expected: 200 }],
             timeout_ms: DEFAULT_REQUEST_TIMEOUT_MS,
+            follow_redirects: true,
         }
     }
 
@@ -1333,6 +1341,7 @@ mod tests {
             auth_secret: String::new(),
             assertions: Vec::new(),
             timeout_ms: 45_000,
+            follow_redirects: false,
         };
         assert!(store.update(created.id, &updated).expect("update"));
         let loaded = store
@@ -1344,6 +1353,7 @@ mod tests {
         assert_eq!(loaded.body, r#"{"ok":true}"#);
         assert!(loaded.assertions.is_empty());
         assert_eq!(loaded.timeout_ms, 45_000);
+        assert!(!loaded.follow_redirects);
         assert_eq!(
             store
                 .list_for_collection(collection_id)
@@ -1735,6 +1745,7 @@ mod tests {
         assert_eq!(migrated[0].name, "Legacy");
         assert_eq!(migrated[0].collection_id, collection_id);
         assert_eq!(migrated[0].timeout_ms, DEFAULT_REQUEST_TIMEOUT_MS);
+        assert!(migrated[0].follow_redirects);
         let variables = store
             .list_variables(collection_id)
             .expect("migrated variables");

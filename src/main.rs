@@ -218,6 +218,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 auth_value: auth_value.as_str(),
                 auth_secret: auth_secret.as_str(),
                 timeout_ms: crate::storage::DEFAULT_REQUEST_TIMEOUT_MS as u64,
+                follow_redirects: true,
             })
             .into()
         },
@@ -340,7 +341,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
               name,
               tab_key,
               assertions_json,
-              timeout_ms| {
+              timeout_ms,
+              follow_redirects| {
             let app_handle = app_weak.clone();
             let client = Arc::clone(&client);
             let store = Arc::clone(&store);
@@ -397,6 +399,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     auth_secret: auth_secret.clone(),
                     assertions: assertions.clone(),
                     timeout_ms,
+                    follow_redirects,
                 };
                 let save_store = Arc::clone(&store);
                 let save_result = tokio::task::spawn_blocking(move || {
@@ -513,6 +516,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             auth_value: &auth_value,
                             auth_secret: &auth_secret,
                             timeout_ms: timeout_ms as u64,
+                            follow_redirects,
                         },
                         &variables,
                     )
@@ -622,7 +626,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
               auth_secret,
               tab_key,
               assertions_json,
-              timeout_ms| {
+              timeout_ms,
+              follow_redirects| {
             let app_handle = app_weak.clone();
             let store = Arc::clone(&store);
             let assertions = match serde_json::from_str::<Vec<Assertion>>(assertions_json.as_str())
@@ -658,6 +663,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         return;
                     }
                 },
+                follow_redirects,
             };
             tokio::task::spawn_blocking(move || {
                 if id <= 0
@@ -1018,6 +1024,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 ui.set_request_param_rows(to_key_value_model("", '='));
                                 ui.set_request_body("".into());
                                 ui.set_body_format("JSON".into());
+                                ui.set_request_timeout_ms("30000".into());
+                                ui.set_follow_redirects(true);
                                 ui.set_auth_type("None".into());
                                 ui.set_auth_value("".into());
                                 ui.set_auth_secret("".into());
@@ -1157,6 +1165,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                     ui.set_request_param_rows(to_key_value_model("", '='));
                                     ui.set_request_body("".into());
                                     ui.set_body_format("JSON".into());
+                                    ui.set_request_timeout_ms("30000".into());
+                                    ui.set_follow_redirects(true);
                                     ui.set_auth_type("None".into());
                                     ui.set_auth_value("".into());
                                     ui.set_auth_secret("".into());
@@ -1417,6 +1427,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 ui.set_request_body(request.body.into());
                                 ui.set_body_format(request.body_format.into());
                                 ui.set_request_timeout_ms(request.timeout_ms.to_string().into());
+                                ui.set_follow_redirects(request.follow_redirects);
                                 ui.set_auth_type(request.auth_type.into());
                                 ui.set_auth_value(request.auth_value.into());
                                 ui.set_auth_secret(request.auth_secret.into());

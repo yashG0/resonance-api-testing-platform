@@ -38,15 +38,17 @@ pub struct RequestSpec<'a> {
     pub auth_value: &'a str,
     pub auth_secret: &'a str,
     pub timeout_ms: u64,
+    pub follow_redirects: bool,
 }
 
 pub struct HttpClient {
-    client: Client,
+    redirect_client: Client,
+    no_redirect_client: Client,
 }
 
 impl HttpClient {
     pub fn new() -> Result<Self, reqwest::Error> {
-        let client = Client::builder()
+        let redirect_client = Client::builder()
             .connect_timeout(CONNECT_TIMEOUT)
             .timeout(REQUEST_TIMEOUT)
             .redirect(Policy::custom(|attempt| {
@@ -62,8 +64,17 @@ impl HttpClient {
             }))
             .user_agent(concat!("Cosmic-API/", env!("CARGO_PKG_VERSION")))
             .build()?;
+        let no_redirect_client = Client::builder()
+            .connect_timeout(CONNECT_TIMEOUT)
+            .timeout(REQUEST_TIMEOUT)
+            .redirect(Policy::none())
+            .user_agent(concat!("Cosmic-API/", env!("CARGO_PKG_VERSION")))
+            .build()?;
 
-        Ok(Self { client })
+        Ok(Self {
+            redirect_client,
+            no_redirect_client,
+        })
     }
 
     pub async fn send(
@@ -250,8 +261,12 @@ impl HttpClient {
             }
         }
 
-        let mut request = self
-            .client
+        let client = if spec.follow_redirects {
+            &self.redirect_client
+        } else {
+            &self.no_redirect_client
+        };
+        let mut request = client
             .request(method, parsed_url)
             .headers(headers)
             .timeout(Duration::from_millis(spec.timeout_ms));
@@ -829,6 +844,7 @@ mod tests {
                     auth_value: "",
                     auth_secret: "",
                     timeout_ms: 30_000,
+                    follow_redirects: true,
                 },
                 &HashMap::new(),
             )
@@ -845,6 +861,49 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn can_disable_same_origin_redirects_per_request() {
+        use std::{
+            io::{Read, Write},
+            net::TcpListener,
+            thread,
+        };
+
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind redirect server");
+        let url = format!("http://{}/start", listener.local_addr().unwrap());
+        let server_thread = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept initial request");
+            let mut request = [0; 1024];
+            let _ = stream.read(&mut request);
+            stream
+                .write_all(b"HTTP/1.1 302 Found\r\nLocation: /next\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+                .expect("write redirect");
+        });
+
+        let client = HttpClient::new().expect("build HTTP client");
+        let result = client
+            .send(
+                &RequestSpec {
+                    method: "GET",
+                    url: &url,
+                    body: "",
+                    headers: "",
+                    query_params: "",
+                    body_format: "JSON",
+                    auth_type: "None",
+                    auth_value: "",
+                    auth_secret: "",
+                    timeout_ms: 30_000,
+                    follow_redirects: false,
+                },
+                &HashMap::new(),
+            )
+            .await;
+        server_thread.join().expect("join redirect server");
+        assert!(result.status.starts_with("302"), "got {}", result.status);
+        assert_eq!(result.state, HttpState::Success);
+    }
+
+    #[tokio::test]
     async fn rejects_unknown_auth_and_body_formats_before_sending() {
         let client = HttpClient::new().expect("build HTTP client");
         let base = RequestSpec {
@@ -858,6 +917,7 @@ mod tests {
             auth_value: "",
             auth_secret: "",
             timeout_ms: 30_000,
+            follow_redirects: true,
         };
 
         let auth_result = client.send(&base, &HashMap::new()).await;
@@ -901,6 +961,7 @@ mod tests {
                     auth_value: "",
                     auth_secret: "",
                     timeout_ms: 100,
+                    follow_redirects: true,
                 },
                 &HashMap::new(),
             )

@@ -48,6 +48,7 @@ export struct RequestTabItem {
     auth-value: string,
     auth-secret: string,
     timeout-ms: string,
+    follow-redirects: bool,
     assertions-json: string,
     response-status: string,
     response-body: string,
@@ -399,8 +400,8 @@ export component AppWindow inherits Window {
     background: transparent;
     forward-focus: shortcut-scope;
 
-    callback send-request(string, string, string, string, string, string, string, string, string, int, int, string, int, string, string);
-    callback save-request(int, int, string, string, string, string, string, string, string, string, string, string, int, string, string);
+    callback send-request(string, string, string, string, string, string, string, string, string, int, int, string, int, string, string, bool);
+    callback save-request(int, int, string, string, string, string, string, string, string, string, string, string, int, string, string, bool);
     callback suggest-request-name(int) -> string;
     callback open-latest-request(int);
     callback serialize-param-rows([KeyValueRow]) -> string;
@@ -526,6 +527,7 @@ export component AppWindow inherits Window {
     in-out property <string> request-body: "";
     in-out property <string> body-format: "JSON";
     in-out property <string> request-timeout-ms: "30000";
+    in-out property <bool> follow-redirects: true;
 
     in-out property <string> request-headers: "Accept: application/json";
     in-out property <[KeyValueRow]> request-header-rows: [{ key: "Accept", value: "application/json", enabled: true }];
@@ -700,6 +702,7 @@ in-out property <bool> response-large: false;
             auth-value: root.auth-value,
             auth-secret: root.auth-secret,
             timeout-ms: root.request-timeout-ms,
+            follow-redirects: root.follow-redirects,
             assertions-json: root.request-assertions,
             response-status: root.response-status,
             response-body: root.response-body,
@@ -738,6 +741,7 @@ in-out property <bool> response-large: false;
         root.auth-value = tab.auth-value;
         root.auth-secret = tab.auth-secret;
         root.request-timeout-ms = tab.timeout-ms;
+        root.follow-redirects = tab.follow-redirects;
         root.request-assertions = tab.assertions-json;
         root.editing-request-name = false;
         root.active-view = "Request";
@@ -769,6 +773,7 @@ in-out property <bool> response-large: false;
                     body-format: tab.body-format, auth-type: tab.auth-type, auth-value: tab.auth-value,
                     auth-secret: tab.auth-secret, assertions-json: tab.assertions-json, response-status: status, response-body: body,
                     timeout-ms: tab.timeout-ms,
+                    follow-redirects: tab.follow-redirects,
                     response-body-formatted: formatted-body,
                     response-time: elapsed, response-state: state, response-format: format,
                     response-headers: headers, response-cookies: cookies, response-large: large,
@@ -798,6 +803,7 @@ in-out property <bool> response-large: false;
                     body-format: tab.body-format, auth-type: tab.auth-type, auth-value: tab.auth-value,
                     auth-secret: tab.auth-secret, assertions-json: tab.assertions-json, response-status: tab.response-status,
                     timeout-ms: tab.timeout-ms,
+                    follow-redirects: tab.follow-redirects,
                     response-body: tab.response-body,
                     response-body-formatted: tab.response-body-formatted,
                     response-time: tab.response-time,
@@ -837,6 +843,7 @@ in-out property <bool> response-large: false;
             auth-value: root.auth-value,
             auth-secret: root.auth-secret,
             timeout-ms: root.request-timeout-ms,
+            follow-redirects: root.follow-redirects,
             assertions-json: root.request-assertions,
             response-status: root.response-status,
             response-body: root.response-body,
@@ -921,7 +928,8 @@ in-out property <bool> response-large: false;
                 root.active-request-id, root.selected-collection-id, root.active-request,
                 root.active-method, root.request-url, root.request-headers, root.request-params,
                 root.request-body, root.body-format, root.auth-type, root.auth-value, root.auth-secret,
-                root.active-request-tab-key, root.request-assertions, root.request-timeout-ms
+                root.active-request-tab-key, root.request-assertions,
+                root.request-timeout-ms, root.follow-redirects
             );
         }
     }
@@ -965,6 +973,7 @@ in-out property <bool> response-large: false;
         root.auth-value = "";
         root.auth-secret = "";
         root.request-timeout-ms = "30000";
+        root.follow-redirects = true;
         root.request-assertions = "[]";
         root.active-tab = "Body";
         let key = root.next-request-tab-key;
@@ -988,6 +997,7 @@ in-out property <bool> response-large: false;
             auth-value: "",
             auth-secret: "",
             timeout-ms: "30000",
+            follow-redirects: true,
             assertions-json: "[]",
             response-status: "No response yet",
             response-body: "Send a request to inspect its response.",
@@ -1043,6 +1053,7 @@ in-out property <bool> response-large: false;
         root.auth-value = "";
         root.auth-secret = "";
         root.request-timeout-ms = "30000";
+        root.follow-redirects = true;
         root.request-assertions = "[]";
         root.response-status = "No response yet";
         root.response-body = "Send a request to inspect its response.";
@@ -1063,7 +1074,8 @@ in-out property <bool> response-large: false;
                 root.active-request-id, root.selected-collection-id, root.active-request,
                 root.active-method, root.request-url, root.request-headers, root.request-params,
                 root.request-body, root.body-format, root.auth-type, root.auth-value, root.auth-secret,
-                root.active-request-tab-key, root.request-assertions, root.request-timeout-ms
+                root.active-request-tab-key, root.request-assertions,
+                root.request-timeout-ms, root.follow-redirects
             );
         }
     }
@@ -1088,7 +1100,7 @@ in-out property <bool> response-large: false;
                 root.request-params, root.body-format, root.auth-type, root.auth-value,
                 root.auth-secret, root.selected-collection-id, root.active-request-id, root.active-request,
                 root.active-request-tab-key, root.request-assertions,
-                root.request-timeout-ms
+                root.request-timeout-ms, root.follow-redirects
             );
         }
     }
@@ -3006,25 +3018,6 @@ in-out property <bool> response-large: false;
                                     accepted(value) => { root.send-current-request(); }
                                 }
 
-                                VerticalLayout {
-                                    width: 92px;
-                                    spacing: 2px;
-                                    Text {
-                                        text: "Timeout (ms)";
-                                        color: Theme.fg-3;
-                                        font-size: 10px;
-                                        horizontal-alignment: center;
-                                    }
-                                    AdwLineEdit {
-                                        height: 30px;
-                                        input-type: InputType.number;
-                                        text <=> root.request-timeout-ms;
-                                        placeholder-text: "30000";
-                                        font-size: 12px;
-                                        text-padding: 6px;
-                                    }
-                                }
-
                                 Btn {
                                     kind: "flat";
                                     text: "Copy cURL";
@@ -3086,11 +3079,11 @@ in-out property <bool> response-large: false;
                                             height: 48px;
                                             alignment: center;
                                             TabBar {
-                                                tabs: ["Params", "Headers", "Body", "Auth", "Assertions"];
+                                                tabs: ["Params", "Headers", "Body", "Auth", "Assertions", "Settings"];
                                                 counts: [
                                                     root.request-param-rows.length > 0 ? "" + root.request-param-rows.length : "",
                                                     root.request-header-rows.length > 0 ? "" + root.request-header-rows.length : "",
-                                                    "", "", root.request-assertions != "[]" ? "✓" : ""
+                                                    "", "", root.request-assertions != "[]" ? "✓" : "", ""
                                                 ];
                                                 current: root.active-tab;
                                                 selected(t) => { root.active-tab = t; }
@@ -3355,6 +3348,38 @@ in-out property <bool> response-large: false;
                                                 color: Theme.fg-3;
                                                 font-size: Theme.fs-body;
                                             }
+                                        }
+
+                                        if root.active-tab == "Settings" : VerticalLayout {
+                                            padding: 20px;
+                                            spacing: 12px;
+                                            alignment: start;
+                                            Text { text: "Redirect behavior"; color: Theme.fg-2; font-size: Theme.fs-small; font-weight: 600; }
+                                            ChoiceDropdown {
+                                                accent-color: root.accent;
+                                                width: 230px;
+                                                options: ["Follow same-origin", "Do not follow"];
+                                                current-value: root.follow-redirects ? "Follow same-origin" : "Do not follow";
+                                                dark-mode: Theme.dark;
+                                                selected(value) => { root.follow-redirects = value == "Follow same-origin"; }
+                                            }
+                                            Text {
+                                                text: root.follow-redirects
+                                                    ? "Same-origin redirects are followed. Cross-origin redirects are always stopped to protect credentials."
+                                                    : "Redirects are disabled for this request. The first response is returned as-is.";
+                                                color: Theme.fg-3;
+                                                font-size: Theme.fs-body;
+                                                wrap: word-wrap;
+                                                max-width: 560px;
+                                            }
+                                            Text { text: "Request timeout (milliseconds)"; color: Theme.fg-2; font-size: Theme.fs-small; font-weight: 600; }
+                                            AdwLineEdit {
+                                                width: 180px;
+                                                input-type: InputType.number;
+                                                text <=> root.request-timeout-ms;
+                                                placeholder-text: "30000";
+                                            }
+                                            Text { text: "Allowed: 100–600000 ms. Default: 30000 ms."; color: Theme.fg-3; font-size: Theme.fs-small; }
                                         }
                                     }
                                 }
@@ -3728,6 +3753,7 @@ in-out property <bool> response-large: false;
         KeyBinding { keys: @keys(Control + Digit2); enabled: root.app-shortcuts-enabled && root.active-view == "Request"; activated => { root.set-request-tab("Headers"); } }
         KeyBinding { keys: @keys(Control + Digit3); enabled: root.app-shortcuts-enabled && root.active-view == "Request"; activated => { root.set-request-tab("Body"); } }
         KeyBinding { keys: @keys(Control + Digit4); enabled: root.app-shortcuts-enabled && root.active-view == "Request"; activated => { root.set-request-tab("Auth"); } }
+        KeyBinding { keys: @keys(Control + Digit6); enabled: root.app-shortcuts-enabled && root.active-view == "Request"; activated => { root.set-request-tab("Settings"); } }
         KeyBinding { keys: @keys(Alt + Digit1); enabled: root.app-shortcuts-enabled && root.active-view == "Request"; activated => { root.response-tab = "Body"; } }
         KeyBinding { keys: @keys(Alt + Digit2); enabled: root.app-shortcuts-enabled && root.active-view == "Request"; activated => { root.response-tab = "Headers"; } }
         KeyBinding { keys: @keys(Alt + Digit3); enabled: root.app-shortcuts-enabled && root.active-view == "Request"; activated => { root.response-tab = "Cookies"; } }

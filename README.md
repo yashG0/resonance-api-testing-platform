@@ -38,6 +38,7 @@ Cosmic API helps you create, send, inspect, and repeat API requests from a focus
 
 - **Build HTTP requests** with GET, POST, PUT, PATCH, DELETE, HEAD, and OPTIONS methods.
 - **Configure each request** with query parameters, headers, JSON or text bodies, and authentication.
+- **Control network behavior per request** with a 100–600000 ms timeout and an option to stop redirects. When enabled, same-origin redirects are followed; cross-origin redirects are always stopped to protect credentials.
 - **Organize work** in collections and keep multiple request tabs open with their response state preserved.
 - **Reuse values** with collection variables and environment configuration; mark sensitive variables to store their values in the operating-system credential store.
 - **Inspect responses** with formatted, raw, and JSON tree views, plus status, timing, headers, and cookies.
@@ -83,13 +84,21 @@ cargo build --release
 
 The executable is written to `target/release/`.
 
-The headless runner uses the same OS credential store as the desktop app. It uses the local database by default; pass `--database <file>` to run a prepared SQLite database in CI. A data file is a JSON array of objects whose string, number, and boolean values override collection variables for each iteration. For example:
+The headless runner uses the same OS credential store as the desktop app. It uses the local database by default; pass `--database <file>` to run a prepared SQLite database in CI. A `.json` data file is an array of objects; a `.csv` file uses its first row as variable names. String, number, and boolean JSON values or CSV cell values override collection variables for each iteration. For example:
 
 ```json
 [
   {"user_id": 1},
   {"user_id": 42}
 ]
+```
+
+The equivalent CSV file can be:
+
+```csv
+user_id
+1
+42
 ```
 
 For command options and data limits, run `cosmic-api --help`.

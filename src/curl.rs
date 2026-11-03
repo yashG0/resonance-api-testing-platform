@@ -293,6 +293,7 @@ mod tests {
             auth_value: "secret token",
             auth_secret: "",
             timeout_ms: 30_000,
+            follow_redirects: true,
         };
         let command = build_curl(&spec);
         assert!(command.contains("'X-Label: a b'"));
