@@ -67,12 +67,14 @@ export struct CollectionItem {
 export struct VariableItem {
     key: string,
     value: string,
+    is-secret: bool,
 }
 export struct EnvironmentItem {
     collection-id: int,
     collection-name: string,
     key: string,
     value: string,
+    is-secret: bool,
 }
 export struct CollectionRunResult {
     method: string, name: string, url: string, status: string, elapsed: string,
@@ -111,6 +113,7 @@ export component AppWindow inherits Window {
     callback open-latest-request(int);
     callback serialize-param-rows([KeyValueRow]) -> string;
     callback serialize-header-rows([KeyValueRow]) -> string;
+    callback append-assertion(string, string, string, string) -> string;
     callback load-collections();
     callback load-requests(int);
     callback search-requests(string);
@@ -123,8 +126,8 @@ export component AppWindow inherits Window {
     callback create-collection(string);
     callback rename-collection(int, string);
     callback delete-collection(int);
-    callback create-collection-variable(int, string, string);
-    callback update-collection-variable(int, string, string, string);
+    callback create-collection-variable(int, string, string, bool);
+    callback update-collection-variable(int, string, string, string, bool);
     callback delete-collection-variable(int, string);
     callback select-request(int);
     callback delete-request(int, int);
@@ -196,11 +199,13 @@ export component AppWindow inherits Window {
     in-out property <int> confirm-delete-collection-id: -1;
     in-out property <string> variable-key: "";
     in-out property <string> variable-value: "";
+    in-out property <bool> variable-is-secret: false;
     in-out property <string> variables-message: "";
     in-out property <string> editing-variable-key: "";
     in-out property <int> editing-variable-collection-id: -1;
     in-out property <string> editing-variable-draft-key: "";
     in-out property <string> editing-variable-draft-value: "";
+    in-out property <bool> editing-variable-draft-secret: false;
     in-out property <string> editing-variable-message: "";
     in-out property <bool> show-variable-values: false;
     in-out property <string> theme-mode: "System";
@@ -223,6 +228,10 @@ export component AppWindow inherits Window {
     in-out property <string> auth-value: "";
     in-out property <string> auth-secret: "";
     in-out property <string> request-assertions: "[]";
+    in-out property <string> assertion-editor-message: "";
+    in-out property <string> assertion-kind: "HTTP status";
+    in-out property <string> assertion-first-value: "";
+    in-out property <string> assertion-second-value: "";
     in-out property <string> response-status: "No response yet";
     in-out property <string> response-body: "Send a request to inspect its response.";
     in-out property <string> response-time: "---";
@@ -333,11 +342,12 @@ in-out property <bool> response-large: false;
         root.variables-message = "";
     }
 
-    function begin-variable-edit(key: string, value: string) {
+    function begin-variable-edit(key: string, value: string, is-secret: bool) {
         root.editing-variable-key = key;
         root.editing-variable-collection-id = root.selected-collection-id;
         root.editing-variable-draft-key = key;
         root.editing-variable-draft-value = value;
+        root.editing-variable-draft-secret = is-secret;
         root.editing-variable-message = "";
     }
 
@@ -346,6 +356,7 @@ in-out property <bool> response-large: false;
         root.editing-variable-collection-id = -1;
         root.editing-variable-draft-key = "";
         root.editing-variable-draft-value = "";
+        root.editing-variable-draft-secret = false;
         root.editing-variable-message = "";
     }
 
@@ -2472,11 +2483,12 @@ in-out property <bool> response-large: false;
                                         height: 38px;
                                         AdwLineEdit { width: 200px; text: root.variable-key; placeholder-text: "Variable name"; edited(value) => { root.variable-key = value; } }
                                         AdwLineEdit { horizontal-stretch: 1; text: root.variable-value; placeholder-text: "Value"; edited(value) => { root.variable-value = value; } }
+                                        Btn { text: root.variable-is-secret ? "Secret ✓" : "Plain"; clicked => { root.variable-is-secret = !root.variable-is-secret; } }
                                         Btn {
                                             kind: "suggested";
                                             text: "Add variable";
                                             enabled: root.selected-collection-id > 0 && root.variable-key != "";
-                                            clicked => { root.create-collection-variable(root.selected-collection-id, root.variable-key, root.variable-value); }
+                                            clicked => { root.create-collection-variable(root.selected-collection-id, root.variable-key, root.variable-value, root.variable-is-secret); }
                                         }
                                     }
                                     Text {
@@ -2544,6 +2556,10 @@ in-out property <bool> response-large: false;
                                                     edited(value) => { root.editing-variable-draft-value = value; }
                                                 }
                                                 Btn {
+                                                    text: root.editing-variable-draft-secret ? "Secret ✓" : "Plain";
+                                                    clicked => { root.editing-variable-draft-secret = !root.editing-variable-draft-secret; }
+                                                }
+                                                Btn {
                                                     kind: "suggested";
                                                     text: "Save";
                                                     enabled: root.editing-variable-draft-key != "";
@@ -2552,7 +2568,8 @@ in-out property <bool> response-large: false;
                                                             root.editing-variable-collection-id,
                                                             root.editing-variable-key,
                                                             root.editing-variable-draft-key,
-                                                            root.editing-variable-draft-value
+                                                            root.editing-variable-draft-value,
+                                                            root.editing-variable-draft-secret
                                                         );
                                                     }
                                                 }
@@ -2593,7 +2610,7 @@ in-out property <bool> response-large: false;
                                                 kind: "flat";
                                                 icon: Icons.pencil;
                                                 accessible-name: "Edit " + variable.key;
-                                                clicked => { root.begin-variable-edit(variable.key, variable.value); }
+                                                clicked => { root.begin-variable-edit(variable.key, variable.value, variable.is-secret); }
                                             }
                                             Btn {
                                                 kind: "destructive";
@@ -2605,7 +2622,7 @@ in-out property <bool> response-large: false;
                                     }
                                 }
                             }
-                            Text { text: "Stored locally in SQLite. Values are not encrypted."; color: Theme.fg-3; font-size: Theme.fs-small; }
+                            Text { text: "Regular values are stored in SQLite. Secret values are stored in your operating-system credential store."; color: Theme.fg-3; font-size: Theme.fs-small; wrap: word-wrap; }
                         }
                         Rectangle { horizontal-stretch: 1; }
                     }
@@ -2825,15 +2842,61 @@ in-out property <bool> response-large: false;
                                             edited(value) => { root.request-body = value; }
                                         }
 
-                                        if root.active-tab == "Assertions" : AdwTextEdit {
-                                            width: parent.width;
-                                            height: parent.height;
-                                            text: root.request-assertions;
-                                            placeholder-text: "JSON array. Examples: {\"kind\":\"http_status\",\"expected\":200}; {\"kind\":\"latency_under\",\"max_ms\":500}; {\"kind\":\"body_contains\",\"text\":\"ready\"}; {\"kind\":\"json_pointer\",\"pointer\":\"/data/id\",\"expected\":7}";
-                                            font-family: Theme.font-mono;
-                                            font-size: 13px;
-                                            wrap: word-wrap;
-                                            edited(value) => { root.request-assertions = value; root.store-active-request-tab(); }
+                                        if root.active-tab == "Assertions" : VerticalLayout {
+                                            VerticalLayout {
+                                                padding: 12px;
+                                                spacing: 8px;
+                                                HorizontalLayout {
+                                                    height: 38px;
+                                                    spacing: 6px;
+                                                    ChoiceDropdown {
+                                                        width: 150px;
+                                                        height: 32px;
+                                                        options: ["HTTP status", "Latency under (ms)", "Body contains", "JSON Pointer equals"];
+                                                        current-value: root.assertion-kind;
+                                                        dark-mode: Theme.dark;
+                                                        selected(value) => { root.assertion-kind = value; }
+                                                    }
+                                                    AdwLineEdit {
+                                                        horizontal-stretch: 1;
+                                                        text: root.assertion-first-value;
+                                                        placeholder-text: root.assertion-kind == "HTTP status" ? "Code, e.g. 200" : root.assertion-kind == "Latency under (ms)" ? "Milliseconds, e.g. 500" : root.assertion-kind == "Body contains" ? "Text to find" : "JSON Pointer, e.g. /data/id";
+                                                        edited(value) => { root.assertion-first-value = value; }
+                                                    }
+                                                    if root.assertion-kind == "JSON Pointer equals" : AdwLineEdit {
+                                                        horizontal-stretch: 1;
+                                                        text: root.assertion-second-value;
+                                                        placeholder-text: "Expected JSON value";
+                                                        edited(value) => { root.assertion-second-value = value; }
+                                                    }
+                                                    Btn {
+                                                        kind: "suggested";
+                                                        text: "Add";
+                                                        clicked => {
+                                                            let updated = root.append-assertion(root.request-assertions, root.assertion-kind, root.assertion-first-value, root.assertion-second-value);
+                                                            if updated == "" {
+                                                                root.assertion-editor-message = "Check the value and try again. JSON Pointer expected values must be valid JSON.";
+                                                            } else {
+                                                                root.request-assertions = updated;
+                                                                root.assertion-editor-message = "Assertion added. Save the request to keep it.";
+                                                                root.assertion-first-value = "";
+                                                                root.assertion-second-value = "";
+                                                                root.store-active-request-tab();
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                                Text { text: root.assertion-editor-message; color: root.assertion-editor-message == "" ? Theme.fg-3 : Theme.fg-2; font-size: Theme.fs-small; }
+                                                AdwTextEdit {
+                                                    vertical-stretch: 1;
+                                                    text: root.request-assertions;
+                                                    placeholder-text: "Assertions as JSON";
+                                                    font-family: Theme.font-mono;
+                                                    font-size: 13px;
+                                                    wrap: word-wrap;
+                                                    edited(value) => { root.request-assertions = value; root.store-active-request-tab(); }
+                                                }
+                                            }
                                         }
 
                                         if root.active-tab == "Headers" : KeyValueEditor {

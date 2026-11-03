@@ -1,4 +1,5 @@
 mod assertions;
+mod collection_runner;
 mod credentials;
 mod http;
 mod storage;
@@ -12,7 +13,7 @@ use std::{
     time::Duration,
 };
 
-use crate::assertions::{Assertion, evaluate};
+use crate::assertions::{Assertion, append_assertion_json};
 use crate::http::HttpClient;
 use crate::storage::{
     Collection, CollectionVariable, NewRequest, RequestHistory, RequestStore, SavedRequest,
@@ -336,6 +337,7 @@ fn to_variable_model(variables: Vec<CollectionVariable>) -> ModelRc<VariableItem
         .map(|variable| VariableItem {
             key: variable.key.into(),
             value: variable.value.into(),
+            is_secret: variable.is_secret,
         })
         .collect::<Vec<_>>();
     ModelRc::new(VecModel::from(items))
@@ -424,6 +426,7 @@ fn to_environment_model(items: Vec<(i32, String, CollectionVariable)>) -> ModelR
                 collection_name: collection_name.into(),
                 key: variable.key.into(),
                 value: variable.value.into(),
+                is_secret: variable.is_secret,
             },
         )
         .collect::<Vec<_>>();
@@ -1416,6 +1419,16 @@ async fn main() -> Result<(), slint::PlatformError> {
 
     app.on_serialize_param_rows(|rows| serialize_key_value_rows(rows, "=").into());
     app.on_serialize_header_rows(|rows| serialize_key_value_rows(rows, ": ").into());
+    app.on_append_assertion(|current, kind, first, second| {
+        append_assertion_json(
+            current.as_str(),
+            kind.as_str(),
+            first.as_str(),
+            second.as_str(),
+        )
+        .unwrap_or_default()
+        .into()
+    });
 
     app.on_auto_pair_request_body(|text, cursor, anchor, key, format| {
         auto_pair_request_body(text.as_str(), cursor, anchor, key.as_str(), format.as_str())
@@ -1777,242 +1790,12 @@ async fn main() -> Result<(), slint::PlatformError> {
         }
     });
 
-    app.on_run_collection({
-        let app_weak = app_weak.clone();
-        let client = Arc::clone(&client);
-        let store = Arc::clone(&store);
-        move |collection_id| {
-            let collection_name = app_weak
-                .upgrade()
-                .and_then(|ui| {
-                    ui.get_collections()
-                        .iter()
-                        .find(|c| c.id == collection_id)
-                        .map(|c| c.name.to_string())
-                })
-                .unwrap_or_else(|| "Collection".to_owned());
-            if let Some(ui) = app_weak.upgrade() {
-                ui.set_collection_run_name(collection_name.clone().into());
-                ui.set_collection_run_state("running".into());
-                ui.set_collection_run_duration("".into());
-                ui.set_collection_run_error("".into());
-                ui.set_collection_run_total(0);
-                ui.set_collection_run_completed(0);
-                ui.set_collection_run_passed(0);
-                ui.set_collection_run_failed(0);
-                ui.set_collection_run_skipped(0);
-                ui.set_collection_run_selected(-1);
-                ui.set_collection_run_response_tab("Body".into());
-                ui.set_collection_run_header_items(to_response_header_model(""));
-                ui.set_collection_run_results(ModelRc::new(VecModel::from(Vec::<
-                    CollectionRunResult,
-                >::new(
-                ))));
-                ui.set_active_view("Regression".into());
-            }
-            let app_handle = app_weak.clone();
-            let client = Arc::clone(&client);
-            let store = Arc::clone(&store);
-            tokio::spawn(async move {
-                let snapshot_store = Arc::clone(&store);
-                let snapshot = tokio::task::spawn_blocking(move || {
-                    Ok::<_, crate::storage::StoreError>((
-                        snapshot_store.list_for_collection(collection_id as i64)?,
-                        snapshot_store.variables_map(collection_id as i64)?,
-                    ))
-                })
-                .await;
-                let (requests, variables) = match snapshot {
-                    Ok(Ok(snapshot)) => snapshot,
-                    Ok(Err(error)) => {
-                        let message = format!("Could not start collection run: {error}");
-                        let _ = slint::invoke_from_event_loop(move || {
-                            if let Some(ui) = app_handle.upgrade() {
-                                ui.set_collection_run_state("error".into());
-                                ui.set_collection_run_error(message.into());
-                            }
-                        });
-                        return;
-                    }
-                    Err(error) => {
-                        let message = format!("Could not start collection run: {error}");
-                        let _ = slint::invoke_from_event_loop(move || {
-                            if let Some(ui) = app_handle.upgrade() {
-                                ui.set_collection_run_state("error".into());
-                                ui.set_collection_run_error(message.into());
-                            }
-                        });
-                        return;
-                    }
-                };
-
-                let total = requests.len();
-                let started = std::time::Instant::now();
-                let _ = slint::invoke_from_event_loop({
-                    let handle = app_handle.clone();
-                    move || {
-                        if let Some(ui) = handle.upgrade() {
-                            ui.set_collection_run_total(total as i32);
-                        }
-                    }
-                });
-
-                let mut passed = 0usize;
-                let mut failed = 0usize;
-                let mut history_entries: Vec<(i64, i64, String, String, String, String, i64)> =
-                    Vec::new();
-
-                for request in requests {
-                    let result = client
-                        .send(
-                            &request.method,
-                            &request.url,
-                            &request.body,
-                            &request.headers,
-                            &request.query_params,
-                            &request.body_format,
-                            &request.auth_type,
-                            &request.auth_value,
-                            &request.auth_secret,
-                            &variables,
-                        )
-                        .await;
-                    let http_success = result.state == "success";
-                    let response_received =
-                        matches!(result.state.as_str(), "success" | "http-error");
-                    let status_code = result
-                        .status
-                        .split_whitespace()
-                        .next()
-                        .and_then(|v| v.parse::<u16>().ok());
-                    let elapsed_ms = (result.elapsed.as_secs_f64() * 1000.0) as u64;
-                    let assertion_results = request
-                        .assertions
-                        .iter()
-                        .map(|assertion| evaluate(assertion, status_code, elapsed_ms, &result.body))
-                        .collect::<Vec<_>>();
-                    let assertions_passed = assertion_results.iter().all(|item| item.passed);
-                    // Keep the legacy collection result for requests without assertions:
-                    // HTTP 4xx/5xx remains a failure. With assertions, a received HTTP
-                    // response is evaluated against the request's expected conditions.
-                    let success = if request.assertions.is_empty() {
-                        http_success
-                    } else {
-                        response_received && assertions_passed
-                    };
-                    let assertion_summary = if assertion_results.is_empty() {
-                        if http_success {
-                            "No assertions configured".to_owned()
-                        } else {
-                            format!("No assertions configured · {}", result.state)
-                        }
-                    } else {
-                        assertion_results
-                            .iter()
-                            .map(|item| {
-                                format!("{} {}", if item.passed { "✓" } else { "✗" }, item.message)
-                            })
-                            .collect::<Vec<_>>()
-                            .join("\n")
-                    };
-                    if success {
-                        passed += 1;
-                    } else {
-                        failed += 1;
-                    }
-                    let formatted_body = if result.body.len() <= MAX_STRUCTURED_VIEW_BYTES
-                        && matches!(result.format.as_str(), "JSON" | "HTML" | "XML")
-                    {
-                        let body_for_formatting = result.body.clone();
-                        let format_for_formatting = result.format.clone();
-                        tokio::task::spawn_blocking(move || {
-                            format_response_body(&body_for_formatting, &format_for_formatting)
-                        })
-                        .await
-                        .unwrap_or_default()
-                    } else {
-                        String::new()
-                    };
-                    let result_item = CollectionRunResult {
-                        method: request.method.clone().into(),
-                        name: request.name.clone().into(),
-                        url: request.url.clone().into(),
-                        status: result.status.clone().into(),
-                        elapsed: format!("{:.2} ms", result.elapsed.as_secs_f64() * 1000.0).into(),
-                        state: if !response_received {
-                            result.state.clone()
-                        } else if success {
-                            "success".to_owned()
-                        } else if !assertion_results.is_empty() {
-                            "assertion-failed".to_owned()
-                        } else {
-                            "http-error".to_owned()
-                        }
-                        .into(),
-                        assertion_summary: assertion_summary.into(),
-                        body: result.body.clone().into(),
-                        pretty_body: formatted_body.into(),
-                        format: result.format.clone().into(),
-                        large: result.body.len() > MAX_STRUCTURED_VIEW_BYTES,
-                        headers: result.headers.clone().into(),
-                    };
-                    let progress_handle = app_handle.clone();
-                    let completed = passed + failed;
-                    let _ = slint::invoke_from_event_loop(move || {
-                        if let Some(ui) = progress_handle.upgrade() {
-                            ui.set_collection_run_completed(completed as i32);
-                            ui.set_collection_run_passed(passed as i32);
-                            ui.set_collection_run_failed(failed as i32);
-                            let results = ui.get_collection_run_results();
-                            if let Some(results) = results
-                                .as_any()
-                                .downcast_ref::<VecModel<CollectionRunResult>>()
-                            {
-                                results.push(result_item);
-                            }
-                            if ui.get_collection_run_selected() < 0 {
-                                ui.set_collection_run_selected(0);
-                            }
-                            let selected = ui.get_collection_run_selected();
-                            if selected >= 0
-                                && let Some(result) =
-                                    ui.get_collection_run_results().row_data(selected as usize)
-                            {
-                                ui.set_collection_run_header_items(to_response_header_model(
-                                    result.headers.as_str(),
-                                ));
-                            }
-                        }
-                    });
-                    history_entries.push((
-                        request.id,
-                        request.collection_id,
-                        request.name.clone(),
-                        request.method.clone(),
-                        request.url.clone(),
-                        result.status.clone(),
-                        (result.elapsed.as_secs_f64() * 1000.0) as i64,
-                    ));
-                }
-                let history_store = Arc::clone(&store);
-                let _ = tokio::task::spawn_blocking(move || {
-                    history_store.record_history_batch(&history_entries)
-                })
-                .await;
-
-                let duration = format!("{:.2} s", started.elapsed().as_secs_f64());
-                let _ = slint::invoke_from_event_loop(move || {
-                    if let Some(ui) = app_handle.upgrade() {
-                        ui.set_collection_run_duration(duration.into());
-                        ui.set_collection_run_state("completed".into());
-                        if ui.get_active_view() == "History" {
-                            ui.invoke_load_history(ui.get_history_sort());
-                        }
-                    }
-                });
-            });
-        }
-    });
+    crate::collection_runner::register(
+        &app,
+        app_weak.clone(),
+        Arc::clone(&client),
+        Arc::clone(&store),
+    );
 
     app.on_save_request({
         let app_weak = app_weak.clone();
@@ -2571,7 +2354,7 @@ async fn main() -> Result<(), slint::PlatformError> {
     app.on_create_collection_variable({
         let app_weak = app_weak.clone();
         let store = Arc::clone(&store);
-        move |collection_id, key, value| {
+        move |collection_id, key, value, is_secret| {
             let app_handle = app_weak.clone();
             let store = Arc::clone(&store);
             let key = key.to_string();
@@ -2579,7 +2362,7 @@ async fn main() -> Result<(), slint::PlatformError> {
             let submitted_key = key.clone();
             let submitted_value = value.clone();
             tokio::task::spawn_blocking(move || {
-                store.create_variable(collection_id as i64, &key, &value)?;
+                store.create_variable(collection_id as i64, &key, &value, is_secret)?;
                 let variables = store.list_variables(collection_id as i64)?;
                 Ok::<_, crate::storage::StoreError>(variables)
             })
@@ -2594,6 +2377,7 @@ async fn main() -> Result<(), slint::PlatformError> {
                                 {
                                     ui.set_variable_key("".into());
                                     ui.set_variable_value("".into());
+                                    ui.set_variable_is_secret(false);
                                 }
                                 ui.set_variables_message("Variable added.".into());
                             }
@@ -2613,7 +2397,7 @@ async fn main() -> Result<(), slint::PlatformError> {
     app.on_update_collection_variable({
         let app_weak = app_weak.clone();
         let store = Arc::clone(&store);
-        move |collection_id, old_key, new_key, value| {
+        move |collection_id, old_key, new_key, value, is_secret| {
             let app_handle = app_weak.clone();
             let store = Arc::clone(&store);
             let old_key = old_key.to_string();
@@ -2621,7 +2405,13 @@ async fn main() -> Result<(), slint::PlatformError> {
             let value = value.to_string();
             let submitted_key = old_key.clone();
             tokio::task::spawn_blocking(move || {
-                store.update_variable(collection_id as i64, &old_key, &new_key, &value)?;
+                store.update_variable(
+                    collection_id as i64,
+                    &old_key,
+                    &new_key,
+                    &value,
+                    is_secret,
+                )?;
                 store.list_variables(collection_id as i64)
             })
             .then(move |result| async move {

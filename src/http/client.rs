@@ -6,6 +6,7 @@ use std::{
 use reqwest::{
     Client, Method, Url,
     header::{CONTENT_TYPE, HeaderMap, HeaderName, HeaderValue},
+    redirect::Policy,
 };
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
@@ -32,6 +33,17 @@ impl HttpClient {
         let client = Client::builder()
             .connect_timeout(CONNECT_TIMEOUT)
             .timeout(REQUEST_TIMEOUT)
+            .redirect(Policy::custom(|attempt| {
+                if attempt
+                    .previous()
+                    .first()
+                    .is_some_and(|initial| initial.origin() == attempt.url().origin())
+                {
+                    attempt.follow()
+                } else {
+                    attempt.stop()
+                }
+            }))
             .user_agent(concat!("Resonance/", env!("CARGO_PKG_VERSION")))
             .build()?;
 
@@ -709,6 +721,63 @@ fn transport_error_details(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn does_not_follow_cross_origin_redirects_with_custom_auth_headers() {
+        use std::{
+            io::{Read, Write},
+            net::TcpListener,
+            thread,
+        };
+
+        let destination = TcpListener::bind("127.0.0.1:0").expect("bind destination");
+        let destination_url = format!("http://{}/", destination.local_addr().unwrap());
+        let redirector = TcpListener::bind("127.0.0.1:0").expect("bind redirector");
+        let redirector_url = format!("http://{}/", redirector.local_addr().unwrap());
+        let redirect_thread = thread::spawn(move || {
+            let (mut stream, _) = redirector.accept().expect("accept request");
+            let mut request = Vec::new();
+            let mut buffer = [0_u8; 1024];
+            while !request.windows(4).any(|window| window == b"\r\n\r\n") {
+                let count = stream.read(&mut buffer).expect("read request");
+                if count == 0 {
+                    break;
+                }
+                request.extend_from_slice(&buffer[..count]);
+            }
+            let response = format!(
+                "HTTP/1.1 302 Found\r\nLocation: {destination_url}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+            );
+            stream
+                .write_all(response.as_bytes())
+                .expect("write redirect");
+        });
+
+        let client = HttpClient::new().expect("build HTTP client");
+        let result = client
+            .send(
+                "GET",
+                &redirector_url,
+                "",
+                "X-API-Key: test-secret",
+                "",
+                "JSON",
+                "None",
+                "",
+                "",
+                &HashMap::new(),
+            )
+            .await;
+        redirect_thread.join().expect("redirect server");
+
+        assert!(result.status.starts_with("302"), "got {}", result.status);
+        assert_eq!(result.state, "success");
+        assert!(destination.set_nonblocking(true).is_ok());
+        assert!(
+            destination.accept().is_err(),
+            "cross-origin request was sent"
+        );
+    }
 
     #[test]
     fn classifies_http_statuses_separately_from_transport_failures() {

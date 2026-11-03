@@ -9,6 +9,7 @@ use std::{
 };
 
 use directories::ProjectDirs;
+use reqwest::Url;
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -27,6 +28,7 @@ pub struct Collection {
 pub struct CollectionVariable {
     pub key: String,
     pub value: String,
+    pub is_secret: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -161,6 +163,8 @@ impl RequestStore {
                 collection_id INTEGER NOT NULL REFERENCES collections(id) ON DELETE CASCADE,
                 key           TEXT NOT NULL,
                 value         TEXT NOT NULL,
+                is_secret     INTEGER NOT NULL DEFAULT 0,
+                credential_ref TEXT NOT NULL DEFAULT '',
                 PRIMARY KEY (collection_id, key)
             );
 
@@ -180,6 +184,26 @@ impl RequestStore {
                 ON saved_requests(name COLLATE NOCASE);
             "#,
         )?;
+
+        for (column, declaration) in [
+            ("is_secret", "INTEGER NOT NULL DEFAULT 0"),
+            ("credential_ref", "TEXT NOT NULL DEFAULT ''"),
+        ] {
+            let has_column = {
+                let mut statement =
+                    connection.prepare("PRAGMA table_info(collection_variables)")?;
+                let columns = statement.query_map([], |row| row.get::<_, String>(1))?;
+                columns
+                    .collect::<Result<Vec<_>, _>>()?
+                    .iter()
+                    .any(|item| item == column)
+            };
+            if !has_column {
+                connection.execute_batch(&format!(
+                    "ALTER TABLE collection_variables ADD COLUMN {column} {declaration}"
+                ))?;
+            }
+        }
 
         // Keep existing databases usable: earlier versions stored requests
         // without a collection. Add the column and place those requests in the
@@ -226,6 +250,9 @@ impl RequestStore {
         connection.execute_batch(
             "CREATE INDEX IF NOT EXISTS idx_saved_requests_collection ON saved_requests(collection_id);",
         )?;
+        if redact_stored_history_urls(&connection)? {
+            connection.execute_batch("PRAGMA wal_checkpoint(TRUNCATE); VACUUM;")?;
+        }
         // Public API is the only built-in collection. Older versions also
         // created a default "My Backend" collection; merge its contents into
         // Public API so upgrading does not discard saved requests or variables.
@@ -465,12 +492,19 @@ impl RequestStore {
             ));
         }
 
-        let credential_refs = {
+        let mut credential_refs = {
             let mut statement = connection
                 .prepare("SELECT credential_ref FROM saved_requests WHERE collection_id = ?1")?;
             let rows = statement.query_map([collection_id], |row| row.get::<_, String>(0))?;
             rows.collect::<Result<Vec<_>, _>>()?
         };
+        {
+            let mut statement = connection.prepare(
+                "SELECT credential_ref FROM collection_variables WHERE collection_id = ?1 AND is_secret = 1",
+            )?;
+            let rows = statement.query_map([collection_id], |row| row.get::<_, String>(0))?;
+            credential_refs.extend(rows.collect::<Result<Vec<_>, _>>()?);
+        }
 
         let deleted =
             connection.execute("DELETE FROM collections WHERE id = ?1", [collection_id])?;
@@ -490,22 +524,23 @@ impl RequestStore {
     ) -> Result<Vec<CollectionVariable>, StoreError> {
         let connection = self.connect()?;
         let mut statement = connection.prepare(
-            "SELECT key, value FROM collection_variables WHERE collection_id = ?1 ORDER BY key COLLATE NOCASE ASC",
+            "SELECT key, value, is_secret, credential_ref FROM collection_variables WHERE collection_id = ?1 ORDER BY key COLLATE NOCASE ASC",
         )?;
         let rows = statement.query_map([collection_id], |row| {
-            Ok(CollectionVariable {
-                key: row.get(0)?,
-                value: row.get(1)?,
-            })
+            Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
         })?;
-        rows.collect::<Result<Vec<_>, _>>()
-            .map_err(StoreError::from)
+        let rows = rows.collect::<Result<Vec<(String, String, bool, String)>, _>>()?;
+        rows.into_iter()
+            .map(|(key, value, secret, reference)| {
+                self.hydrate_variable(key, value, secret, reference)
+            })
+            .collect()
     }
 
     pub fn list_all_variables(&self) -> Result<Vec<(i64, String, CollectionVariable)>, StoreError> {
         let connection = self.connect()?;
         let mut statement = connection.prepare(
-            "SELECT c.id, c.name, v.key, v.value
+            "SELECT c.id, c.name, v.key, v.value, v.is_secret, v.credential_ref
              FROM collection_variables AS v
              JOIN collections AS c ON c.id = v.collection_id
              ORDER BY c.name COLLATE NOCASE ASC, v.key COLLATE NOCASE ASC",
@@ -514,14 +549,45 @@ impl RequestStore {
             Ok((
                 row.get(0)?,
                 row.get(1)?,
-                CollectionVariable {
-                    key: row.get(2)?,
-                    value: row.get(3)?,
-                },
+                row.get(2)?,
+                row.get(3)?,
+                row.get(4)?,
+                row.get(5)?,
             ))
         })?;
-        rows.collect::<Result<Vec<_>, _>>()
-            .map_err(StoreError::from)
+        let rows = rows.collect::<Result<Vec<(i64, String, String, String, bool, String)>, _>>()?;
+        rows.into_iter()
+            .map(
+                |(collection_id, collection_name, key, value, secret, reference)| {
+                    Ok((
+                        collection_id,
+                        collection_name,
+                        self.hydrate_variable(key, value, secret, reference)?,
+                    ))
+                },
+            )
+            .collect()
+    }
+
+    fn hydrate_variable(
+        &self,
+        key: String,
+        mut value: String,
+        is_secret: bool,
+        reference: String,
+    ) -> Result<CollectionVariable, StoreError> {
+        if is_secret {
+            let credentials = self
+                .credential_vault
+                .load(&reference)?
+                .ok_or(CredentialVaultError::Missing)?;
+            value = credentials.auth_value;
+        }
+        Ok(CollectionVariable {
+            key,
+            value,
+            is_secret,
+        })
     }
 
     pub fn variables_map(&self, collection_id: i64) -> Result<HashMap<String, String>, StoreError> {
@@ -549,9 +615,9 @@ impl RequestStore {
         let connection = self.connect()?;
         connection.execute(
             r#"
-            INSERT INTO collection_variables (collection_id, key, value)
-            VALUES (?1, ?2, ?3)
-            ON CONFLICT(collection_id, key) DO UPDATE SET value = excluded.value
+            INSERT INTO collection_variables (collection_id, key, value, is_secret, credential_ref)
+            VALUES (?1, ?2, ?3, 0, '')
+            ON CONFLICT(collection_id, key) DO UPDATE SET value = excluded.value, is_secret = 0, credential_ref = ''
             "#,
             params![collection_id, key, value],
         )?;
@@ -563,6 +629,7 @@ impl RequestStore {
         collection_id: i64,
         key: &str,
         value: &str,
+        is_secret: bool,
     ) -> Result<(), StoreError> {
         let key = key.trim();
         if !valid_variable_key(key) {
@@ -583,10 +650,14 @@ impl RequestStore {
             )));
         }
 
-        connection.execute(
-            "INSERT INTO collection_variables (collection_id, key, value) VALUES (?1, ?2, ?3)",
-            params![collection_id, key, value],
-        )?;
+        let (stored_value, credential_ref) = self.prepare_variable_value(value, is_secret)?;
+        if let Err(error) = connection.execute(
+            "INSERT INTO collection_variables (collection_id, key, value, is_secret, credential_ref) VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![collection_id, key, stored_value, is_secret, credential_ref],
+        ) {
+            self.remove_request_credentials(&credential_ref);
+            return Err(error.into());
+        }
         Ok(())
     }
 
@@ -596,6 +667,7 @@ impl RequestStore {
         old_key: &str,
         new_key: &str,
         value: &str,
+        is_secret: bool,
     ) -> Result<(), StoreError> {
         let old_key = old_key.trim();
         let new_key = new_key.trim();
@@ -631,21 +703,68 @@ impl RequestStore {
             }
         }
 
-        transaction.execute(
-            "UPDATE collection_variables SET key = ?1, value = ?2 WHERE collection_id = ?3 AND key = ?4",
-            params![new_key, value, collection_id, old_key],
+        let old_reference: String = transaction.query_row(
+            "SELECT credential_ref FROM collection_variables WHERE collection_id = ?1 AND key = ?2",
+            params![collection_id, old_key],
+            |row| row.get(0),
         )?;
-        transaction.commit()?;
+        let (stored_value, new_reference) = self.prepare_variable_value(value, is_secret)?;
+        if let Err(error) = transaction.execute(
+            "UPDATE collection_variables SET key = ?1, value = ?2, is_secret = ?3, credential_ref = ?4 WHERE collection_id = ?5 AND key = ?6",
+            params![new_key, stored_value, is_secret, new_reference, collection_id, old_key],
+        ) {
+            self.remove_request_credentials(&new_reference);
+            return Err(error.into());
+        }
+        if let Err(error) = transaction.commit() {
+            self.remove_request_credentials(&new_reference);
+            return Err(error.into());
+        }
+        if old_reference != new_reference {
+            self.remove_request_credentials(&old_reference);
+        }
         Ok(())
     }
 
     pub fn delete_variable(&self, collection_id: i64, key: &str) -> Result<bool, StoreError> {
         let connection = self.connect()?;
+        let credential_ref = connection
+            .query_row(
+                "SELECT credential_ref FROM collection_variables WHERE collection_id = ?1 AND key = ?2 AND is_secret = 1",
+                params![collection_id, key],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()?;
         let changed = connection.execute(
             "DELETE FROM collection_variables WHERE collection_id = ?1 AND key = ?2",
             params![collection_id, key],
         )?;
+        drop(connection);
+        if changed > 0
+            && let Some(reference) = credential_ref
+        {
+            self.remove_request_credentials(&reference);
+        }
         Ok(changed == 1)
+    }
+
+    fn prepare_variable_value(
+        &self,
+        value: &str,
+        is_secret: bool,
+    ) -> Result<(String, String), StoreError> {
+        if !is_secret {
+            return Ok((value.to_owned(), String::new()));
+        }
+        let reference = Uuid::new_v4().to_string();
+        self.credential_vault.store(
+            &reference,
+            &RequestCredentials {
+                auth_value: value.to_owned(),
+                auth_secret: String::new(),
+            },
+        )?;
+        Ok((String::new(), reference))
     }
 
     pub fn create(&self, request: &NewRequest) -> Result<SavedRequest, StoreError> {
@@ -812,7 +931,7 @@ impl RequestStore {
         )?;
         connection.execute(
             "INSERT INTO request_history (request_id, collection_name, request_name, method, url, status, elapsed_ms) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-            params![request_id, collection_name, request_name, method, url, status, elapsed_ms],
+            params![request_id, collection_name, request_name, method, redact_url(url), status, elapsed_ms],
         )?;
         connection.execute(
             "DELETE FROM request_history WHERE id NOT IN (SELECT id FROM request_history ORDER BY id DESC LIMIT 500)",
@@ -851,7 +970,7 @@ impl RequestStore {
                     collection_name,
                     name,
                     method,
-                    url,
+                    redact_url(url),
                     status,
                     elapsed_ms
                 ])?;
@@ -896,6 +1015,86 @@ fn valid_variable_key(key: &str) -> bool {
     let mut chars = key.chars();
     matches!(chars.next(), Some(c) if c == '_' || c.is_ascii_alphabetic())
         && chars.all(|c| c == '_' || c.is_ascii_alphanumeric())
+}
+
+fn is_sensitive_query_name(name: &str) -> bool {
+    let normalized = name
+        .chars()
+        .filter(|character| character.is_ascii_alphanumeric())
+        .flat_map(char::to_lowercase)
+        .collect::<String>();
+    [
+        "token",
+        "accesstoken",
+        "refreshtoken",
+        "idtoken",
+        "secret",
+        "password",
+        "passwd",
+        "authorization",
+        "auth",
+        "signature",
+        "sig",
+    ]
+    .iter()
+    .any(|sensitive| normalized == *sensitive || normalized.ends_with(sensitive))
+        || normalized == "key"
+        || normalized.ends_with("apikey")
+        || normalized.ends_with("accesskey")
+        || normalized.ends_with("privatekey")
+}
+
+fn redact_url(value: &str) -> String {
+    let Ok(mut url) = Url::parse(value) else {
+        return "[URL REDACTED: invalid URL]".to_owned();
+    };
+    if !url.username().is_empty() {
+        let _ = url.set_username("[REDACTED]");
+    }
+    if url.password().is_some() {
+        let _ = url.set_password(Some("[REDACTED]"));
+    }
+    let pairs = url
+        .query_pairs()
+        .map(|(name, query_value)| {
+            let query_value = if is_sensitive_query_name(&name) {
+                "[REDACTED]".into()
+            } else {
+                query_value.into_owned()
+            };
+            (name.into_owned(), query_value)
+        })
+        .collect::<Vec<_>>();
+    url.set_query(None);
+    if !pairs.is_empty() {
+        url.query_pairs_mut().extend_pairs(pairs);
+    }
+    // Fragments are not sent to servers and can contain client-side tokens.
+    url.set_fragment(None);
+    url.to_string()
+}
+
+fn redact_stored_history_urls(connection: &Connection) -> Result<bool, rusqlite::Error> {
+    let rows = {
+        let mut statement = connection.prepare("SELECT id, url FROM request_history")?;
+        statement
+            .query_map([], |row| {
+                Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
+            })?
+            .collect::<Result<Vec<_>, _>>()?
+    };
+    let mut changed = false;
+    for (id, original) in rows {
+        let redacted = redact_url(&original);
+        if redacted != original {
+            connection.execute(
+                "UPDATE request_history SET url = ?1 WHERE id = ?2",
+                params![redacted, id],
+            )?;
+            changed = true;
+        }
+    }
+    Ok(changed)
 }
 
 fn validate_request(request: &NewRequest) -> Result<(), StoreError> {
@@ -1053,6 +1252,41 @@ mod tests {
     }
 
     #[test]
+    fn history_redacts_credentials_tokens_and_fragments() {
+        let temp = tempfile::tempdir().expect("temporary directory");
+        let path = temp.path().join("history.sqlite3");
+        let store = test_store(&path);
+        let collection_id = store.list_collections().expect("collections")[0].id;
+        store
+            .record_history(
+                1,
+                collection_id,
+                "request",
+                "GET",
+                "https://user:pass@example.com/items?api_key=top-secret&name=public#client-token",
+                "200 OK",
+                10,
+            )
+            .expect("record history");
+        let existing_history = Connection::open(&path).expect("open database");
+        existing_history
+            .execute(
+                "UPDATE request_history SET url = ?1",
+                ["https://example.com/?access_token=old-secret&keep=yes#old-fragment"],
+            )
+            .expect("seed legacy history");
+        drop(existing_history);
+
+        let migrated = test_store(&path)
+            .list_history()
+            .expect("load redacted history");
+        let url = &migrated[0].url;
+        assert!(!url.contains("old-secret"));
+        assert!(!url.contains("old-fragment"));
+        assert!(url.contains("keep=yes"));
+    }
+
+    #[test]
     fn credentials_are_kept_out_of_sqlite_and_round_trip_via_vault() {
         let temp = tempfile::tempdir().expect("temporary directory");
         let path = temp.path().join("credentials.sqlite3");
@@ -1193,6 +1427,50 @@ mod tests {
     }
 
     #[test]
+    fn secret_variables_round_trip_without_plaintext_in_sqlite() {
+        let temp = tempfile::tempdir().expect("temporary directory");
+        let path = temp.path().join("secret-variables.sqlite3");
+        let vault = std::sync::Arc::new(MemoryVault::default());
+        let store = RequestStore::open_with_vault(&path, vault.clone()).expect("open store");
+        let collection_id = store.list_collections().expect("collections")[0].id;
+
+        store
+            .create_variable(collection_id, "api_token", "top-secret", true)
+            .expect("create secret variable");
+        assert_eq!(
+            store.variables_map(collection_id).expect("variables")["api_token"],
+            "top-secret"
+        );
+        assert!(store.list_variables(collection_id).expect("list variables")[0].is_secret);
+
+        let connection = Connection::open(&path).expect("inspect database");
+        let (stored_value, reference): (String, String) = connection
+            .query_row(
+                "SELECT value, credential_ref FROM collection_variables WHERE collection_id = ?1 AND key = 'api_token'",
+                [collection_id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .expect("read stored fields");
+        assert!(stored_value.is_empty());
+        assert!(!reference.is_empty());
+        assert!(vault.0.lock().unwrap().contains_key(&reference));
+
+        store
+            .update_variable(collection_id, "api_token", "api_token", "new-secret", true)
+            .expect("update secret variable");
+        assert_eq!(
+            store.variables_map(collection_id).expect("variables")["api_token"],
+            "new-secret"
+        );
+        assert!(
+            store
+                .delete_variable(collection_id, "api_token")
+                .expect("delete variable")
+        );
+        assert!(vault.0.lock().unwrap().is_empty());
+    }
+
+    #[test]
     fn collection_rename_and_delete_preserve_collection_invariants() {
         let temp = tempfile::tempdir().expect("temporary directory");
         let store = RequestStore::open(temp.path().join("test.sqlite3")).expect("open store");
@@ -1270,7 +1548,14 @@ mod tests {
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
+            CREATE TABLE collection_variables (
+                collection_id INTEGER NOT NULL,
+                key TEXT NOT NULL,
+                value TEXT NOT NULL,
+                PRIMARY KEY (collection_id, key)
+            );
             INSERT INTO saved_requests (name, method, url) VALUES ('Legacy', 'GET', 'https://example.com');
+            INSERT INTO collection_variables (collection_id, key, value) VALUES (1, 'base_url', 'https://legacy.example.com');
             "#,
         ).expect("create old schema");
         drop(connection);
@@ -1283,6 +1568,11 @@ mod tests {
         assert_eq!(migrated.len(), 1);
         assert_eq!(migrated[0].name, "Legacy");
         assert_eq!(migrated[0].collection_id, collection_id);
+        let variables = store
+            .list_variables(collection_id)
+            .expect("migrated variables");
+        assert_eq!(variables[0].value, "https://legacy.example.com");
+        assert!(!variables[0].is_secret);
     }
 
     #[test]

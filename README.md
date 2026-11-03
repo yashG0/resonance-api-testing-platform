@@ -39,7 +39,7 @@ Resonance helps you create, send, inspect, and repeat API requests from a focuse
 - **Build HTTP requests** with GET, POST, PUT, PATCH, DELETE, HEAD, and OPTIONS methods.
 - **Configure each request** with query parameters, headers, JSON or text bodies, and authentication.
 - **Organize work** in collections and keep multiple request tabs open with their response state preserved.
-- **Reuse values** with collection variables and environment configuration.
+- **Reuse values** with collection variables and environment configuration; mark sensitive variables to store their values in the operating-system credential store.
 - **Inspect responses** with formatted, raw, and JSON tree views, plus status, timing, headers, and cookies.
 - **Run collection regression checks** and review per-request outcomes and response details in a dedicated view.
 - **Review request history** with filtering, sorting, and pagination.
@@ -105,6 +105,10 @@ Resonance is a native desktop application. The Slint interface collects requests
 | Async runtime and HTTP | Tokio and Reqwest |
 | Local persistence | SQLite via rusqlite |
 | Saved credentials | Operating-system credential store |
+
+### Local data and secrets
+
+Authentication credentials and variables marked **Secret** are stored in the operating-system credential store. Other request data—including URLs, headers, query parameters, bodies, and regular collection variables—is stored in the local SQLite database. Request history removes common credential query parameters, URL user information, and URL fragments before saving. Treat the local database as sensitive and use secret variables for tokens and passwords.
 
 ## Project status
 

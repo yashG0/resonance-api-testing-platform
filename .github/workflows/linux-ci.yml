@@ -1,0 +1,44 @@
+name: Linux CI
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "src/**"
+      - "ui/**"
+      - "assets/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "build.rs"
+      - ".github/workflows/linux-ci.yml"
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  linux:
+    name: Linux x86-64
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Install Slint build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes build-essential pkg-config \
+            libx11-xcb-dev xinput libxcursor-dev libxkbcommon-x11-dev \
+            libx11-dev libxcb1-dev libxkbcommon-dev libwayland-dev \
+            libegl1-mesa-dev libfontconfig1-dev libfreetype6-dev
+      - name: Check formatting
+        run: cargo fmt --check
+      - name: Run tests
+        run: cargo test --locked
+      - name: Build release executable
+        run: cargo build --release --locked --target x86_64-unknown-linux-gnu
