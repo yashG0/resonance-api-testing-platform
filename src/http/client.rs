@@ -41,6 +41,15 @@ pub struct RequestSpec<'a> {
     pub follow_redirects: bool,
 }
 
+struct InterpolatedRequest {
+    url: String,
+    body: String,
+    headers: String,
+    query_params: String,
+    auth_value: String,
+    auth_secret: String,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum AuthType {
     None,
@@ -129,40 +138,22 @@ impl HttpClient {
         variables: &HashMap<String, String>,
     ) -> HttpResult {
         let method = spec.method;
-        let url = spec.url;
-        let body = spec.body;
-        let headers_text = spec.headers;
-        let params_text = spec.query_params;
         let body_format = spec.body_format;
         let auth_type = spec.auth_type;
-        let auth_value = spec.auth_value;
-        let auth_secret = spec.auth_secret;
         let start = Instant::now();
 
-        let url = match interpolate_variables(url, variables) {
-            Ok(value) => value,
+        let interpolated = match interpolate_request_fields(spec, variables) {
+            Ok(fields) => fields,
             Err(error) => return failure(&error, start),
         };
-        let body = match interpolate_variables(body, variables) {
-            Ok(value) => value,
-            Err(error) => return failure(&error, start),
-        };
-        let headers_text = match interpolate_variables(headers_text, variables) {
-            Ok(value) => value,
-            Err(error) => return failure(&error, start),
-        };
-        let params_text = match interpolate_variables(params_text, variables) {
-            Ok(value) => value,
-            Err(error) => return failure(&error, start),
-        };
-        let auth_value = match interpolate_variables(auth_value, variables) {
-            Ok(value) => value,
-            Err(error) => return failure(&error, start),
-        };
-        let auth_secret = match interpolate_variables(auth_secret, variables) {
-            Ok(value) => value,
-            Err(error) => return failure(&error, start),
-        };
+        let InterpolatedRequest {
+            url,
+            body,
+            headers: headers_text,
+            query_params,
+            auth_value,
+            auth_secret,
+        } = interpolated;
 
         if !(crate::storage::MIN_REQUEST_TIMEOUT_MS as u64
             ..=crate::storage::MAX_REQUEST_TIMEOUT_MS as u64)
@@ -202,7 +193,7 @@ impl HttpClient {
             Err(error) => return failure(&format!("Invalid URL: {error}"), start),
         };
 
-        for (index, line) in params_text.lines().enumerate() {
+        for (index, line) in query_params.lines().enumerate() {
             let line = line.trim();
 
             if line.is_empty() {
@@ -744,6 +735,20 @@ fn append_html_line(output: &mut String, line: &str, depth: usize) {
         output.push_str("  ");
     }
     output.push_str(line.trim());
+}
+
+fn interpolate_request_fields(
+    spec: &RequestSpec<'_>,
+    variables: &HashMap<String, String>,
+) -> Result<InterpolatedRequest, String> {
+    Ok(InterpolatedRequest {
+        url: interpolate_variables(spec.url, variables)?,
+        body: interpolate_variables(spec.body, variables)?,
+        headers: interpolate_variables(spec.headers, variables)?,
+        query_params: interpolate_variables(spec.query_params, variables)?,
+        auth_value: interpolate_variables(spec.auth_value, variables)?,
+        auth_secret: interpolate_variables(spec.auth_secret, variables)?,
+    })
 }
 
 fn interpolate_variables(
