@@ -41,6 +41,52 @@ pub struct RequestSpec<'a> {
     pub follow_redirects: bool,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum AuthType {
+    None,
+    Basic,
+    Bearer,
+    ApiKey,
+}
+
+impl TryFrom<&str> for AuthType {
+    type Error = ();
+
+    fn try_from(value: &str) -> Result<Self, Self::Error> {
+        match value {
+            "None" => Ok(Self::None),
+            "Basic" => Ok(Self::Basic),
+            "Bearer" => Ok(Self::Bearer),
+            "API Key" => Ok(Self::ApiKey),
+            _ => Err(()),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum BodyFormat {
+    LegacyNone,
+    Json,
+    Text,
+    Html,
+    Xml,
+}
+
+impl TryFrom<&str> for BodyFormat {
+    type Error = ();
+
+    fn try_from(value: &str) -> Result<Self, Self::Error> {
+        match value {
+            "None" => Ok(Self::LegacyNone),
+            "JSON" => Ok(Self::Json),
+            "Text" => Ok(Self::Text),
+            "HTML" => Ok(Self::Html),
+            "XML" => Ok(Self::Xml),
+            _ => Err(()),
+        }
+    }
+}
+
 pub struct HttpClient {
     redirect_client: Client,
     no_redirect_client: Client,
@@ -128,13 +174,15 @@ impl HttpClient {
             );
         }
 
-        if !matches!(auth_type, "None" | "Basic" | "Bearer" | "API Key") {
-            return failure("Unsupported authentication type.", start);
-        }
+        let auth_type = match AuthType::try_from(auth_type) {
+            Ok(auth_type) => auth_type,
+            Err(()) => return failure("Unsupported authentication type.", start),
+        };
         // "None" appears in older databases created before body formats were selectable.
-        if !matches!(body_format, "None" | "JSON" | "Text" | "HTML" | "XML") {
-            return failure("Unsupported request body format.", start);
-        }
+        let body_format = match BodyFormat::try_from(body_format) {
+            Ok(body_format) => body_format,
+            Err(()) => return failure("Unsupported request body format.", start),
+        };
 
         let method = match method {
             "GET" => Method::GET,
@@ -224,7 +272,7 @@ impl HttpClient {
 
             headers.append(name, value);
         }
-        if auth_type == "API Key" {
+        if auth_type == AuthType::ApiKey {
             let key_name = match HeaderName::from_bytes(auth_value.trim().as_bytes()) {
                 Ok(name) => name,
                 Err(_) => {
@@ -244,7 +292,7 @@ impl HttpClient {
         let has_body = !body.is_empty();
 
         if has_body {
-            if body_format == "JSON"
+            if body_format == BodyFormat::Json
                 && let Err(error) = serde_json::from_str::<serde_json::Value>(&body)
             {
                 return failure(&format!("Invalid JSON request body: {error}"), start);
@@ -252,10 +300,10 @@ impl HttpClient {
 
             if !headers.contains_key(CONTENT_TYPE) {
                 let content_type = match body_format {
-                    "Text" => "text/plain; charset=utf-8",
-                    "HTML" => "text/html; charset=utf-8",
-                    "XML" => "application/xml; charset=utf-8",
-                    _ => "application/json",
+                    BodyFormat::Text => "text/plain; charset=utf-8",
+                    BodyFormat::Html => "text/html; charset=utf-8",
+                    BodyFormat::Xml => "application/xml; charset=utf-8",
+                    BodyFormat::Json | BodyFormat::LegacyNone => "application/json",
                 };
                 headers.insert(CONTENT_TYPE, HeaderValue::from_static(content_type));
             }
@@ -271,11 +319,11 @@ impl HttpClient {
             .headers(headers)
             .timeout(Duration::from_millis(spec.timeout_ms));
         match auth_type {
-            "Bearer" if !auth_value.is_empty() => request = request.bearer_auth(auth_value),
-            "Basic" if !auth_value.is_empty() => {
+            AuthType::Bearer if !auth_value.is_empty() => request = request.bearer_auth(auth_value),
+            AuthType::Basic if !auth_value.is_empty() => {
                 request = request.basic_auth(auth_value, Some(auth_secret));
             }
-            _ => {}
+            AuthType::None | AuthType::ApiKey | AuthType::Bearer | AuthType::Basic => {}
         }
 
         if has_body {
@@ -798,6 +846,22 @@ fn transport_error_details(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parses_authentication_and_body_formats_into_core_enums() {
+        assert_eq!(AuthType::try_from("None"), Ok(AuthType::None));
+        assert_eq!(AuthType::try_from("Basic"), Ok(AuthType::Basic));
+        assert_eq!(AuthType::try_from("Bearer"), Ok(AuthType::Bearer));
+        assert_eq!(AuthType::try_from("API Key"), Ok(AuthType::ApiKey));
+        assert!(AuthType::try_from("bearer").is_err());
+
+        assert_eq!(BodyFormat::try_from("JSON"), Ok(BodyFormat::Json));
+        assert_eq!(BodyFormat::try_from("Text"), Ok(BodyFormat::Text));
+        assert_eq!(BodyFormat::try_from("HTML"), Ok(BodyFormat::Html));
+        assert_eq!(BodyFormat::try_from("XML"), Ok(BodyFormat::Xml));
+        assert_eq!(BodyFormat::try_from("None"), Ok(BodyFormat::LegacyNone));
+        assert!(BodyFormat::try_from("Binary").is_err());
+    }
 
     #[tokio::test]
     async fn does_not_follow_cross_origin_redirects_with_custom_auth_headers() {
