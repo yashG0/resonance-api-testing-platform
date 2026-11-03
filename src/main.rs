@@ -327,35 +327,24 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let client = Arc::clone(&client);
         let store = Arc::clone(&store);
 
-        move |method,
-              url,
-              body,
-              headers,
-              params,
-              body_format,
-              auth_type,
-              auth_value,
-              auth_secret,
-              collection_id,
-              request_id,
-              name,
-              tab_key,
-              assertions_json,
-              timeout_ms,
-              follow_redirects| {
+        move |draft| {
             let app_handle = app_weak.clone();
             let client = Arc::clone(&client);
             let store = Arc::clone(&store);
-            let method = method.to_string();
-            let url = url.to_string();
-            let body = body.to_string();
-            let headers = headers.to_string();
-            let params = params.to_string();
-            let body_format = body_format.to_string();
-            let auth_type = auth_type.to_string();
-            let auth_value = auth_value.to_string();
-            let auth_secret = auth_secret.to_string();
-            let timeout_ms = match parse_request_timeout_ms(timeout_ms.as_str()) {
+            let method = draft.method.to_string();
+            let url = draft.url.to_string();
+            let body = draft.body.to_string();
+            let headers = draft.headers.to_string();
+            let params = draft.params.to_string();
+            let body_format = draft.body_format.to_string();
+            let auth_type = draft.auth_type.to_string();
+            let auth_value = draft.auth_value.to_string();
+            let auth_secret = draft.auth_secret.to_string();
+            let request_id = draft.request_id;
+            let collection_id = draft.collection_id as i64;
+            let tab_key = draft.tab_key;
+            let follow_redirects = draft.follow_redirects;
+            let timeout_ms = match parse_request_timeout_ms(draft.timeout_ms.as_str()) {
                 Ok(timeout_ms) => timeout_ms,
                 Err(message) => {
                     if let Some(ui) = app_weak.upgrade() {
@@ -365,23 +354,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     return;
                 }
             };
-            let assertions = match serde_json::from_str::<Vec<Assertion>>(assertions_json.as_str())
-            {
-                Ok(assertions) => assertions,
-                Err(error) => {
-                    let message = format!("Invalid assertions JSON: {error}");
-                    let validation_ui = app_weak.clone();
-                    let _ = slint::invoke_from_event_loop(move || {
-                        if let Some(ui) = validation_ui.upgrade() {
-                            ui.set_response_status(message.into());
-                            ui.set_response_state("error".into());
-                        }
-                    });
-                    return;
-                }
-            };
-            let name = name.to_string();
-            let collection_id = collection_id as i64;
+            let assertions =
+                match serde_json::from_str::<Vec<Assertion>>(draft.assertions_json.as_str()) {
+                    Ok(assertions) => assertions,
+                    Err(error) => {
+                        let message = format!("Invalid assertions JSON: {error}");
+                        let validation_ui = app_weak.clone();
+                        let _ = slint::invoke_from_event_loop(move || {
+                            if let Some(ui) = validation_ui.upgrade() {
+                                ui.set_response_status(message.into());
+                                ui.set_response_state("error".into());
+                            }
+                        });
+                        return;
+                    }
+                };
+            let name = draft.name.to_string();
             tokio::spawn(async move {
                 // Save first so each request is available in its collection as soon
                 // as the response arrives. Existing requests are updated in place.
@@ -612,48 +600,38 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let app_weak = app_weak.clone();
         let store = Arc::clone(&store);
 
-        move |id,
-              collection_id,
-              name,
-              method,
-              url,
-              headers,
-              params,
-              body,
-              body_format,
-              auth_type,
-              auth_value,
-              auth_secret,
-              tab_key,
-              assertions_json,
-              timeout_ms,
-              follow_redirects| {
+        move |draft| {
             let app_handle = app_weak.clone();
             let store = Arc::clone(&store);
-            let assertions = match serde_json::from_str::<Vec<Assertion>>(assertions_json.as_str())
-            {
-                Ok(assertions) => assertions,
-                Err(error) => {
-                    if let Some(ui) = app_weak.upgrade() {
-                        ui.set_response_status(format!("Invalid assertions JSON: {error}").into());
+            let id = draft.request_id;
+            let collection_id = draft.collection_id;
+            let tab_key = draft.tab_key;
+            let assertions =
+                match serde_json::from_str::<Vec<Assertion>>(draft.assertions_json.as_str()) {
+                    Ok(assertions) => assertions,
+                    Err(error) => {
+                        if let Some(ui) = app_weak.upgrade() {
+                            ui.set_response_status(
+                                format!("Invalid assertions JSON: {error}").into(),
+                            );
+                        }
+                        return;
                     }
-                    return;
-                }
-            };
+                };
             let mut request = NewRequest {
                 collection_id: collection_id as i64,
-                name: name.to_string(),
-                method: method.to_string(),
-                url: url.to_string(),
-                headers: headers.to_string(),
-                query_params: params.to_string(),
-                body: body.to_string(),
-                body_format: body_format.to_string(),
-                auth_type: auth_type.to_string(),
-                auth_value: auth_value.to_string(),
-                auth_secret: auth_secret.to_string(),
+                name: draft.name.to_string(),
+                method: draft.method.to_string(),
+                url: draft.url.to_string(),
+                headers: draft.headers.to_string(),
+                query_params: draft.params.to_string(),
+                body: draft.body.to_string(),
+                body_format: draft.body_format.to_string(),
+                auth_type: draft.auth_type.to_string(),
+                auth_value: draft.auth_value.to_string(),
+                auth_secret: draft.auth_secret.to_string(),
                 assertions,
-                timeout_ms: match parse_request_timeout_ms(timeout_ms.as_str()) {
+                timeout_ms: match parse_request_timeout_ms(draft.timeout_ms.as_str()) {
                     Ok(timeout_ms) => timeout_ms,
                     Err(message) => {
                         if let Some(ui) = app_weak.upgrade() {
@@ -663,7 +641,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         return;
                     }
                 },
-                follow_redirects,
+                follow_redirects: draft.follow_redirects,
             };
             tokio::task::spawn_blocking(move || {
                 if id <= 0

@@ -62,6 +62,24 @@ export struct RequestTabItem {
     response-header-items: [ResponseHeaderItem],
     response-cookie-items: [ResponseCookieItem],
 }
+export struct RequestDraft {
+    request-id: int,
+    collection-id: int,
+    tab-key: int,
+    name: string,
+    method: string,
+    url: string,
+    headers: string,
+    params: string,
+    body: string,
+    body-format: string,
+    auth-type: string,
+    auth-value: string,
+    auth-secret: string,
+    assertions-json: string,
+    timeout-ms: string,
+    follow-redirects: bool,
+}
 export struct CollectionItem {
     id: int,
     name: string,
@@ -400,8 +418,8 @@ export component AppWindow inherits Window {
     background: transparent;
     forward-focus: shortcut-scope;
 
-    callback send-request(string, string, string, string, string, string, string, string, string, int, int, string, int, string, string, bool);
-    callback save-request(int, int, string, string, string, string, string, string, string, string, string, string, int, string, string, bool);
+    callback send-request(RequestDraft);
+    callback save-request(RequestDraft);
     callback suggest-request-name(int) -> string;
     callback open-latest-request(int);
     callback serialize-param-rows([KeyValueRow]) -> string;
@@ -913,6 +931,27 @@ in-out property <bool> response-large: false;
         root.activate-request-tab(next);
     }
 
+    function current-request-draft() -> RequestDraft {
+        return {
+            request-id: root.active-request-id,
+            collection-id: root.selected-collection-id,
+            tab-key: root.active-request-tab-key,
+            name: root.active-request,
+            method: root.active-method,
+            url: root.request-url,
+            headers: root.request-headers,
+            params: root.request-params,
+            body: root.request-body,
+            body-format: root.body-format,
+            auth-type: root.auth-type,
+            auth-value: root.auth-value,
+            auth-secret: root.auth-secret,
+            assertions-json: root.request-assertions,
+            timeout-ms: root.request-timeout-ms,
+            follow-redirects: root.follow-redirects,
+        };
+    }
+
     function begin-rename() {
         if root.active-view == "Request" {
             root.request-name-draft = root.active-request;
@@ -924,13 +963,7 @@ in-out property <bool> response-large: false;
         root.active-request = root.request-name-draft;
         root.editing-request-name = false;
         if root.active-request-id > 0 && root.request-url != "" {
-            root.save-request(
-                root.active-request-id, root.selected-collection-id, root.active-request,
-                root.active-method, root.request-url, root.request-headers, root.request-params,
-                root.request-body, root.body-format, root.auth-type, root.auth-value, root.auth-secret,
-                root.active-request-tab-key, root.request-assertions,
-                root.request-timeout-ms, root.follow-redirects
-            );
+            root.save-request(root.current-request-draft());
         }
     }
 
@@ -1070,13 +1103,7 @@ in-out property <bool> response-large: false;
 
     function save-current-request() {
         if root.active-view == "Request" && root.selected-collection-id > 0 && root.request-url != "" && root.active-request != "" {
-            root.save-request(
-                root.active-request-id, root.selected-collection-id, root.active-request,
-                root.active-method, root.request-url, root.request-headers, root.request-params,
-                root.request-body, root.body-format, root.auth-type, root.auth-value, root.auth-secret,
-                root.active-request-tab-key, root.request-assertions,
-                root.request-timeout-ms, root.follow-redirects
-            );
+            root.save-request(root.current-request-draft());
         }
     }
 
@@ -1095,13 +1122,7 @@ in-out property <bool> response-large: false;
             root.response-time = "---";
             root.response-tab = "Body";
             root.store-active-request-tab();
-            root.send-request(
-                root.active-method, root.request-url, root.request-body, root.request-headers,
-                root.request-params, root.body-format, root.auth-type, root.auth-value,
-                root.auth-secret, root.selected-collection-id, root.active-request-id, root.active-request,
-                root.active-request-tab-key, root.request-assertions,
-                root.request-timeout-ms, root.follow-redirects
-            );
+            root.send-request(root.current-request-draft());
         }
     }
 
