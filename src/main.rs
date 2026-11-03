@@ -1,3 +1,4 @@
+mod assertions;
 mod credentials;
 mod http;
 mod storage;
@@ -11,6 +12,7 @@ use std::{
     time::Duration,
 };
 
+use crate::assertions::{Assertion, evaluate};
 use crate::http::HttpClient;
 use crate::storage::{
     Collection, CollectionVariable, NewRequest, RequestHistory, RequestStore, SavedRequest,
@@ -1529,7 +1531,8 @@ async fn main() -> Result<(), slint::PlatformError> {
               collection_id,
               request_id,
               name,
-              tab_key| {
+              tab_key,
+              assertions_json| {
             let app_handle = app_weak.clone();
             let client = Arc::clone(&client);
             let store = Arc::clone(&store);
@@ -1542,6 +1545,21 @@ async fn main() -> Result<(), slint::PlatformError> {
             let auth_type = auth_type.to_string();
             let auth_value = auth_value.to_string();
             let auth_secret = auth_secret.to_string();
+            let assertions = match serde_json::from_str::<Vec<Assertion>>(assertions_json.as_str())
+            {
+                Ok(assertions) => assertions,
+                Err(error) => {
+                    let message = format!("Invalid assertions JSON: {error}");
+                    let validation_ui = app_weak.clone();
+                    let _ = slint::invoke_from_event_loop(move || {
+                        if let Some(ui) = validation_ui.upgrade() {
+                            ui.set_response_status(message.into());
+                            ui.set_response_state("error".into());
+                        }
+                    });
+                    return;
+                }
+            };
             let name = name.to_string();
             let collection_id = collection_id as i64;
             let tab_key = tab_key;
@@ -1561,6 +1579,7 @@ async fn main() -> Result<(), slint::PlatformError> {
                     auth_type: auth_type.clone(),
                     auth_value: auth_value.clone(),
                     auth_secret: auth_secret.clone(),
+                    assertions: assertions.clone(),
                 };
                 let save_store = Arc::clone(&store);
                 let save_result = tokio::task::spawn_blocking(move || {
@@ -1858,7 +1877,44 @@ async fn main() -> Result<(), slint::PlatformError> {
                             &variables,
                         )
                         .await;
-                    let success = result.state == "success";
+                    let http_success = result.state == "success";
+                    let response_received =
+                        matches!(result.state.as_str(), "success" | "http-error");
+                    let status_code = result
+                        .status
+                        .split_whitespace()
+                        .next()
+                        .and_then(|v| v.parse::<u16>().ok());
+                    let elapsed_ms = (result.elapsed.as_secs_f64() * 1000.0) as u64;
+                    let assertion_results = request
+                        .assertions
+                        .iter()
+                        .map(|assertion| evaluate(assertion, status_code, elapsed_ms, &result.body))
+                        .collect::<Vec<_>>();
+                    let assertions_passed = assertion_results.iter().all(|item| item.passed);
+                    // Keep the legacy collection result for requests without assertions:
+                    // HTTP 4xx/5xx remains a failure. With assertions, a received HTTP
+                    // response is evaluated against the request's expected conditions.
+                    let success = if request.assertions.is_empty() {
+                        http_success
+                    } else {
+                        response_received && assertions_passed
+                    };
+                    let assertion_summary = if assertion_results.is_empty() {
+                        if http_success {
+                            "No assertions configured".to_owned()
+                        } else {
+                            format!("No assertions configured · {}", result.state)
+                        }
+                    } else {
+                        assertion_results
+                            .iter()
+                            .map(|item| {
+                                format!("{} {}", if item.passed { "✓" } else { "✗" }, item.message)
+                            })
+                            .collect::<Vec<_>>()
+                            .join("\n")
+                    };
                     if success {
                         passed += 1;
                     } else {
@@ -1883,7 +1939,17 @@ async fn main() -> Result<(), slint::PlatformError> {
                         url: request.url.clone().into(),
                         status: result.status.clone().into(),
                         elapsed: format!("{:.2} ms", result.elapsed.as_secs_f64() * 1000.0).into(),
-                        state: result.state.clone().into(),
+                        state: if !response_received {
+                            result.state.clone()
+                        } else if success {
+                            "success".to_owned()
+                        } else if !assertion_results.is_empty() {
+                            "assertion-failed".to_owned()
+                        } else {
+                            "http-error".to_owned()
+                        }
+                        .into(),
+                        assertion_summary: assertion_summary.into(),
                         body: result.body.clone().into(),
                         pretty_body: formatted_body.into(),
                         format: result.format.clone().into(),
@@ -1964,9 +2030,20 @@ async fn main() -> Result<(), slint::PlatformError> {
               auth_type,
               auth_value,
               auth_secret,
-              tab_key| {
+              tab_key,
+              assertions_json| {
             let app_handle = app_weak.clone();
             let store = Arc::clone(&store);
+            let assertions = match serde_json::from_str::<Vec<Assertion>>(assertions_json.as_str())
+            {
+                Ok(assertions) => assertions,
+                Err(error) => {
+                    if let Some(ui) = app_weak.upgrade() {
+                        ui.set_response_status(format!("Invalid assertions JSON: {error}").into());
+                    }
+                    return;
+                }
+            };
             let mut request = NewRequest {
                 collection_id: collection_id as i64,
                 name: name.to_string(),
@@ -1979,6 +2056,7 @@ async fn main() -> Result<(), slint::PlatformError> {
                 auth_type: auth_type.to_string(),
                 auth_value: auth_value.to_string(),
                 auth_secret: auth_secret.to_string(),
+                assertions,
             };
             let tab_key = tab_key;
 
@@ -2675,6 +2753,11 @@ async fn main() -> Result<(), slint::PlatformError> {
                                 ui.set_auth_type(request.auth_type.into());
                                 ui.set_auth_value(request.auth_value.into());
                                 ui.set_auth_secret(request.auth_secret.into());
+                                ui.set_request_assertions(
+                                    serde_json::to_string(&request.assertions)
+                                        .unwrap_or_else(|_| "[]".to_owned())
+                                        .into(),
+                                );
                                 ui.set_response_status("No response yet".into());
                                 ui.set_response_body(
                                     "Send a request to inspect its response.".into(),

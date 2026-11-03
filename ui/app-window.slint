@@ -47,6 +47,7 @@ export struct RequestTabItem {
     auth-type: string,
     auth-value: string,
     auth-secret: string,
+    assertions-json: string,
     response-status: string,
     response-body: string,
     response-body-formatted: string,
@@ -77,6 +78,7 @@ export struct CollectionRunResult {
     method: string, name: string, url: string, status: string, elapsed: string,
     state: string, body: string, pretty-body: string, format: string, large: bool,
     headers: string,
+    assertion-summary: string,
 }
 export struct HistoryItem {
     request-id: int,
@@ -103,8 +105,8 @@ export component AppWindow inherits Window {
     background: transparent;
     forward-focus: shortcut-scope;
 
-    callback send-request(string, string, string, string, string, string, string, string, string, int, int, string, int);
-    callback save-request(int, int, string, string, string, string, string, string, string, string, string, string, int);
+    callback send-request(string, string, string, string, string, string, string, string, string, int, int, string, int, string);
+    callback save-request(int, int, string, string, string, string, string, string, string, string, string, string, int, string);
     callback suggest-request-name(int) -> string;
     callback open-latest-request(int);
     callback serialize-param-rows([KeyValueRow]) -> string;
@@ -220,6 +222,7 @@ export component AppWindow inherits Window {
     in-out property <string> auth-type: "None";
     in-out property <string> auth-value: "";
     in-out property <string> auth-secret: "";
+    in-out property <string> request-assertions: "[]";
     in-out property <string> response-status: "No response yet";
     in-out property <string> response-body: "Send a request to inspect its response.";
     in-out property <string> response-time: "---";
@@ -373,6 +376,7 @@ in-out property <bool> response-large: false;
             auth-type: root.auth-type,
             auth-value: root.auth-value,
             auth-secret: root.auth-secret,
+            assertions-json: root.request-assertions,
             response-status: root.response-status,
             response-body: root.response-body,
             response-body-formatted: root.response-body-formatted,
@@ -409,6 +413,7 @@ in-out property <bool> response-large: false;
         root.auth-type = tab.auth-type;
         root.auth-value = tab.auth-value;
         root.auth-secret = tab.auth-secret;
+        root.request-assertions = tab.assertions-json;
         root.editing-request-name = false;
         root.active-view = "Request";
         root.response-status = tab.response-status;
@@ -437,7 +442,7 @@ in-out property <bool> response-large: false;
                     collection-name: tab.collection-name, name: tab.name, method: tab.method,
                     url: tab.url, headers: tab.headers, params: tab.params, body: tab.body,
                     body-format: tab.body-format, auth-type: tab.auth-type, auth-value: tab.auth-value,
-                    auth-secret: tab.auth-secret, response-status: status, response-body: body,
+                    auth-secret: tab.auth-secret, assertions-json: tab.assertions-json, response-status: status, response-body: body,
                     response-body-formatted: formatted-body,
                     response-time: elapsed, response-state: state, response-format: format,
                     response-headers: headers, response-cookies: cookies, response-large: large,
@@ -465,7 +470,7 @@ in-out property <bool> response-large: false;
                     collection-name: tab.collection-name, name: name, method: tab.method,
                     url: tab.url, headers: tab.headers, params: tab.params, body: tab.body,
                     body-format: tab.body-format, auth-type: tab.auth-type, auth-value: tab.auth-value,
-                    auth-secret: tab.auth-secret, response-status: tab.response-status,
+                    auth-secret: tab.auth-secret, assertions-json: tab.assertions-json, response-status: tab.response-status,
                     response-body: tab.response-body,
                     response-body-formatted: tab.response-body-formatted,
                     response-time: tab.response-time,
@@ -504,6 +509,7 @@ in-out property <bool> response-large: false;
             auth-type: root.auth-type,
             auth-value: root.auth-value,
             auth-secret: root.auth-secret,
+            assertions-json: root.request-assertions,
             response-status: root.response-status,
             response-body: root.response-body,
             response-body-formatted: root.response-body-formatted,
@@ -586,7 +592,7 @@ in-out property <bool> response-large: false;
                 root.active-request-id, root.selected-collection-id, root.active-request,
                 root.active-method, root.request-url, root.request-headers, root.request-params,
                 root.request-body, root.body-format, root.auth-type, root.auth-value, root.auth-secret,
-                root.active-request-tab-key
+                root.active-request-tab-key, root.request-assertions
             );
         }
     }
@@ -629,6 +635,7 @@ in-out property <bool> response-large: false;
         root.auth-type = "None";
         root.auth-value = "";
         root.auth-secret = "";
+        root.request-assertions = "[]";
         root.active-tab = "Body";
         let key = root.next-request-tab-key;
         root.next-request-tab-key += 1;
@@ -650,6 +657,7 @@ in-out property <bool> response-large: false;
             auth-type: "None",
             auth-value: "",
             auth-secret: "",
+            assertions-json: "[]",
             response-status: "No response yet",
             response-body: "Send a request to inspect its response.",
             response-body-formatted: "",
@@ -703,6 +711,7 @@ in-out property <bool> response-large: false;
         root.auth-type = "None";
         root.auth-value = "";
         root.auth-secret = "";
+        root.request-assertions = "[]";
         root.response-status = "No response yet";
         root.response-body = "Send a request to inspect its response.";
         root.response-body-formatted = "";
@@ -722,7 +731,7 @@ in-out property <bool> response-large: false;
                 root.active-request-id, root.selected-collection-id, root.active-request,
                 root.active-method, root.request-url, root.request-headers, root.request-params,
                 root.request-body, root.body-format, root.auth-type, root.auth-value, root.auth-secret,
-                root.active-request-tab-key
+                root.active-request-tab-key, root.request-assertions
             );
         }
     }
@@ -746,7 +755,7 @@ in-out property <bool> response-large: false;
                 root.active-method, root.request-url, root.request-body, root.request-headers,
                 root.request-params, root.body-format, root.auth-type, root.auth-value,
                 root.auth-secret, root.selected-collection-id, root.active-request-id, root.active-request,
-                root.active-request-tab-key
+                root.active-request-tab-key, root.request-assertions
             );
         }
     }
@@ -1984,6 +1993,7 @@ in-out property <bool> response-large: false;
                                             Text { text: root.collection-run-results[root.collection-run-selected].status + " · " + root.collection-run-results[root.collection-run-selected].elapsed; color: root.collection-run-results[root.collection-run-selected].state == "success" ? Theme.success : Theme.danger; font-size: Theme.fs-small; vertical-alignment: center; }
                                         }
                                         Text { horizontal-stretch: 1; min-width: 0px; preferred-width: 0px; text: root.collection-run-results[root.collection-run-selected].url; color: Theme.fg-3; font-size: Theme.fs-small; overflow: elide; }
+                                        Text { text: root.collection-run-results[root.collection-run-selected].assertion-summary; color: root.collection-run-results[root.collection-run-selected].state == "success" ? Theme.success : Theme.danger; font-size: Theme.fs-small; wrap: word-wrap; }
                                         TabBar {
                                             tabs: ["Body", "Headers"];
                                             counts: ["", "" + root.collection-run-header-items.length];
@@ -2754,11 +2764,11 @@ in-out property <bool> response-large: false;
                                             height: 48px;
                                             alignment: center;
                                             TabBar {
-                                                tabs: ["Params", "Headers", "Body", "Auth"];
+                                                tabs: ["Params", "Headers", "Body", "Auth", "Assertions"];
                                                 counts: [
                                                     root.request-param-rows.length > 0 ? "" + root.request-param-rows.length : "",
                                                     root.request-header-rows.length > 0 ? "" + root.request-header-rows.length : "",
-                                                    "", ""
+                                                    "", "", root.request-assertions != "[]" ? "✓" : ""
                                                 ];
                                                 current: root.active-tab;
                                                 selected(t) => { root.active-tab = t; }
@@ -2813,6 +2823,17 @@ in-out property <bool> response-large: false;
                                             language: root.body-format;
                                             auto-pair-key(text, cursor, anchor, key, language) => { root.auto-pair-request-body(text, cursor, anchor, key, language) }
                                             edited(value) => { root.request-body = value; }
+                                        }
+
+                                        if root.active-tab == "Assertions" : AdwTextEdit {
+                                            width: parent.width;
+                                            height: parent.height;
+                                            text: root.request-assertions;
+                                            placeholder-text: "JSON array. Examples: {\"kind\":\"http_status\",\"expected\":200}; {\"kind\":\"latency_under\",\"max_ms\":500}; {\"kind\":\"body_contains\",\"text\":\"ready\"}; {\"kind\":\"json_pointer\",\"pointer\":\"/data/id\",\"expected\":7}";
+                                            font-family: Theme.font-mono;
+                                            font-size: 13px;
+                                            wrap: word-wrap;
+                                            edited(value) => { root.request-assertions = value; root.store-active-request-tab(); }
                                         }
 
                                         if root.active-tab == "Headers" : KeyValueEditor {

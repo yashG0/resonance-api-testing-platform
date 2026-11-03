@@ -55,6 +55,7 @@ pub struct SavedRequest {
     pub auth_type: String,
     pub auth_value: String,
     pub auth_secret: String,
+    pub assertions: Vec<crate::assertions::Assertion>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -70,6 +71,7 @@ pub struct NewRequest {
     pub auth_type: String,
     pub auth_value: String,
     pub auth_secret: String,
+    pub assertions: Vec<crate::assertions::Assertion>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -149,6 +151,7 @@ impl RequestStore {
                 auth_value   TEXT NOT NULL DEFAULT '',
                 auth_secret  TEXT NOT NULL DEFAULT '',
                 credential_ref TEXT NOT NULL DEFAULT '',
+                assertions TEXT NOT NULL DEFAULT '[]',
                 collection_id INTEGER REFERENCES collections(id) ON DELETE CASCADE,
                 created_at   TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 updated_at   TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -203,6 +206,7 @@ impl RequestStore {
             ("auth_value", "TEXT NOT NULL DEFAULT ''"),
             ("auth_secret", "TEXT NOT NULL DEFAULT ''"),
             ("credential_ref", "TEXT NOT NULL DEFAULT ''"),
+            ("assertions", "TEXT NOT NULL DEFAULT '[]'"),
         ] {
             let has_column = {
                 let mut statement = connection.prepare("PRAGMA table_info(saved_requests)")?;
@@ -650,8 +654,8 @@ impl RequestStore {
         let connection = self.connect()?;
         let insert_result = connection.execute(
             r#"
-            INSERT INTO saved_requests (name, method, url, headers, query_params, body, collection_id, body_format, auth_type, auth_value, auth_secret, credential_ref)
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, '', '', ?10)
+            INSERT INTO saved_requests (name, method, url, headers, query_params, body, collection_id, body_format, auth_type, auth_value, auth_secret, credential_ref, assertions)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, '', '', ?10, ?11)
             "#,
             params![
                 request.name.trim(),
@@ -663,7 +667,8 @@ impl RequestStore {
                 request.collection_id,
                 request.body_format,
                 request.auth_type,
-                credential_ref
+                credential_ref,
+                serde_json::to_string(&request.assertions).unwrap_or_else(|_| "[]".to_owned())
             ],
         );
         if let Err(error) = insert_result {
@@ -682,7 +687,7 @@ impl RequestStore {
         let connection = self.connect()?;
         let mut statement = connection.prepare(
             r#"
-            SELECT id, collection_id, name, method, url, headers, query_params, body, body_format, auth_type, auth_value, auth_secret, credential_ref
+            SELECT id, collection_id, name, method, url, headers, query_params, body, body_format, auth_type, auth_value, auth_secret, credential_ref, assertions
             FROM saved_requests WHERE collection_id = ?1
             ORDER BY name COLLATE NOCASE ASC, id ASC
             "#,
@@ -700,7 +705,7 @@ impl RequestStore {
         let stored = connection
             .query_row(
                 r#"
-                SELECT id, collection_id, name, method, url, headers, query_params, body, body_format, auth_type, auth_value, auth_secret, credential_ref
+                SELECT id, collection_id, name, method, url, headers, query_params, body, body_format, auth_type, auth_value, auth_secret, credential_ref, assertions
                 FROM saved_requests WHERE id = ?1
                 "#,
                 [id],
@@ -735,7 +740,8 @@ impl RequestStore {
             SET name = ?1, method = ?2, url = ?3, headers = ?4,
                 query_params = ?5, body = ?6, collection_id = ?7,
                 body_format = ?8, auth_type = ?9, auth_value = '', auth_secret = '',
-                credential_ref = ?10, updated_at = CURRENT_TIMESTAMP
+                credential_ref = ?10, assertions = ?12,
+                updated_at = CURRENT_TIMESTAMP
             WHERE id = ?11
             "#,
             params![
@@ -749,7 +755,8 @@ impl RequestStore {
                 request.body_format,
                 request.auth_type,
                 credential_ref,
-                id
+                id,
+                serde_json::to_string(&request.assertions).unwrap_or_else(|_| "[]".to_owned())
             ],
         );
         let changed = match update_result {
@@ -929,6 +936,7 @@ fn row_to_stored_request(row: &rusqlite::Row<'_>) -> rusqlite::Result<StoredSave
             auth_type: row.get(9)?,
             auth_value: row.get(10)?,
             auth_secret: row.get(11)?,
+            assertions: serde_json::from_str(&row.get::<_, String>(13)?).unwrap_or_default(),
         },
         credential_ref: row.get(12)?,
     })
@@ -986,6 +994,7 @@ mod tests {
             auth_type: "None".into(),
             auth_value: String::new(),
             auth_secret: String::new(),
+            assertions: vec![crate::assertions::Assertion::HttpStatus { expected: 200 }],
         }
     }
 
@@ -1002,6 +1011,7 @@ mod tests {
         assert_eq!(created.name, "Get Users");
         assert_eq!(created.method, "GET");
         assert_eq!(created.collection_id, collection_id);
+        assert_eq!(created.assertions, sample(collection_id).assertions);
         assert_eq!(
             store.get(created.id).expect("get request"),
             Some(created.clone())
@@ -1019,6 +1029,7 @@ mod tests {
             auth_type: "None".into(),
             auth_value: String::new(),
             auth_secret: String::new(),
+            assertions: Vec::new(),
         };
         assert!(store.update(created.id, &updated).expect("update"));
         let loaded = store
@@ -1028,6 +1039,7 @@ mod tests {
         assert_eq!(loaded.name, "Updated Users");
         assert_eq!(loaded.method, "POST");
         assert_eq!(loaded.body, r#"{"ok":true}"#);
+        assert!(loaded.assertions.is_empty());
         assert_eq!(
             store
                 .list_for_collection(collection_id)
